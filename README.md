@@ -28,6 +28,10 @@ python3 server.py 8135 ~/clewbert-data
 
 Open http://localhost:8135, click the gear, and pick a model for each job.
 
+The first time it runs, the data folder gets three example boards in an Examples space: **Start here** (a tour of
+the app), **Product launch brainstorm** (messy research to make sense of) and **Plan a team offsite** (a job ready
+for the agent team). Their content is made up. Change them or delete them; deleted ones do not come back.
+
 ## Settings at startup (optional)
 
 | Variable | What it is |

@@ -759,5 +759,24 @@ BRIEFER = briefs.Briefer(DATA, READER, read_board, lambda: [b['id'] for b in sor
 RUNNER = agents.Runner(DATA, type('Store', (), {'read_board': staticmethod(read_board), 'edit_board': staticmethod(edit_board)}),
                        READER, BRIEFER.load, BRIEFER.touch)
 
+def seed_examples():
+    """A brand-new data folder starts with the example boards, in an Examples space. Once only: deleted ones stay deleted."""
+    mark = os.path.join(DATA, 'examples-added')
+    if os.path.exists(mark) or os.listdir(BOARDS):
+        return
+    src = os.path.join(HERE, 'examples')
+    for fn in sorted(os.listdir(src)) if os.path.isdir(src) else []:
+        if fn.endswith('.json'):
+            with open(os.path.join(src, fn)) as f:
+                board = json.load(f)
+            write_json(board_path(board['id']), board)
+    sp = read_spaces()
+    if not any(x['id'] == 'examples' for x in sp['spaces']):
+        sp['spaces'].append({'id': 'examples', 'name': 'Examples', 'created': now_ms()})
+        write_json(SPACES, sp)
+    open(mark, 'w').close()
+
+
 if __name__ == '__main__':
+    seed_examples()
     ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
