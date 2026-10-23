@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Context Canvas</title>
+<title>Clewbert</title>
 <style>
   :root{
     --canvas:#f5f6f8;
@@ -521,7 +521,7 @@
 <!-- Board list -->
 <div id="home">
   <div class="home-head">
-    <a class="home-link" id="homeLink" href="#" title="Home: all boards"><span class="mark">C</span><h1>Context Canvas</h1></a>
+    <a class="home-link" id="homeLink" href="#" title="Home: all boards"><span class="mark">C</span><h1>Clewbert</h1></a>
     <select class="space-select" id="spaceSelect" title="Spaces"></select>
     <button class="mic" id="stgHome" title="Settings: which model does each job, and your provider keys"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     <button class="mic" id="micHome" title="Talk to your boards"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></button>
@@ -712,7 +712,7 @@ function homePaint(){
   if(HOME.space&&HOME.space!=='unsorted'&&!HOME.spaces.some(x=>x.id===HOME.space)){location.hash='';return;}   // deleted space
   HOME.drawn=HOME.space+boards.map(b=>b.id+':'+b.updated+':'+b.space+':'+b.name).join('|')+'#'+HOME.spaces.map(x=>x.id+x.name).join();
   const title=HOME.space?spaceName(HOME.space):'All boards';
-  $('#homeTitle').textContent=title;document.title=(HOME.space?title+' · ':'')+'Context Canvas';
+  $('#homeTitle').textContent=title;document.title=(HOME.space?title+' · ':'')+'Clewbert';
   $('#micHome').title=HOME.space?'Talk to the boards in '+title:'Talk to your boards';
   renderSpaces();vcTitle();
   const shown=boards.filter(b=>!HOME.space||(HOME.space==='unsorted'?!spaceOf(b):spaceOf(b)===HOME.space));
@@ -913,7 +913,7 @@ async function openBoard(id){
   if(!HOME.spaces.length)await loadSpaces();
   if(cvBoardId!==id)return;
   {const sp=spaceOf(cvBoard);$('#cvBack').textContent='← '+(sp?spaceName(sp):'All boards');$('#cvBack').title=sp?'Back to '+spaceName(sp):'Back to all boards';$('.cv-sep').hidden=false;}
-  $('#cvTitle').value=cvBoard.name;document.title=cvBoard.name+' · Context Canvas';
+  $('#cvTitle').value=cvBoard.name;document.title=cvBoard.name+' · Clewbert';
   cvSaveState('');
   $('#home').hidden=true;$('#cv').classList.add('open');
   cvRender();
@@ -1543,7 +1543,7 @@ async function cvUploadFile(file,p){
   };
   $('#cvBack').onclick=()=>{const sp=cvBoard&&spaceOf(cvBoard);location.hash=sp?'s/'+sp:'';};
   // rename
-  $('#cvTitle').addEventListener('input',e=>{if(!cvBoard)return;cvBoard.name=e.target.value.trim()||'Untitled board';document.title=cvBoard.name+' · Context Canvas';cvSave();});
+  $('#cvTitle').addEventListener('input',e=>{if(!cvBoard)return;cvBoard.name=e.target.value.trim()||'Untitled board';document.title=cvBoard.name+' · Clewbert';cvSave();});
   $('#cvTitle').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'||e.key==='Escape')e.target.blur();});
   // link popover
   $('#cvLinkSave').onclick=()=>{if(!cvLinkTarget)return;const v=$('#cvLinkInput').value.trim();if(v)cvLinkTarget.url=v;else delete cvLinkTarget.url;cvLinkPopClose();cvRender();cvSave();};
@@ -1557,7 +1557,7 @@ async function cvUploadFile(file,p){
     const ae=document.activeElement;
     if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA/.test(ae.tagName)))return;
     const items=JSON.parse(JSON.stringify(cvWithContents(cvSel)));
-    const text=items.map(i=>i.text||i.title||i.url||'').filter(Boolean).join('\n\n')||items.length+' item'+(items.length===1?'':'s')+' from Context Canvas';
+    const text=items.map(i=>i.text||i.title||i.url||'').filter(Boolean).join('\n\n')||items.length+' item'+(items.length===1?'':'s')+' from Clewbert';
     CV_CLIP={text,items,board:cvBoardId,n:0};
     e.preventDefault();
     e.clipboardData.setData('text/plain',text);

@@ -195,7 +195,7 @@ def context(question, history, boards, reader):
     return entries
 
 
-SYSTEM = """You answer the user's questions about their canvas boards (Miro-style boards of sticky notes, screenshots and PDFs).
+SYSTEM = """You are Clewbert. You answer the user's questions about their canvas boards (Miro-style boards of sticky notes, screenshots and PDFs).
 HOW THE APP IS ORGANISED: spaces are folders that hold boards (a board not in any space is "unsorted"); boards hold
 items (notes, text, screenshots, PDFs, links, files, stickers, drawings); frames are titled areas that group items on
 a board. the user can talk from the list of all boards, from one space, or from inside one board. The list of all boards

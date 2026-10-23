@@ -1,6 +1,9 @@
-# Context Canvas
+# Clewbert
 
 Boards you can talk to, with a team of AI agents that works on them.
+
+A clew is the ball of thread that led Theseus out of the labyrinth; it is where the word "clue" comes from.
+You bring the pile of screenshots, links, PDFs and half-formed ideas. Clewbert and its helpers find the thread.
 
 Paste screenshots, links, PDFs and any file onto an endless canvas, add sticky notes and frames, and pan and zoom
 like Miro. Then ask the board questions out loud or by typing, or hand a task to a team of agents: the task becomes a
@@ -20,7 +23,7 @@ Needs macOS (pictures and PDFs are read with Apple's on-device text recognition)
 
 ```
 swiftc -O tools/textof.swift -o bin/textof
-python3 server.py 8135 ~/context-canvas-data
+python3 server.py 8135 ~/clewbert-data
 ```
 
 Open http://localhost:8135, click the gear, and pick a model for each job.

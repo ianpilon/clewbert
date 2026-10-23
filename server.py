@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Context Canvas server: serves index.html and keeps boards + images as plain files.
+"""Clewbert server: serves index.html and keeps boards + images as plain files.
 
 Usage: server.py PORT DATA_DIR
 Binds 127.0.0.1 only; Cloudflare Access sits in front of it on the tunnel.
@@ -257,7 +257,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, f.read(), 'text/html; charset=utf-8', {'Cache-Control': 'no-cache'})
         if parts == ['api', 'session']:   # the ears ask this who is calling, with the caller's cookie
             who = talk.access_user(self.headers.get('Cookie'))
-            return self.reply(200, {'user': {'id': 'context-canvas', 'name': who}}) if who else self.reply(401, {'error': 'not signed in'})
+            return self.reply(200, {'user': {'id': 'clewbert', 'name': who}}) if who else self.reply(401, {'error': 'not signed in'})
         if len(parts) == 3 and parts[:2] == ['api', 'brief'] and BOARD_ID.match(parts[2]):
             return self.reply(200, BRIEFER.view(parts[2]))
         if parts == ['api', 'settings']:

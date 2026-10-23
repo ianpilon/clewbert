@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Copy one Miro board into Context Canvas.
+"""Copy one Miro board into Clewbert.
 
 Usage: /usr/bin/python3 tools/miro_import.py MIRO_BOARD_ID_OR_LINK OUT_DIR
   (system python: its SSL certificates work; the python.org build's do not)
 The app's "New board > Import from Miro" runs import_board() inside server.py, straight into the data folder.
 
 Reads the Miro REST API with the key in ~/.config/miro/key (the read-only app
-"Context Canvas import" in the user's Miro dev team). Writes OUT_DIR/boards/<id>.json and
+"Clewbert import" in the user's Miro dev team). Writes OUT_DIR/boards/<id>.json and
 OUT_DIR/images/*, laid out like the server's data folder, so
   copy OUT_DIR into your data folder
 publishes the board.
@@ -40,7 +40,7 @@ STICKY = {'gray': '#f5f6f8', 'light_yellow': '#fff9b1', 'yellow': '#f5d128', 'or
 
 
 def get(url, auth=True, raw=False):
-    req = urllib.request.Request(url, headers={'User-Agent': 'context-canvas-import',
+    req = urllib.request.Request(url, headers={'User-Agent': 'clewbert-import',
                                                **({'Authorization': 'Bearer ' + key()} if auth else {})})
     for attempt in range(3):
         try:

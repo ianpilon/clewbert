@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A real browser for Context Canvas agents: headless Chromium (Playwright), one session per agent task.
+"""A real browser for Clewbert agents: headless Chromium (Playwright), one session per agent task.
 
 Usage: BROWSER_TOKEN=<secret> service.py PORT [BIND]      (BIND defaults to 0.0.0.0; every request needs the token)
 Needs: pip install playwright && playwright install chromium
