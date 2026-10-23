@@ -26,7 +26,9 @@ swiftc -O tools/textof.swift -o bin/textof
 python3 server.py 8135 ~/clewbert-data
 ```
 
-Open http://localhost:8135, click the gear, and pick a model for each job.
+Open http://localhost:8135. The first screen asks for one key: **xAI** or **OpenAI** (Clewbert thinks, hears and talks
+with it) or **Anthropic** (it thinks, and you type). The key is checked before you can go on, every job gets a model
+from it, and Clewbert starts listening on the Start here board. Change models or voices later with the gear (Settings).
 
 The first time it runs, the data folder gets three example boards in an Examples space: **Start here** (a tour of
 the app), **Product launch brainstorm** (messy research to make sense of) and **Plan a team offsite** (a job ready
@@ -43,11 +45,14 @@ for the agent team). Their content is made up. Change them or delete them; delet
 | `AGENT_WORKERS` | Tasks at once (default 3) |
 | `SEARXNG_URL` | Your own SearXNG for web search (json format on) |
 | `BROWSER_URL`, `BROWSER_TOKEN` | A real browser for agents: run `browser/service.py PORT` on any machine with Playwright |
-| `CANVAS_TTS_URL` | A text-to-speech server for spoken answers |
+| `CANVAS_TTS_URL` | Your own text-to-speech server (otherwise the OpenAI or xAI key speaks) |
 | `CF_ACCESS_TEAM`, `CF_ACCESS_AUD` | If the app sits behind Cloudflare Access |
 
-Choices made in Settings win over these. Voice input needs a speech-to-text service at `/ears` next to the app;
-without one, type your questions in the voice card.
+Choices made in Settings win over these. Hearing uses the OpenAI or xAI key; without one, Clewbert listens to a
+speech-to-text service at `/ears` next to the app if you run one, or you type your questions in the voice card.
+
+**Keep it private.** The key is stored on the machine that runs Clewbert. If you put Clewbert on the internet, put a
+sign-in in front of it (Cloudflare Access is supported), or anyone who finds it can use your key.
 
 ## Your data
 

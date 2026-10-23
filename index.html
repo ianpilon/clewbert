@@ -514,9 +514,62 @@
     .cv-views button{padding:6px 9px}
     .cv-zoom{display:none}
   }
+  /* Welcome: shown until a model answers; nothing else is reachable before that */
+  #ob{position:fixed;inset:0;z-index:300;background:var(--canvas);display:grid;place-items:center;padding:16px;overflow-y:auto}
+  #ob[hidden]{display:none}
+  .ob-card{width:480px;max-width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-lift);padding:28px}
+  .ob-mark{width:36px;height:36px;border-radius:9px;background:var(--primary);color:#fff;display:grid;place-items:center;font-weight:700;font-size:17px}
+  .ob-card h1{margin:14px 0 6px;font-size:22px;letter-spacing:-.01em}
+  .ob-card h2{margin:0 0 6px;font-size:18px}
+  .ob-lead{margin:0 0 18px;font-size:14px;line-height:1.5;color:var(--muted)}
+  .ob-pros{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:16px}
+  .ob-pros button{border:1px solid var(--border);background:#fff;border-radius:10px;padding:10px;text-align:left;font:inherit;cursor:pointer;min-width:0}
+  .ob-pros button b{display:block;font-size:14px}
+  .ob-pros button span{display:block;font-size:12px;color:var(--muted);line-height:1.35;margin-top:2px}
+  .ob-pros button.on{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+  .ob-card label{display:block;font-size:12px;font-weight:600;margin-bottom:6px}
+  .ob-card input{width:100%;border:1px solid var(--border-strong);border-radius:8px;padding:9px 11px;font:inherit;font-size:14px}
+  .ob-hint{margin:6px 0 0;font-size:12.5px;color:var(--muted)}
+  .ob-hint a{color:inherit}
+  .ob-err{margin:10px 0 0;font-size:13px;color:#b91c1c;line-height:1.45}
+  .ob-err:empty{display:none}
+  .ob-go{display:block;width:100%;margin-top:16px;padding:11px 16px;border:none;border-radius:9px;background:var(--primary);color:#fff;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+  .ob-go:disabled{opacity:.6;cursor:default}
+  .ob-small{margin:12px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}
+  .ob-small code{font-size:11.5px}
+  @media (max-width:520px){.ob-pros{grid-template-columns:1fr}.ob-card{padding:20px}}
 </style>
 </head>
 <body>
+
+<!-- Welcome: connect a model before anything else -->
+<div id="ob" hidden>
+  <div class="ob-card">
+    <div class="ob-mark">C</div>
+    <div id="obStep1">
+      <h1>Welcome to Clewbert</h1>
+      <p class="ob-lead">Talk to your boards, and little helpers find the thread. Clewbert needs an AI model to think and talk. Connect one to start.</p>
+      <div class="ob-pros" id="obPros">
+        <button data-p="xai" class="on"><b>xAI</b><span>Thinks, hears and talks</span></button>
+        <button data-p="openai"><b>OpenAI</b><span>Thinks, hears and talks</span></button>
+        <button data-p="anthropic"><b>Anthropic</b><span>Thinks. You type your questions</span></button>
+      </div>
+      <label for="obKey">Your <span id="obName">xAI</span> key</label>
+      <input id="obKey" type="password" autocomplete="off" spellcheck="false">
+      <p class="ob-hint" id="obWhere"></p>
+      <p class="ob-err" id="obErr"></p>
+      <button class="ob-go" id="obConnect">Connect</button>
+      <p class="ob-small">The key is saved only on the computer that runs Clewbert. Your questions, and the boards Clewbert reads to answer them, go to the provider you pick.</p>
+      <p class="ob-small">Running your own model? Start Clewbert with <code>CANVAS_MODEL_URL</code> set (see the README) and this screen goes away.</p>
+    </div>
+    <div id="obStep2" hidden>
+      <h1>You are connected</h1>
+      <p class="ob-lead" id="obDone"></p>
+      <button class="ob-go" id="obStart"></button>
+      <p class="ob-small" id="obMicNote">Your browser will ask to use the microphone. Clewbert listens only while the voice card is open, and M mutes it.</p>
+    </div>
+  </div>
+</div>
 
 <!-- Board list -->
 <div id="home">
@@ -1743,8 +1796,9 @@ function vcClose(){
 const VC_MIC={audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:false}};
 async function vcEars(){
   VC.stream=await navigator.mediaDevices.getUserMedia(VC_MIC);vcWatch(VC.stream);
-  const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ears');ws.binaryType='arraybuffer';
-  await new Promise((res,rej)=>{
+  const cloud=VC.speech==='openai'||VC.speech==='xai';
+  const ws=cloud?vcCloudEar():new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ears');ws.binaryType='arraybuffer';
+  if(!cloud)await new Promise((res,rej)=>{
     ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}if(m.type==='ready'){res();return;}vcEarsMsg(m);};
     ws.onerror=()=>rej(new Error('ears'));
     ws.onclose=()=>{rej(new Error('ears'));if(VC.ws===ws){VC.ws=null;if(VC.on){vcSetState('');vcNote('Listening stopped. Close and reopen the mic to listen again, or type.');}}};
@@ -1759,7 +1813,7 @@ async function vcEars(){
     if(pk>0)VC.heardAt=Date.now();else if(VC.on&&Date.now()-VC.heardAt>6000)vcMicRecover('silent');
     if(!VC.ws||VC.ws.readyState!==1)return;const n=Math.floor(x.length/ratio);const out=new Int16Array(n);
     for(let i=0;i<n;i++){const p=i*ratio,j=Math.floor(p),a=p-j;const v=x[j]+((x[j+1]??x[j])-x[j])*a;out[i]=Math.max(-32768,Math.min(32767,Math.round(v*32767)));}
-    VC.ws.send(out.buffer);};
+    if(VC.ws.cloud)vcCloudChunk(out);else VC.ws.send(out.buffer);};
   VC.src=ac.createMediaStreamSource(VC.stream);VC.src.connect(node);node.connect(sink);sink.connect(ac.destination);VC.node=node;
 }
 // The microphone can drop out under the page (Chrome released it while answers played): notice, take it back, keep listening
@@ -1792,10 +1846,36 @@ async function vcMicRecover(why){
   finally{VC.recovering=false;VC.recoveredAt=Date.now();}
 }
 function vcEarsReconnect(){   // a fresh connection to the ears (they judge "near or far" against the level they learned)
-  const old=VC.ws;if(!old)return;
+  const old=VC.ws;if(!old||old.cloud)return;
   const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ears');ws.binaryType='arraybuffer';
   ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}if(m.type==='ready'){if(VC.on){VC.ws=ws;try{old.close();}catch(e){}}else ws.close();return;}vcEarsMsg(m);};
   ws.onclose=()=>{if(VC.ws===ws){VC.ws=null;if(VC.on){vcSetState('');vcNote('Listening stopped. Close and reopen the mic to listen again, or type.');}}};
+}
+/* Hearing on the OpenAI or xAI key, when there are no ears next to the app: the page finds where a question starts and
+   ends by its loudness, sends it as one WAV to api/hear, and treats the words that come back like a final from the ears. */
+const VC_CLOUD={floor:.004,on:false,buf:[],pre:[],quiet:0,loud:0,len:0};
+function vcCloudEar(){return {cloud:true,readyState:1,send(){},close(){VC_CLOUD.on=false;VC_CLOUD.buf=[];}};}
+function vcCloudChunk(i16){   // 16 kHz pieces of about 85 ms each
+  const c=VC_CLOUD;let sum=0;for(let i=0;i<i16.length;i++)sum+=i16[i]*i16[i];
+  const rms=Math.sqrt(sum/i16.length)/32768,loud=rms>Math.max(.008,c.floor*3);
+  if(!c.on){c.pre.push(i16);if(c.pre.length>4)c.pre.shift();   // the last 0.3 s is kept, so the first word is not cut off
+    if(!loud){c.floor=c.floor*.95+rms*.05;c.loud=0;return;}
+    if(++c.loud<2)return;
+    c.on=true;c.buf=c.pre;c.pre=[];c.quiet=0;c.len=0;if(VC.state==='listening')$('#vcHeard').textContent='“…”';return;}
+  c.buf.push(i16);c.len+=i16.length;c.quiet=loud?0:c.quiet+i16.length;
+  if(c.quiet<16000*.8&&c.len<16000*30)return;   // still talking: the question ends after 0.8 s of quiet (or 30 s)
+  const parts=c.buf;c.on=false;c.buf=[];c.loud=0;
+  if(c.len-c.quiet<16000*.35){if(VC.state==='listening')$('#vcHeard').textContent='';return;}   // a cough or a click
+  vcCloudHear(parts);
+}
+async function vcCloudHear(parts){
+  const n=parts.reduce((a,p)=>a+p.length,0),v=new DataView(new ArrayBuffer(44+n*2)),tag=(o,t)=>{for(let i=0;i<4;i++)v.setUint8(o+i,t.charCodeAt(i));};
+  tag(0,'RIFF');v.setUint32(4,36+n*2,true);tag(8,'WAVE');tag(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);tag(36,'data');v.setUint32(40,n*2,true);
+  let o=44;for(const p of parts)for(let i=0;i<p.length;i++,o+=2)v.setInt16(o,p[i],true);
+  try{const r=await fetch('api/hear',{method:'POST',headers:{'Content-Type':'audio/wav'},body:v.buffer}),j=await r.json();
+    if(!r.ok)throw new Error(j.error||'');vcEarsMsg({type:'final',text:String(j.text||'').trim()});}
+  catch(e){if(VC.state==='listening')$('#vcHeard').textContent='';vcNote('That was not heard: '+(e.message||'the speech service did not answer')+'.');}
 }
 function vcLevel(pk){const b=$('#vcLevel b');if(b)b.style.width=Math.min(100,Math.max(0,(Math.log10(pk+1e-6)+3.5)/3.5*100))+'%';}
 function vcLog(event,info){try{navigator.sendBeacon('api/voicelog',new Blob([JSON.stringify({event,...info})],{type:'application/json'}));}catch(e){}}
@@ -1806,7 +1886,7 @@ function vcStopNow(){VC.askSeq++;vcStopSpeaking();$('#vcHeard').textContent='';v
 function vcEarsMsg(m){
   if(m.type==='partial'&&(VC.state==='speaking'||VC.state==='thinking')&&vcIsStop(m.text)){vcStopNow();return;}
   if(m.type==='partial'&&VC.state==='listening'&&m.text)$('#vcHeard').textContent='“'+m.text+'…”';
-  else if(m.type==='dropped'||(m.type==='end'&&VC.state==='listening'))$('#vcHeard').textContent='';
+  else if(m.type==='dropped'||(m.type==='end'&&VC.state==='listening')||(m.type==='final'&&!m.text&&VC.state==='listening'))$('#vcHeard').textContent='';
   else if(m.type==='final')vcHeard(String(m.text||'').trim(),!!m.stop);
 }
 // the mic can pick up the answer being spoken: a "question" made only of the answer's own words is ignored
@@ -2363,8 +2443,45 @@ $('#orgIn').onclick=()=>orgZoom(1.25);$('#orgOut').onclick=()=>orgZoom(.8);
 function route(){const id=location.hash.slice(1);if(id.startsWith('s/')){closeBoard();showHome(id.slice(2));}else if(id)openBoard(id);else{closeBoard();showHome(null);}}
 $('#homeLink').onclick=e=>{e.preventDefault();if(location.hash)location.hash='';else route();};   // the logo always goes home: all boards
 window.addEventListener('hashchange',route);
-route();
-newsPoll();
+// Welcome: until a model answers, only the welcome screen shows; then the microphone, and straight into the tour
+const OB_PRO={xai:{name:'xAI',where:'<a href="https://console.x.ai" target="_blank" rel="noopener">console.x.ai</a>'},
+  openai:{name:'OpenAI',where:'<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a>'},
+  anthropic:{name:'Anthropic',where:'<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>'}};
+let OB_P='xai';
+function obPick(p){OB_P=p;$('#obPros').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.p===p));
+  $('#obName').textContent=OB_PRO[p].name;$('#obKey').placeholder='Paste your '+OB_PRO[p].name+' key';
+  $('#obWhere').innerHTML='Make one at '+OB_PRO[p].where+'.';$('#obErr').textContent='';}
+$('#obPros').querySelectorAll('button').forEach(b=>b.onclick=()=>{obPick(b.dataset.p);$('#obKey').focus();});
+$('#obKey').addEventListener('keydown',e=>{if(e.key==='Enter')$('#obConnect').click();});
+$('#obConnect').onclick=async()=>{
+  const key=$('#obKey').value.trim();if(!key){$('#obErr').textContent='Paste your '+OB_PRO[OB_P].name+' key first.';return;}
+  const btn=$('#obConnect');btn.disabled=true;btn.textContent='Checking the key…';$('#obErr').textContent='';
+  try{const j=await api('setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:OB_P,key})});
+    if(!j.ok){$('#obErr').textContent=j.error||'That did not work. Try again.';return;}
+    VC.speech=j.speech?OB_P:null;$('#obKey').value='';
+    $('#obDone').textContent=j.speech?'Clewbert can think, hear and talk now. Turn on the microphone and it will show you around.'
+      :'Clewbert can think now. Anthropic does not hear or speak, so you will type your questions. To talk out loud, add an OpenAI or xAI key later in Settings (the gear on the home page).';
+    $('#obStart').textContent=j.speech?'Turn on the microphone and start':'Start';$('#obMicNote').hidden=!j.speech;
+    $('#obStep1').hidden=true;$('#obStep2').hidden=false;}
+  catch(e){$('#obErr').textContent='Clewbert did not answer: '+(e.message||'try again')+'.';}
+  finally{btn.disabled=false;btn.textContent='Connect';}
+};
+$('#obStart').onclick=async()=>{
+  $('#ob').hidden=true;
+  const tour=(await api('boards?light=1').catch(()=>[])).some(b=>b.id==='example1start');
+  if(tour&&location.hash!=='#example1start')location.hash='example1start';else route();
+  newsPoll();
+  await vcOpen();
+  if(!VC.speech)return;
+  await vcVoices();
+  vcSay("Hi, I'm Clewbert. This is the Start here board. Ask me anything about it, or say: show me around.",VC.askSeq);
+};
+(async()=>{
+  let s=null;try{s=await api('setup');}catch(e){}
+  if(s){VC.speech=s.speech;if(!s.ready){obPick('xai');$('#ob').hidden=false;$('#obKey').focus();return;}}
+  route();
+  newsPoll();
+})();
 </script>
 </body>
 </html>

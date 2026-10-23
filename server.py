@@ -18,6 +18,10 @@ Binds 127.0.0.1 only; Cloudflare Access sits in front of it on the tunnel.
 """
 import gzip, hashlib, json, mimetypes, os, re, secrets, subprocess, sys, tempfile, threading, time, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+import ssl
+if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.pem'):
+    # the python.org Python ships without certificates until "Install Certificates" is run: use the Mac's own list
+    ssl._create_default_https_context = lambda: ssl.create_default_context(cafile='/etc/ssl/cert.pem')
 import models, talk
 import briefs
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools'))
@@ -267,9 +271,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {'models': models.list_models(parts[3])})
             except (OSError, ValueError) as e:
                 return self.reply(200, {'models': [], 'error': str(e)[:200]})
+        if parts == ['api', 'setup']:   # the welcome screen shows until a model answers
+            return self.reply(200, {'ready': bool(models.choice('voice') or talk.MODEL_URL),
+                                    'speech': (models.speech() or [None])[0] if not talk.TTS_URL else 'local'})
         if parts == ['api', 'voices']:
             try:
-                return self.reply(200, talk.voices())
+                return self.reply(200, talk.voices() if talk.TTS_URL else models.voices() if models.speech() else {'voices': []})
             except OSError:
                 return self.reply(503, {'error': 'voice service unavailable'})
         if parts == ['api', 'spaces']:
@@ -562,19 +569,31 @@ class Handler(BaseHTTPRequestHandler):
                 conv['turns'] = (conv['turns'] + [turn])[-500:]
                 write_json(talk_path(talk_id), conv)
             return self.reply(200, {**result, 'turn': turn})
+        if parts == ['api', 'setup']:
+            req = json.loads(self.read_body())
+            return self.reply(200, models.setup(str(req.get('provider') or ''), str(req.get('key') or '')))
+        if parts == ['api', 'hear']:   # one spoken question as WAV, when hearing runs on the OpenAI or xAI key
+            if not models.speech():
+                return self.reply(503, {'error': 'no speech provider'})
+            try:
+                return self.reply(200, {'text': models.hear(self.read_body())})
+            except OSError as e:
+                return self.reply(502, {'error': str(e)[:300]})
         if parts == ['api', 'speak']:
             req = json.loads(self.read_body())
             text, voice = str(req.get('text') or '').strip()[:2000], str(req.get('voice') or '').strip()
             if not text or not voice:
                 raise ValueError
             try:
-                upstream = talk.speak(text, voice)
+                upstream = talk.speak(text, voice) if talk.TTS_URL else models.speak(text, voice) if models.speech() else None
             except OSError:
+                upstream = None
+            if upstream is None:
                 return self.reply(503, {'error': 'voice service unavailable'})
             with upstream:   # stream the speech through as it is made (no length; the connection closes at the end)
                 self.send_response(200)
-                self.send_header('Content-Type', upstream.headers.get('Content-Type', 'application/octet-stream'))
-                self.send_header('X-Sample-Rate', upstream.headers.get('X-Sample-Rate', '24000'))
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('X-Sample-Rate', upstream.headers.get('X-Sample-Rate', '24000') if talk.TTS_URL else str(models.RATE))
                 self.send_header('Cache-Control', 'no-store')
                 self.end_headers()
                 try:

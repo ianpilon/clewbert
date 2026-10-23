@@ -6,15 +6,15 @@
   answers in JSON and names the items it used, and code checks every number in the answer against those items.
 - Every question also gets a map of the user's spaces and boards (layout_entry), so questions about the layout itself
   (how many spaces, what is in one, which board has something) can be answered from any level.
-- Voice in and voice out are your own services: speech-to-text at /ears (a WebSocket next to the app) and a
-  text-to-speech server at CANVAS_TTS_URL; this file only passes speech through. Without them, type your questions.
+- Voice in and voice out: with an OpenAI or xAI key, that provider hears and speaks (models.py). Or your own services:
+  speech-to-text at /ears (a WebSocket next to the app) and a text-to-speech server at CANVAS_TTS_URL.
 """
 import base64, hashlib, http.client, json, math, os, queue, re, socket, subprocess, threading, time, urllib.parse, urllib.request
 import models
 
 MODEL_URL = os.environ.get('CANVAS_MODEL_URL', '')   # a chat/completions address on your own machine (Ollama, LM Studio, vLLM...), or pick a provider in Settings
 MODEL = os.environ.get('CANVAS_MODEL', '')
-TTS_URL = os.environ.get('CANVAS_TTS_URL', 'http://127.0.0.1:8118')
+TTS_URL = os.environ.get('CANVAS_TTS_URL', '')   # your own text-to-speech server; without one, speech uses the OpenAI or xAI key
 # optional: Cloudflare Access in front of the app (your team name and the app's audience tag) tells the ears who is talking
 ACCESS_CERTS = ('https://%s.cloudflareaccess.com/cdn-cgi/access/certs' % os.environ['CF_ACCESS_TEAM']) if os.environ.get('CF_ACCESS_TEAM') else ''
 ACCESS_AUD = os.environ.get('CF_ACCESS_AUD', '')
