@@ -46,3 +46,7 @@ without one, type your questions in the voice card.
 
 Everything is stored as plain files in the data folder you pass to `server.py`: boards, pictures, files, agent runs,
 conversations, and `settings.json` (your provider keys, readable only by your user account). `backup.sh` makes a nightly copy.
+
+## Licence
+
+Apache License 2.0. See `LICENSE` and `NOTICE`.
