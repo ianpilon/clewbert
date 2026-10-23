@@ -27,8 +27,13 @@ python3 server.py 8135 ~/clewbert-data
 ```
 
 Open http://localhost:8135. The first screen asks for one key: **xAI** or **OpenAI** (Clewbert thinks, hears and talks
-with it) or **Anthropic** (it thinks, and you type). The key is checked before you can go on, every job gets a model
-from it, and Clewbert starts listening on the Start here board. Change models or voices later with the gear (Settings).
+with it) or **Anthropic** (it thinks; hearing and speaking use Clewbert's own voice, below). The key is checked before
+you can go on, every job gets a model from it, and Clewbert starts listening on the Start here board.
+
+**Clewbert's own voice.** Free, open-source models that run in your browser on the graphics chip: Moonshine hears
+(MIT) and Kokoro speaks (Apache 2.0). They download once, about 480 MB, and the browser keeps them; what you say never
+leaves your computer. It is used with an Anthropic key, and anyone can choose it on the welcome screen or in the voice
+card's menu. Chrome or Edge on a recent computer keeps up with a conversation; without WebGPU it works, but slowly. Change models or voices later with the gear (Settings).
 
 The first time it runs, the data folder gets three example boards in an Examples space: **Start here** (a tour of
 the app), **Product launch brainstorm** (messy research to make sense of) and **Plan a team offsite** (a job ready
@@ -48,8 +53,9 @@ for the agent team). Their content is made up. Change them or delete them; delet
 | `CANVAS_TTS_URL` | Your own text-to-speech server (otherwise the OpenAI or xAI key speaks) |
 | `CF_ACCESS_TEAM`, `CF_ACCESS_AUD` | If the app sits behind Cloudflare Access |
 
-Choices made in Settings win over these. Hearing uses the OpenAI or xAI key; without one, Clewbert listens to a
-speech-to-text service at `/ears` next to the app if you run one, or you type your questions in the voice card.
+Choices made in Settings win over these. Hearing and speaking use the OpenAI or xAI key, or Clewbert's own voice.
+If you set `CANVAS_TTS_URL`, Clewbert uses your own services instead: that speech server, and a speech-to-text service
+at `/ears` next to the app.
 
 **Keep it private.** The key is stored on the machine that runs Clewbert. If you put Clewbert on the internet, put a
 sign-in in front of it (Cloudflare Access is supported), or anyone who finds it can use your key.

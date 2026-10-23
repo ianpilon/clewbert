@@ -537,6 +537,9 @@
   .ob-go:disabled{opacity:.6;cursor:default}
   .ob-small{margin:12px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}
   .ob-small code{font-size:11.5px}
+  .ob-card label.ob-here{display:flex;gap:9px;align-items:flex-start;margin:0;font-weight:400;font-size:13px;line-height:1.45;color:var(--muted);cursor:pointer}
+  .ob-card label.ob-here input{width:auto;margin-top:3px;flex:none}
+  .ob-card label.ob-here b{color:var(--ink)}
   @media (max-width:520px){.ob-pros{grid-template-columns:1fr}.ob-card{padding:20px}}
 </style>
 </head>
@@ -552,7 +555,7 @@
       <div class="ob-pros" id="obPros">
         <button data-p="xai" class="on"><b>xAI</b><span>Thinks, hears and talks</span></button>
         <button data-p="openai"><b>OpenAI</b><span>Thinks, hears and talks</span></button>
-        <button data-p="anthropic"><b>Anthropic</b><span>Thinks. You type your questions</span></button>
+        <button data-p="anthropic"><b>Anthropic</b><span>Thinks, and talks with a free voice</span></button>
       </div>
       <label for="obKey">Your <span id="obName">xAI</span> key</label>
       <input id="obKey" type="password" autocomplete="off" spellcheck="false">
@@ -565,6 +568,7 @@
     <div id="obStep2" hidden>
       <h1>You are connected</h1>
       <p class="ob-lead" id="obDone"></p>
+      <label class="ob-here" id="obHereRow"><input type="checkbox" id="obHere"> <span><b>Keep my voice on this computer.</b> Free and private: Clewbert downloads its own voice once (about 480 MB) instead of sending what you say to <span id="obHereWho">xAI</span>. Works best in Chrome or Edge on a recent computer.</span></label>
       <button class="ob-go" id="obStart"></button>
       <p class="ob-small" id="obMicNote">Your browser will ask to use the microphone. Clewbert listens only while the voice card is open, and M mutes it.</p>
     </div>
@@ -1773,7 +1777,7 @@ function vcThread(toBottom){
 function vcVoice(){return $('#vcVoice').value;}
 async function vcVoices(){
   if($('#vcVoice').options.length)return;
-  try{const j=await api('voices');let saved='';try{saved=localStorage.getItem('cc_voice')||'';}catch(e){}
+  try{const j=vcMode()==='browser'?{voices:VB_VOICES.map(([id,name])=>({id,name}))}:await api('voices');let saved='';try{saved=localStorage.getItem('cc_voice')||'';}catch(e){}
     const list=j.voices||[];$('#vcVoice').innerHTML=list.map(v=>`<option value="${escapeAttr(v.id)}">${escapeHtml(v.name||v.id)}</option>`).join('');
     const pick=list.find(v=>v.id===saved)||list.find(v=>v.id==='elizabeth_s')||list[0];if(pick)$('#vcVoice').value=pick.id;}
   catch(e){vcNote('The voice service is not answering, so answers will be text only.');}
@@ -1781,6 +1785,12 @@ async function vcVoices(){
 async function vcOpen(){
   if(VC.on){vcClose();return;}
   VC.on=true;VC.muted=false;$('#vcMute').classList.remove('on');$('#vc').hidden=false;VC.scope=null;vcTitle();vcNote('');vcAudio();vcSetState('');vcVoices();newsAskPermission();NEWS.first=true;
+  if(vcMode()==='browser'){   // Clewbert's own voice: downloaded the first time, from the browser's store after that
+    VB.progress=b=>vcNote(`Getting Clewbert's voice ready, one time only: ${Math.round(b/1e6)} of about 480 MB.`);vcNote("Getting Clewbert's voice ready…");
+    try{const dev=await vbLoad();vcNote(dev==='wasm'?'This browser cannot use the graphics chip, so the voice will be slow. Chrome or Edge on a recent computer works best.':'');}
+    catch(e){vcNote("Clewbert's voice did not load ("+e.message+"). Close and reopen the mic to try again, or type below.");return;}
+    if(!VC.on)return;
+  }
   try{await vcEars();vcSetState('listening');newsPoll();}
   catch(e){vcSetState('');vcNote(e&&e.name==='NotAllowedError'?'Microphone blocked. Allow it in the address bar, or type below.':'Listening is not available right now. You can type a question below.');}
 }
@@ -1796,7 +1806,7 @@ function vcClose(){
 const VC_MIC={audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:false}};
 async function vcEars(){
   VC.stream=await navigator.mediaDevices.getUserMedia(VC_MIC);vcWatch(VC.stream);
-  const cloud=VC.speech==='openai'||VC.speech==='xai';
+  const cloud=vcMode()!=='local';
   const ws=cloud?vcCloudEar():new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ears');ws.binaryType='arraybuffer';
   if(!cloud)await new Promise((res,rej)=>{
     ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}if(m.type==='ready'){res();return;}vcEarsMsg(m);};
@@ -1851,7 +1861,64 @@ function vcEarsReconnect(){   // a fresh connection to the ears (they judge "nea
   ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}if(m.type==='ready'){if(VC.on){VC.ws=ws;try{old.close();}catch(e){}}else ws.close();return;}vcEarsMsg(m);};
   ws.onclose=()=>{if(VC.ws===ws){VC.ws=null;if(VC.on){vcSetState('');vcNote('Listening stopped. Close and reopen the mic to listen again, or type.');}}};
 }
-/* Hearing on the OpenAI or xAI key, when there are no ears next to the app: the page finds where a question starts and
+/* Clewbert's own voice: free, open-source models that run in this browser on the graphics chip (Moonshine hears, Kokoro
+   speaks), downloaded once (about 480 MB) and kept by the browser. Used when the key cannot hear and speak (Anthropic,
+   your own model), or when you choose to keep your voice on this computer. Without WebGPU it still works, slowly. */
+const VB={w:null,ready:null,n:0,wait:new Map(),progress:null,device:''};
+const VB_SRC=String.raw`const T='https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/+esm',K='https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm';
+let asr=null,tts=null;const cancel=new Set();
+self.onmessage=async({data:m})=>{
+  if(m.type==='load'){
+    try{
+      const [{pipeline},{KokoroTTS}]=await Promise.all([import(T),import(K)]);
+      let gpu=false;try{gpu=!!(navigator.gpu&&await navigator.gpu.requestAdapter());}catch(e){}
+      const got={},progress=p=>{if(p.status!=='progress'||!p.loaded)return;got[p.name+'/'+p.file]=p.loaded;postMessage({type:'progress',loaded:Object.values(got).reduce((a,b)=>a+b,0)});};
+      asr=await pipeline('automatic-speech-recognition','onnx-community/moonshine-base-ONNX',{device:gpu?'webgpu':'wasm',dtype:gpu?{encoder_model:'fp32',decoder_model_merged:'q4'}:'q8',progress_callback:progress});
+      tts=await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{device:gpu?'webgpu':'wasm',dtype:gpu?'fp32':'q8',progress_callback:progress});   // fp16 on WebGPU comes out as noise
+      await tts.generate('Ready.',{voice:'af_heart'});   // the first sentence is slow: get it out of the way now
+      postMessage({type:'ready',device:gpu?'webgpu':'wasm'});
+    }catch(e){postMessage({type:'loadfail',error:String((e&&e.message)||e)});}
+    return;
+  }
+  try{
+    if(m.type==='hear'){const r=await asr(m.audio);postMessage({type:'done',id:m.id,text:String(r.text||'').trim()});}
+    else if(m.type==='speak'){   // a sentence at a time, so the first one plays while the next is made
+      for(const t of String(m.text).match(/[^.!?]+[.!?]*\s*/g)||[String(m.text)]){
+        if(cancel.has(m.id))break;if(!t.trim())continue;
+        const a=await tts.generate(t.trim(),{voice:m.voice||'af_heart'});
+        if(cancel.has(m.id))break;
+        postMessage({type:'audio',id:m.id,pcm:a.audio},[a.audio.buffer]);
+      }
+      cancel.delete(m.id);postMessage({type:'done',id:m.id});
+    }
+    else if(m.type==='cancel')cancel.add(m.id);
+  }catch(e){postMessage({type:'error',id:m.id,error:String((e&&e.message)||e)});}
+};`;
+const VB_VOICES=[['af_heart','Heart'],['af_bella','Bella'],['af_nicole','Nicole'],['am_michael','Michael'],['am_fenrir','Fenrir'],['bf_emma','Emma (British)'],['bm_george','George (British)']];
+function vbLoad(){
+  if(VB.ready)return VB.ready;
+  VB.w=new Worker(URL.createObjectURL(new Blob([VB_SRC],{type:'text/javascript'})),{type:'module'});
+  VB.ready=new Promise((res,rej)=>{
+    VB.w.onmessage=({data:d})=>{
+      if(d.type==='progress'){if(VB.progress)VB.progress(d.loaded);return;}
+      if(d.type==='ready'){VB.device=d.device;res(d.device);return;}
+      if(d.type==='loadfail'){rej(new Error(d.error));return;}
+      const job=VB.wait.get(d.id);if(!job)return;
+      if(d.type==='audio'){if(job.chunk)job.chunk(d.pcm);return;}
+      VB.wait.delete(d.id);if(d.type==='error')job.rej(new Error(d.error));else job.res(d.text);
+    };
+    VB.w.onerror=e=>rej(new Error(e.message||'it could not start'));
+  });
+  VB.ready.catch(()=>{if(VB.w)VB.w.terminate();VB.w=null;VB.ready=null;});   // the next open tries again (finished files are kept)
+  VB.w.postMessage({type:'load'});
+  return VB.ready;
+}
+function vbJob(msg,chunk){const id=++VB.n;return {id,done:new Promise((res,rej)=>{VB.wait.set(id,{res,rej,chunk});VB.w.postMessage({...msg,id});})};}
+// which voice does the hearing and speaking: the key's provider, your own services ('local'), or Clewbert's own ('browser')
+function vcHere(){try{return localStorage.getItem('cb_voice_here')==='1';}catch(e){return false;}}
+function vcMode(){const s=VC.speech;if(s==='local')return 'local';if((s==='openai'||s==='xai')&&!vcHere())return s;return 'browser';}
+
+/* Hearing on the OpenAI or xAI key (or Clewbert's own voice), when there are no ears next to the app: the page finds where a question starts and
    ends by its loudness, sends it as one WAV to api/hear, and treats the words that come back like a final from the ears. */
 const VC_CLOUD={floor:.004,on:false,buf:[],pre:[],quiet:0,loud:0,len:0};
 function vcCloudEar(){return {cloud:true,readyState:1,send(){},close(){VC_CLOUD.on=false;VC_CLOUD.buf=[];}};}
@@ -1873,8 +1940,12 @@ async function vcCloudHear(parts){
   tag(0,'RIFF');v.setUint32(4,36+n*2,true);tag(8,'WAVE');tag(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
   v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);tag(36,'data');v.setUint32(40,n*2,true);
   let o=44;for(const p of parts)for(let i=0;i<p.length;i++,o+=2)v.setInt16(o,p[i],true);
-  try{const r=await fetch('api/hear',{method:'POST',headers:{'Content-Type':'audio/wav'},body:v.buffer}),j=await r.json();
-    if(!r.ok)throw new Error(j.error||'');vcEarsMsg({type:'final',text:String(j.text||'').trim()});}
+  try{let text;
+    if(vcMode()==='browser'){const f=new Float32Array(n);let k=0;for(const p of parts)for(let i=0;i<p.length;i++)f[k++]=p[i]/32768;
+      text=await vbJob({type:'hear',audio:f}).done;}
+    else{const r=await fetch('api/hear',{method:'POST',headers:{'Content-Type':'audio/wav'},body:v.buffer}),j=await r.json();
+      if(!r.ok)throw new Error(j.error||'');text=j.text;}
+    vcEarsMsg({type:'final',text:String(text||'').trim()});}
   catch(e){if(VC.state==='listening')$('#vcHeard').textContent='';vcNote('That was not heard: '+(e.message||'the speech service did not answer')+'.');}
 }
 function vcLevel(pk){const b=$('#vcLevel b');if(b)b.style.width=Math.min(100,Math.max(0,(Math.log10(pk+1e-6)+3.5)/3.5*100))+'%';}
@@ -2033,6 +2104,15 @@ function vcSay(text,seq,isFiller){
   });
 }
 async function vcPlay(text,seq){
+  if(vcMode()==='browser'){
+    if(!VB.ready)return;
+    const p=vcPlayer(24000);VC.players.push(p);
+    const job=vbJob({type:'speak',text,voice:vcVoice()},f=>{if(seq!==VC.askSeq)return;const i16=new Int16Array(f.length);
+      for(let i=0;i<f.length;i++)i16[i]=Math.max(-32768,Math.min(32767,Math.round(f[i]*32767)));p.push(new Uint8Array(i16.buffer));});
+    VC.ctls.push({abort(){if(VB.w)VB.w.postMessage({type:'cancel',id:job.id});}});
+    try{await job.done;}catch(e){}
+    p.end();await p.done;return;
+  }
   const ctl=new AbortController();VC.ctls.push(ctl);let r;
   try{r=await fetch('api/speak',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice:vcVoice()}),signal:ctl.signal});}catch(e){return;}
   if(!r.ok||!r.body)return;
@@ -2060,10 +2140,14 @@ $('#vcMute').onclick=()=>vcMuteToggle();
 // ⋯ on the voice card: pick the voice, clear the conversation
 $('#vcMore').onclick=e=>{
   const sel=$('#vcVoice'),opts=[...sel.options];
+  const can=VC.speech==='openai'||VC.speech==='xai';
   menuOpen(e.currentTarget,`${opts.length?`<div class="mh">Voice</div>${opts.map(o=>`<button data-voice="${escapeAttr(o.value)}"${o.value===sel.value?' class="cur"':''}>${escapeHtml(o.textContent)}</button>`).join('')}<hr>`:''}
+    ${can?`<button data-here="1">${vcHere()?'Use the '+(VC.speech==='xai'?'xAI':'OpenAI')+' voice':'Keep my voice on this computer'}</button><hr>`:''}
     <button class="danger" data-clear="1"${VC.turns.length?'':' disabled'}>Clear the conversation</button>`,m=>{
     m.querySelectorAll('[data-voice]').forEach(x=>x.onclick=()=>{menuClose();sel.value=x.dataset.voice;sel.onchange();});
     m.querySelector('[data-clear]').onclick=()=>{menuClose();vcClearTalk();};
+    const h=m.querySelector('[data-here]');if(h)h.onclick=()=>{menuClose();try{localStorage.setItem('cb_voice_here',vcHere()?'0':'1');}catch(e){}
+      $('#vcVoice').innerHTML='';vcClose();vcOpen();};
   });
 };
 async function vcClearTalk(){
@@ -2460,19 +2544,20 @@ $('#obConnect').onclick=async()=>{
     if(!j.ok){$('#obErr').textContent=j.error||'That did not work. Try again.';return;}
     VC.speech=j.speech?OB_P:null;$('#obKey').value='';
     $('#obDone').textContent=j.speech?'Clewbert can think, hear and talk now. Turn on the microphone and it will show you around.'
-      :'Clewbert can think now. Anthropic does not hear or speak, so you will type your questions. To talk out loud, add an OpenAI or xAI key later in Settings (the gear on the home page).';
-    $('#obStart').textContent=j.speech?'Turn on the microphone and start':'Start';$('#obMicNote').hidden=!j.speech;
+      :'Clewbert can think now. Anthropic does not hear or speak, so Clewbert will download its own free voice once (about 480 MB). What you say never leaves this computer.';
+    $('#obHereRow').hidden=!j.speech;$('#obHereWho').textContent=OB_PRO[OB_P].name;$('#obStart').textContent='Turn on the microphone and start';
     $('#obStep1').hidden=true;$('#obStep2').hidden=false;}
   catch(e){$('#obErr').textContent='Clewbert did not answer: '+(e.message||'try again')+'.';}
   finally{btn.disabled=false;btn.textContent='Connect';}
 };
 $('#obStart').onclick=async()=>{
   $('#ob').hidden=true;
+  if(!$('#obHereRow').hidden){try{localStorage.setItem('cb_voice_here',$('#obHere').checked?'1':'0');}catch(e){}}
   const tour=(await api('boards?light=1').catch(()=>[])).some(b=>b.id==='example1start');
   if(tour&&location.hash!=='#example1start')location.hash='example1start';else route();
   newsPoll();
   await vcOpen();
-  if(!VC.speech)return;
+  if(!VC.ws)return;   // not listening (the microphone was refused, or the voice did not load)
   await vcVoices();
   vcSay("Hi, I'm Clewbert. This is the Start here board. Ask me anything about it, or say: show me around.",VC.askSeq);
 };
