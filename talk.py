@@ -19,6 +19,7 @@ TTS_URL = os.environ.get('CANVAS_TTS_URL', 'http://127.0.0.1:8118')
 ACCESS_CERTS = ('https://%s.cloudflareaccess.com/cdn-cgi/access/certs' % os.environ['CF_ACCESS_TEAM']) if os.environ.get('CF_ACCESS_TEAM') else ''
 ACCESS_AUD = os.environ.get('CF_ACCESS_AUD', '')
 BUDGET_WORDS = 3000          # board text sent with one question
+FRAME_MAX, FRAME_FULL, FRAME_GIST_WORDS = 80, 2, 12   # frames of one board sent with a question: all as a gist, the 2 asked about whole
 CHUNK_WORDS = 120
 IMAGE_REF = re.compile(r'api/images/([0-9a-f]{64}\.(?:jpg|png|pdf))')
 STOP = set('a an the and or but if of to in on at by for with from about into over is are was were be been being it its '
@@ -208,7 +209,12 @@ do not hold what they look for, use the board descriptions in the map to say whi
 that it is a likely place, not a sure one.
 Use ONLY the numbered items below. A "board brief" item is a summary of the WHOLE board written after reading all of
 it: use it for broad questions (what is this board about, review it, main themes, people, decisions, what is missing,
-next steps) and the other items for details. Screenshot and PDF items are the words read out of the picture, so they can
+next steps) and the other items for details. Between the two are the board's frames: a "frame gist" item says in a line
+what one frame holds, a "frame summary" item sums up a whole frame. Use them to say what is where on the board and for
+questions about one frame or part of the board; when the user asks to go into, dive into or show a frame, put that frame
+item's number in "show" (the board zooms to the frame) and tell him what it holds. To go deeper ("more on that"), use
+the other items in that frame and say something new, not what you already said. When he asks what frames or parts a
+board has, never read them all out: say how many there are and name the three or four that matter most. Screenshot and PDF items are the words read out of the picture, so they can
 have broken lines or small reading mistakes.
 Your answer is spoken aloud: plain sentences, no lists, no markdown, at most four short sentences, and say numbers the
 way they are written in the items. If the items do not answer the question, say plainly that you could not find it on
@@ -220,7 +226,7 @@ WHAT THIS APP CAN DO (you control it through "show" and "view"; never say you ca
   briefly, for example "Here is the Mainichi article screenshot." Use "show" only when the user asks to see something.
 - "view": "fit" shows the whole board, "in" or "out" zooms one step, "brief" opens the board brief panel.
 - "open": the name of a space or board, exactly as written in the map, to open it when the user asks to go to, open or be
-  taken to a space or a whole board ("take me to the Jason Calacanis space"). "All boards" opens the list of all boards:
+  taken to a space or a whole board ("take me to the Research space"). "All boards" opens the list of all boards:
   use it when the user asks to go back out, go up, go home or go to the top or meta level. "Back to the space" means the
   space the current board is in.
 - "task": inside a board, when the user asks for agent work ("have the team find...", "have an agent find...", "start a
@@ -353,7 +359,7 @@ def scope_line(scope):
     return 'The question is about the board "%s".' % scope
 
 
-SEE = re.compile(r"\b(zoom|show|go to|go back|back out|back up|head back|return to|take (me|us)|exit|leave|go home|bring up|pull up|find|where('?s| is| are)|point (at|to|out)|look at|let me see|display|open|focus|jump|highlight|fit|whole board|full board)\b", re.I)
+SEE = re.compile(r"\b(zoom|show|go to|go back|back out|back up|head back|return to|take (me|us)|exit|leave|go home|bring up|pull up|find|where('?s| is| are)|point (at|to|out)|look at|let me see|display|open|focus|jump|highlight|fit|whole board|full board|go into|dive into|drill)\b", re.I)
 DEMO = re.compile(r"\b(demo|prototype|working (?:page|version|example)|see it (?:running|working|in action)|show me it working|build (?:a|me a|it as a) (?:page|site|web ?page))\b", re.I)
 YES = re.compile(r"^\W*(yes|yeah|yep|sure|ok(ay)?|please( do)?|do it|go ahead|go for it|open it|show me)\b", re.I)
 OFFER = re.compile(r"\b(open|show|take you)\b[^?]*\?\s*$", re.I)   # an answer that ends by offering to open or show something
@@ -362,13 +368,20 @@ TOP = re.compile(r"\b(meta|(top|home|main|start) (level|page|screen|view)|go hom
 NUM = re.compile(r'\d[\d,.:/]*\d|\d')
 
 
+SHORT_NUM = re.compile(r'(\d+(?:\.\d+)?)\s?([kKmM])\b')   # "$135k", "1.2M": the voice says them as "135,000", "1,200,000"
+
+
 def unsupported_numbers(answer, texts, question):
-    have = re.sub(r'[,\s]', '', ' '.join(texts) + ' ' + question)
+    text = ' '.join(texts) + ' ' + question
+    long = ' '.join('%d' % round(float(a) * (1000 if u in 'kK' else 1000000)) for a, u in SHORT_NUM.findall(text))
+    have = re.sub(r'[,\s]', '', text + ' ' + long)
     return [n for n in NUM.findall(answer) if re.sub(r'[,]', '', n).rstrip('.') not in have]
 
 
-def brief_entries(boards, briefs, scope):
-    """The finished briefs in scope as items: the whole brief for one board, the summary paragraph for many."""
+def brief_entries(boards, briefs, scope, question='', history=()):
+    """The finished briefs in scope as items: the whole brief for one board, the summary paragraph for many. Inside one
+    board, also one item per frame (from briefs.py's frame tree): the frames the question is about with their whole
+    summary, the others with a short gist, so the voice can say what is where and zoom to a frame."""
     out = []
     for b in boards:
         br = (briefs.get(b['id']) or {}).get('brief')
@@ -379,7 +392,60 @@ def brief_entries(boards, briefs, scope):
             text += '\n' + '\n'.join('%s: %s' % (sec['title'], ' '.join(p['text'] for p in sec['points']))
                                      for sec in br.get('sections', []) if sec.get('points'))
         out.append({'board': b['id'], 'boardName': b.get('name', ''), 'item': None, 'kind': 'board brief', 'frame': '', 'text': text})
-    return out[:40]
+    if len(boards) == 1:
+        tree = (briefs.get(boards[0]['id']) or {}).get('tree') or {}
+        frames = [tree['frames'][f] for f in tree.get('order') or [] if tree['frames'].get(f, {}).get('notes')]
+        if frames and out:
+            out[0]['text'] += '\nThis board has %d frames.' % sum(1 for f in frames if f['frame'])
+        want = set(tokens(question))   # only frames this question names come whole: a "tell me more" gets the frame's items instead
+        scored = sorted(((len(want & set(tokens(f['frame']))) * 3 + len(want & set(tokens(f['notes']))), n) for n, f in enumerate(frames)), reverse=True)
+        whole = {n for score, n in scored[:FRAME_FULL] if score > 0}
+        for n, f in enumerate(frames[:FRAME_MAX]):
+            w = f['notes'].split()
+            out.append({'board': boards[0]['id'], 'boardName': boards[0].get('name', ''), 'item': f.get('area'),
+                        'kind': 'frame summary' if n in whole else 'frame gist', 'frame': f['frame'] or '(items outside any frame)',
+                        'text': f['notes'] if n in whole else ' '.join(w[:FRAME_GIST_WORDS]) + (' …' if len(w) > FRAME_GIST_WORDS else ''),
+                        'notes': f['notes']})
+    return out[:40 + FRAME_MAX]
+
+
+def named_frame(question, entries):
+    """The frame item whose name the question says (most of its words), as [entry]; [] when none is clearly named."""
+    q = set(tokens(question))
+    best, pick = 0, []
+    for e in entries:
+        if e['kind'] in ('frame summary', 'frame gist') and e['item']:
+            name = set(tokens(e['frame']))
+            hit = len(q & name) / len(name) if name else 0
+            if hit >= .5 and len(q & name) > best:
+                best, pick = len(q & name), [e]
+    return pick
+
+
+def named_target(question, said, targets):
+    """The board or space the question names; for "open it", the one the answer says it opened. Boards before spaces."""
+    for text in (question, said if re.search(r'\bopen', said, re.I) else ''):
+        low = text.lower()
+        hits = [n for n in targets if n and n != 'all boards' and re.search(r'(?<!\w)' + re.escape(n) + r'(?!\w)', low)]
+        if hits:
+            return targets[max(hits, key=lambda n: ('board' in targets[n], len(n)))]
+    return None
+
+
+def same_words(a, b):
+    """How much of answer a is already in answer b (share of a's words), for catching a repeated answer."""
+    wa, wb = set(tokens(a)), set(tokens(b))
+    return len(wa & wb) / len(wa) if wa else 0
+
+
+def no_roll_call(said, entries):
+    """A spoken answer never reads out a board's frames one by one: more than five named becomes the count and four."""
+    names = [e['frame'] for e in entries if e['kind'] in ('frame summary', 'frame gist') and e['frame'] and not e['frame'].startswith('(')]
+    named = sorted((said.lower().find(n.lower()), n) for n in names if len(n) > 3 and n.lower() in said.lower())
+    if len(named) <= 5:
+        return said
+    return 'This board has %d frames. Among them are %s, %s, %s and %s.' % (
+        len(names), *[n for _, n in named[:4]])
 
 
 def board_gist(b, brief, words=35):
@@ -453,7 +519,7 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
     t0 = LAST_ASK[0] = time.time()
     interrupt_background()
     briefs = briefs or {}
-    entries = brief_entries(boards, briefs, scope) + context(question, history, boards, reader)
+    entries = brief_entries(boards, briefs, scope, question, history) + context(question, history, boards, reader)
     entries += [dict(t, kind='agent task') for t in tasks]   # {board, boardName, item (its frame), run, text}
     if team_text and len(boards) == 1:
         entries.append({'board': boards[0]['id'], 'boardName': boards[0].get('name', ''), 'item': None, 'kind': 'board team',
@@ -466,7 +532,12 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
         entries = [layout] + entries
     if not entries:
         return {'answer': 'There is nothing on %s to answer from yet.' % ('this board' if scope != 'all' and not scope.startswith('space:') else 'these boards'), 'sources': [], 'ms': 0}
-    said, nums, show_nums, view, go, task, agent_answer, task_mode, follow_up, web_card, add_teammate, steer = ask_model(question, history, entries, scope)
+    reply = ask_model(question, history, entries, scope)
+    if history and same_words(reply[0], history[-1]['a']) >= .7:   # Nemotron can read back its last answer: once more, asking for news
+        again = ask_model(question + ' (Say something new: do not repeat your last answer.)', history, entries, scope)
+        if same_words(again[0], history[-1]['a']) < .7:
+            reply = again
+    said, nums, show_nums, view, go, task, agent_answer, task_mode, follow_up, web_card, add_teammate, steer = reply
 
     def pick(numbers):
         out = []
@@ -500,12 +571,22 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
             task = question
         said = ("There's no working demo on the board yet, only code pasted as text. I've asked the team to build one: "
                 "it will show up as a live demo card in their frame, and I'll tell you when it's ready.")
+    if asked_to_see and not shown and not task and not follow_up:   # "dive into <frame>": zoom there even when the model left "show" empty
+        shown = named_frame(question, entries)
     opened = (layout['targets'].get(str(go or '').strip().strip('"').lower()) if layout and asked_to_see and not shown else None)
     if layout and asked_to_see and not shown and not opened and TOP.search(question):
         opened, view = {'space': ''}, None
+    if layout and asked_to_see and not shown and not opened:   # the model can say "I have opened the Sales board" and leaves "open" empty
+        opened = named_target(question, said, layout['targets'])
+    said = no_roll_call(said, entries)
+    for e in shown:   # went into a frame but the answer is about something else: say what the frame holds
+        if e['kind'] in ('frame summary', 'frame gist') and e['frame'].lower() not in said.lower():
+            said = 'Here is the %s frame. %s' % (e['frame'], ' '.join(re.split(r'(?<=[.!?])\s+', e['notes'])[:2]))
+            if e not in used:
+                used.append(e)
     said = re.sub(r'\s*(?:Sources?:\s*)?(?:\[\d+\][,;\s]*(?:and\s*)?)+(?=[.!?]|$)', '', said).strip()   # item numbers are not spoken
     said = re.sub(r'(?<!\.)\.\.(?!\.)', '.', said)
-    bad = unsupported_numbers(said, [e['text'] for e in (used or entries)] + ([layout['text']] if layout else []), question)
+    bad = unsupported_numbers(said, [e.get('notes') or e['text'] for e in (used or entries)] + ([layout['text']] if layout else []), question)
     checked = not bad
     if bad:
         said = "I found related items, but I couldn't confirm the details in them, so I won't guess. They're highlighted for you."

@@ -5,7 +5,11 @@ cut into parts (one frame at a time, ~2,500 words each), the model writes short 
 into a brief: a summary plus main threads, people and companies, decisions, open questions. Each point keeps the
 board items it came from. Kept in DATA_DIR/briefs/<board id>.json.
 
-- Only changed parts are read again (each part has a hash of its text), so an edit costs one or two calls.
+- The notes go up a tree: parts -> one summary per frame -> the brief. No call is sent more than CALL_WORDS of notes
+  (batches are summarized first when there is more), so a board of any size fits the model (Nemotron: 65,536 tokens).
+  The frame summaries are also what the voice uses to talk about, and zoom to, one frame of a board.
+- Only changed parts are read again (each part has a hash of its text), so an edit costs one or two calls; a frame
+  summary is redone only when one of its parts changed.
 - A board is re-read a couple of minutes after its last edit, and waits until its pictures have been read.
 - It pauses while questions are being asked (a home model server often answers one request at a time) and resumes after 20 s of quiet.
 - Numbers in the notes and the brief must appear in what they came from; sentences or points that fail are dropped.
@@ -14,6 +18,7 @@ import hashlib, http.client, json, math, os, re, threading, time, traceback
 import talk
 
 PART_WORDS = 2500
+CALL_WORDS = 12000   # notes sent in one combining call (a board with 47,000 words of notes broke a 65,000-token model window)
 PIECE_WORDS = 600
 QUIET_SECS = 120
 YIELD_SECS = 20   # a home model server often answers one thing at a time: no reading until questions have stopped this long
@@ -23,6 +28,11 @@ whole board can be written from everyone's notes later. Write factual notes, 60 
 its topics, the people and companies and what is said about them, decisions, commitments, dates and numbers, and open
 questions. Use ONLY the numbered items. Screenshot and PDF items are words read out of pictures, so skip garbled bits.
 Reply with JSON only: {"notes": "<plain sentences>", "sources": [<numbers of the items that matter most, at most 6>]}"""
+
+FRAME_SYSTEM = """You combine notes on pieces of the user's canvas board (numbered) into one set of notes on all of them
+together, 80 to 200 words: the topics, the people and companies and what is said about them, decisions, commitments,
+dates and numbers, and open questions. Use ONLY the notes. Keep names and numbers exactly as written.
+Reply with JSON only: {"notes": "<plain sentences>"}"""
 
 BRIEF_SYSTEM = """You write the brief of the user's whole canvas board from notes on each of its parts (numbered).
 Use ONLY the notes. Plain sentences, one per point, no markdown. Keep names and numbers exactly as in the notes.
@@ -132,11 +142,90 @@ def read_part(board_name, part):
     return {'hash': part['hash'], 'frame': part['frame'], 'notes': notes, 'sources': sources[:6] or ids[:3]}
 
 
-def combine(board_name, parts):
+def summarize(board_name, where, notes):
+    """One call: several notes as one set of notes on all of them (numbers not in the notes are dropped)."""
+    yield_to_questions()
+    lines = ['[%d] %s' % (n, x) for n, x in enumerate(notes, 1)]
+    out = talk.chat([{'role': 'system', 'content': FRAME_SYSTEM},
+                     {'role': 'user', 'content': 'Board: "%s". These notes are on %s.\n\nNOTES:\n%s' % (board_name, where, '\n\n'.join(lines))}],
+                    500, timeout=300, background=True)
+    if '_text' in out:
+        raise RuntimeError('the frame reply was not readable')
+    source = ' '.join(notes)
+    return ' '.join(x for x in _sentences(clean_notes(out.get('notes') or '')) if not talk.unsupported_numbers(x, [source], ''))
+
+
+def _batches(nodes, size):
+    out, cur, n = [], [], 0
+    for x in nodes:
+        k = len(x['notes'].split())
+        if cur and n + k > size:
+            out.append(cur)
+            cur, n = [], 0
+        cur.append(x)
+        n += k
+    return out + ([cur] if cur else [])
+
+
+def fold(board_name, where, notes):
+    """Notes on many pieces as notes on the whole, in calls that fit: batches are summarized first when there is too much."""
+    nodes = [{'notes': x} for x in notes if x]
+    while len(nodes) > 1 and sum(len(x['notes'].split()) for x in nodes) > CALL_WORDS:
+        batches = _batches(nodes, CALL_WORDS)
+        if len(batches) == len(nodes):
+            break
+        nodes = [{'notes': retry_if_cut(lambda b=b: summarize(board_name, where, [x['notes'] for x in b]))} for b in batches]
+    if len(nodes) == 1:
+        return nodes[0]['notes']
+    return retry_if_cut(lambda: summarize(board_name, where, [x['notes'] for x in nodes])) if nodes else ''
+
+
+def frame_tree(board, parts, old):
+    """One summary per frame, in board order: {'order': [frame names], 'frames': {name: {hash, frame, area, notes, parts}}}.
+    A frame of one part keeps that part's notes; a frame is summarized again only when one of its parts changed."""
+    areas = {}
+    for it in board.get('items') or []:
+        if it.get('type') == 'area' and it.get('text') and it['text'] not in areas:
+            areas[it['text']] = it['id']
+    order, members = [], {}
+    for n, p in enumerate(parts):
+        if p['frame'] not in members:
+            members[p['frame']] = []
+            order.append(p['frame'])
+        members[p['frame']].append(n)
+    frames = {}
+    for f in order:
+        idx = members[f]
+        h = hashlib.sha1(' '.join(parts[i]['hash'] for i in idx).encode()).hexdigest()
+        was = (old or {}).get(f) or {}
+        if was.get('hash') == h and was.get('notes'):
+            notes = was['notes']
+        elif len(idx) == 1:
+            notes = clean_notes(parts[idx[0]]['notes'])
+        else:
+            notes = fold(board.get('name', ''), ('the frame "%s"' % f) if f else 'the items outside any frame',
+                         [clean_notes(parts[i]['notes']) for i in idx])
+        frames[f] = {'hash': h, 'frame': f, 'area': areas.get(f), 'notes': notes, 'parts': idx}
+    return {'order': order, 'frames': frames}
+
+
+def combine(board_name, parts, tree=None):
+    """The brief, from the frame summaries (or, with no tree, from the part notes). Groups of frames are summarized
+    first when all of them would not fit one call. Each point cites real parts, for its Show links."""
     for p in parts:
         p['notes'] = clean_notes(p['notes'])
-    lines = ['[%d]%s %s' % (n, (' (frame "%s")' % p['frame']) if p['frame'] else '', p['notes'])
-             for n, p in enumerate(parts, 1) if p['notes']]
+    if tree:
+        nodes = [{'notes': tree['frames'][f]['notes'], 'label': tree['frames'][f]['frame'], 'parts': tree['frames'][f]['parts']}
+                 for f in tree['order'] if tree['frames'][f]['notes']]
+    else:
+        nodes = [{'notes': p['notes'], 'label': p['frame'], 'parts': [n]} for n, p in enumerate(parts) if p['notes']]
+    while len(nodes) > 1 and sum(len(x['notes'].split()) for x in nodes) > CALL_WORDS:
+        batches = _batches(nodes, CALL_WORDS)
+        if len(batches) == len(nodes):
+            break
+        nodes = [{'notes': retry_if_cut(lambda b=b: summarize(board_name, 'several frames', [x['notes'] for x in b])),
+                  'label': '', 'parts': [i for x in b for i in x['parts']]} for b in batches]
+    lines = ['[%d]%s %s' % (n, (' (frame "%s")' % x['label']) if x['label'] else '', x['notes']) for n, x in enumerate(nodes, 1)]
     if not lines:
         return None
     yield_to_questions()
@@ -145,24 +234,25 @@ def combine(board_name, parts):
                     2500, timeout=300, background=True)
     if '_text' in out:   # still not JSON after repair: never show the raw reply, try again later
         raise RuntimeError('the brief reply was not readable')
-    all_notes = ' '.join(p['notes'] for p in parts)
+    all_notes = ' '.join(x['notes'] for x in nodes)
     summary = ' '.join(x for x in _sentences(out.get('summary') or '')
                        if not talk.unsupported_numbers(x, [all_notes], ''))
     sections = []
     for sec in out.get('sections') or []:
         points = []
         for pt in sec.get('points') or []:
-            nums = []
+            cited = []
             for n in pt.get('parts') or []:
                 try:
                     i = int(n) - 1
                 except (TypeError, ValueError):
                     continue
-                if 0 <= i < len(parts):
-                    nums.append(i)
+                if 0 <= i < len(nodes) and i not in cited:
+                    cited.append(i)
+            nums = sorted({p for i in cited for p in nodes[i]['parts']})
             text = str(pt.get('text') or '').strip()
-            cited = ' '.join(parts[i]['notes'] for i in nums) or all_notes
-            if not text or talk.unsupported_numbers(text, [cited], ''):
+            cited_notes = ' '.join(nodes[i]['notes'] for i in cited) or all_notes
+            if not text or talk.unsupported_numbers(text, [cited_notes], ''):
                 continue
             items = []
             for i in nums:
@@ -256,6 +346,7 @@ class Briefer:
         if not st:
             return {'state': 'waiting', 'notes': []}
         parts = st.pop('parts', {}) or {}
+        st.pop('tree', None)
         notes = []
         for key in st.pop('order', None) or list(parts):
             p = parts.get(key)
@@ -344,22 +435,24 @@ class Briefer:
         old_parts = old.get('parts') or {}
         keep = {p['key']: old_parts[p['key']] for p in parts if old_parts.get(p['key'], {}).get('hash') == p['hash']}
         todo = [p for p in parts if p['key'] not in keep]
-        if not todo and old.get('brief') is not None and set(old_parts) == set(keep) and old.get('state') == 'ready':
+        if not todo and old.get('brief') is not None and set(old_parts) == set(keep) and old.get('state') == 'ready' and old.get('v') == 3:
             order = [p['key'] for p in parts]
-            if old.get('v') != 2 or old.get('order') != order:   # older brief: fix its Show links and note order, no reading needed
+            if old.get('order') != order:   # same parts in a new order: fix the Show links and note order, no reading needed
                 attribute(old['brief'], parts)
-                old.update(v=2, order=order)
+                old.update(order=order)
                 self.save(bid, old)
             return
         state = {'parts': keep, 'brief': old.get('brief'), 'state': 'reading', 'done': len(keep), 'total': len(parts),
-                 'read_at': old.get('read_at'), 'order': [p['key'] for p in parts], 'v': old.get('v')}
+                 'read_at': old.get('read_at'), 'order': [p['key'] for p in parts], 'v': old.get('v'), 'tree': old.get('tree')}
         self.save(bid, state)
         for p in todo:
             state['parts'][p['key']] = retry_if_cut(lambda: read_part(board.get('name', ''), p))
             state['done'] += 1
             self.save(bid, state)
         ordered = [state['parts'][p['key']] for p in parts]
-        state['brief'] = retry_if_cut(lambda: combine(board.get('name', ''), ordered)) if ordered else {'summary': '', 'sections': []}
+        state['tree'] = frame_tree(board, ordered, (old.get('tree') or {}).get('frames'))
+        self.save(bid, state)
+        state['brief'] = retry_if_cut(lambda: combine(board.get('name', ''), ordered, state['tree'])) if ordered else {'summary': '', 'sections': []}
         attribute(state['brief'], parts)
-        state.update(state='ready', read_at=int(time.time() * 1000), v=2)
+        state.update(state='ready', read_at=int(time.time() * 1000), v=3)
         self.save(bid, state)
