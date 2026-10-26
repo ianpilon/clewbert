@@ -16,7 +16,7 @@ Binds 127.0.0.1 only; Cloudflare Access sits in front of it on the tunnel.
   DATA_DIR/spaces.json        the spaces (folders) boards are sorted into; a board's "space" names one, or none
   DATA_DIR/runs/<id>.json     agent tasks: each one fills a frame on its board (see agents/runner.py)
 """
-import gzip, hashlib, json, mimetypes, os, re, secrets, subprocess, sys, tempfile, threading, time, urllib.request
+import gzip, hashlib, html, json, mimetypes, os, re, secrets, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import ssl
 if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.pem'):
@@ -321,6 +321,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(404, {'error': 'no such image'})
             ctype = {'jpg': 'image/jpeg', 'png': 'image/png', 'pdf': 'application/pdf'}[parts[2].rsplit('.', 1)[1]]
             return self.reply(200, data, ctype, {'Cache-Control': 'private, max-age=31536000, immutable'})
+        if len(parts) == 3 and parts[:2] == ['api', 'view'] and re.match(r'^[0-9a-f]{64}\.pdf$', parts[2]):
+            # a PDF in its own tab, titled with its name on the board (the file's own title is often "Untitled")
+            name = (urllib.parse.parse_qs(self.path.partition('?')[2]).get('name') or ['PDF'])[0][:200]
+            page = ('<!doctype html><meta charset="utf-8"><title>%s</title><style>html,body{margin:0;height:100%%;background:#525659}'
+                    'iframe{border:0;width:100%%;height:100%%;display:block}</style><iframe src="../images/%s" title="%s"></iframe>'
+                    % (html.escape(name), parts[2], html.escape(name)))
+            return self.reply(200, page.encode(), 'text/html; charset=utf-8', {'Cache-Control': 'no-cache'})
         if len(parts) == 3 and parts[:2] == ['api', 'demos'] and re.match(r'^r[0-9a-f]{12}-[a-z0-9-]{1,40}\.html$', parts[2]):
             # a page an agent wrote: sealed off from the canvas (its own blank origin: no cookies, no access to our data)
             try:

@@ -693,6 +693,12 @@
 <script>
 const $=s=>document.querySelector(s);
 function safeUrl(u){u=(u||'').trim();if(!u)return '';return /^https?:\/\//i.test(u)||/^api\//.test(u)?u:'https://'+u;}   // api/... = a file kept by this app (a PDF on the board)
+function cvOpenUrl(it){   // where clicking an item goes: a PDF opens in a page titled with its name, anything else at its address
+  const m=/^api\/images\/([0-9a-f]{64}\.pdf)$/.exec(it.url||'');
+  if(!m)return safeUrl(it.url);
+  let name=String(it.label||'').trim().replace(/\.pdf$/i,'');
+  if(!name||/^(untitled|document|download|file|scan)\b/i.test(name))name='PDF from '+((cvBoard&&cvBoard.name)||'the board');   // a file that came with no real name
+  return 'api/view/'+m[1]+'?name='+encodeURIComponent(name);}
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function escapeAttr(s){return escapeHtml(s==null?'':s);}
 
@@ -1130,7 +1136,7 @@ function cvItemEl(it){
     if(it.url){
       el.classList.add('haslink');
       let dom=it.url;try{dom=new URL(safeUrl(it.url)).hostname.replace(/^www\./,'');}catch(e){}
-      el.insertAdjacentHTML('beforeend',`<a class="cv-urlchip" href="${escapeAttr(safeUrl(it.url))}" target="_blank" rel="noopener" title="${escapeAttr(it.url)}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>${escapeHtml(it.label||dom)}</a>`);
+      el.insertAdjacentHTML('beforeend',`<a class="cv-urlchip" href="${escapeAttr(cvOpenUrl(it))}" target="_blank" rel="noopener" title="${escapeAttr(it.url)}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>${escapeHtml(it.label||dom)}</a>`);
       el.querySelector('.cv-urlchip').addEventListener('pointerdown',e=>e.stopPropagation());
     }
   }else if(it.type==='link'){
@@ -1235,7 +1241,7 @@ function cvItemEl(it){
       if(start.length>1)cvGroupBox();cvArrowsFollow();};
     const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);if(moved)cvSave();
       if(!moved&&group.length>1)cvSelect(it.id);   // a click (no drag) inside a group selects just that one
-      if(!moved&&group.length===1&&(it.type==='link'||(it.type==='img'&&it.url)))window.open(safeUrl(it.url),'_blank','noopener');
+      if(!moved&&group.length===1&&(it.type==='link'||(it.type==='img'&&it.url)))window.open(cvOpenUrl(it),'_blank','noopener');
       if(!moved&&group.length===1&&it.type==='file'&&it.src)window.open(it.src,'_blank','noopener');
       if(!moved&&group.length===1&&it.type==='shot')window.open('api/shots/'+it.run+'.jpg','_blank','noopener');
       if(!moved&&vid&&!e.shiftKey){if(vid.paused)vid.play();else vid.pause();}};
