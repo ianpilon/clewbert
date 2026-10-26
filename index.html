@@ -2087,6 +2087,7 @@ function vcClose(){
 const VC_MIC={audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:false}};
 async function vcEars(){
   VC.stream=await navigator.mediaDevices.getUserMedia(VC_MIC);vcWatch(VC.stream);
+  const t0=VC.stream.getAudioTracks()[0];VC.micId=(t0&&t0.getSettings&&t0.getSettings().deviceId)||VC.micId;   // the microphone you chose: a reconnect asks for that one again
   const cloud=vcMode()!=='local';
   const ws=cloud?vcCloudEar():new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ears');ws.binaryType='arraybuffer';
   if(!cloud)await new Promise((res,rej)=>{
@@ -2111,10 +2112,15 @@ async function vcEars(){
 function vcMicInfo(t){const g=(t&&t.getSettings&&t.getSettings())||{};
   return {label:t&&t.label,rate:g.sampleRate,echo:g.echoCancellation,device:(g.deviceId||'').slice(0,8),audioRate:VC.ac&&VC.ac.sampleRate,audio:VC.ac&&VC.ac.state};}
 function vcWatch(stream){const t=stream.getAudioTracks()[0];if(!t)return;
-  VC.micId=(t.getSettings&&t.getSettings().deviceId)||VC.micId;   // the microphone you chose: a reconnect asks for that one again
   t.onended=()=>vcMicRecover('ended');
   t.onmute=()=>setTimeout(()=>{if(t.muted&&VC.stream&&VC.stream.getAudioTracks()[0]===t)vcMicRecover('muted');},1500);
   vcLog('mic-open',vcMicInfo(t));}
+// the computer's own microphone choice wins: when it changes (yours plugged back in after a drop, or a new one picked), listen on that one
+navigator.mediaDevices&&navigator.mediaDevices.addEventListener&&navigator.mediaDevices.addEventListener('devicechange',async()=>{
+  const t=VC.stream&&VC.stream.getAudioTracks()[0];if(!VC.on||!t)return;
+  try{const ins=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='audioinput'),def=ins.find(d=>d.deviceId==='default'),
+      want=def&&ins.find(d=>d.deviceId!=='default'&&'Default - '+d.label===def.label);
+    if(want&&want.label!==t.label){VC.micId=want.deviceId;vcMicRecover('back');}}catch(e){}});
 async function vcMicRecover(why){
   // Chrome ending or muting the mic is certain, so it is always answered (at most 6 times a minute); a silent mic is a guess, so once per 15 s
   VC.recoveries=(VC.recoveries||[]).filter(x=>Date.now()-x<60000);
@@ -2131,7 +2137,8 @@ async function vcMicRecover(why){
     if(old)old.getTracks().forEach(x=>x.stop());
     VC.stream=s;vcWatch(s);VC.src=vcAudio().createMediaStreamSource(s);VC.src.connect(VC.node);VC.heardAt=Date.now();
     if(changed)vcEarsReconnect();   // another microphone sounds louder or quieter: the ears learn your level again
-    vcNote(changed?`The microphone dropped out; now listening on ${(s.getAudioTracks()[0]||{}).label||'another microphone'}.`:'The microphone dropped out, so I reconnected it.');setTimeout(()=>{if($('#vcNote').textContent.startsWith('The microphone dropped'))vcNote('');},6000);
+    const msg=why==='back'?`Now listening on ${(s.getAudioTracks()[0]||{}).label||'your microphone'}.`:changed?`The microphone dropped out; now listening on ${(s.getAudioTracks()[0]||{}).label||'another microphone'}.`:'The microphone dropped out, so I reconnected it.';
+    vcNote(msg);setTimeout(()=>{if($('#vcNote').textContent===msg)vcNote('');},6000);
     vcLog('mic-back',{label:(s.getAudioTracks()[0]||{}).label});}
   catch(e){vcNote('The microphone stopped and could not be reopened. Close and reopen the mic.');vcLog('mic-failed',{error:String(e)});}
   finally{VC.recovering=false;VC.recoveredAt=Date.now();}
