@@ -67,6 +67,12 @@
   .menu button.danger{color:var(--lost)}
   .menu button:disabled{opacity:.45;pointer-events:none}
   .menu hr{border:none;border-top:1px solid var(--border);margin:5px 0}
+  .menu .mlink{display:flex;gap:6px;padding:4px 6px}   /* the link box in the phone's add menu */
+  .menu .mlink input{flex:1;min-width:0;border:1px solid var(--border-strong);border-radius:7px;padding:8px 9px;font:inherit;font-size:16px}
+  .menu .mlink .go{flex:none;background:var(--primary);color:#fff;font-weight:600;text-align:center}
+  .menu .mlink .go:hover{background:var(--primary)}
+  .menu .merr{font-size:12px;color:#b91c1c;padding:0 10px 4px}
+  .menu .merr:empty{display:none}
   .bmore{position:absolute;right:10px;bottom:12px;width:28px;height:28px;border-radius:7px;border:1px solid transparent;background:none;color:var(--muted);font-size:16px;line-height:1;padding:0}
   .bmore:hover{border-color:var(--border);background:#fafbfc;color:var(--ink)}
   .bcard .bmeta{padding-right:44px}
@@ -1039,7 +1045,8 @@ function cvDrop(ids){
   $('#cvWorld').querySelectorAll('.cv-item').forEach(el=>{if(ids.has(el.dataset.id))el.remove();});
   $('#cvEmpty').style.display=cvBoard.items.length?'none':'grid';cvMarkSel();cvSave();
 }
-const CV_PINCH={pts:new Map(),on:false,used:false};   // fingers on the board; used = a pinch happened since the first touch
+const CV_PINCH={pts:new Map(),on:false,used:false};
+let CV_TAPPED=0;   // when a double tap last opened the add menu   // fingers on the board; used = a pinch happened since the first touch
 function cvRender(){
   const w=$('#cvWorld');w.innerHTML='';
   cvBoard.items.forEach(it=>w.appendChild(cvItemEl(it)));
@@ -1520,7 +1527,7 @@ function cvLinkPopClose(){$('#cvLinkPop').classList.remove('open');cvLinkTarget=
 function cvLinkPopOpenNow(){return $('#cvLinkPop').classList.contains('open');}
 
 // screenshots are shrunk to ≤1600px JPEG, uploaded once, and referenced by URL from the board
-function cvAddImage(file,stagger=0){
+function cvAddImage(file,stagger=0,at){
   const boardId=cvBoardId,img=new Image();
   img.onload=()=>{
     const MAX=1600,k=Math.min(1,MAX/Math.max(img.naturalWidth,img.naturalHeight));
@@ -1533,7 +1540,7 @@ function cvAddImage(file,stagger=0){
       try{src=(await api('images',{method:'POST',headers:{'Content-Type':'image/jpeg'},body:blob})).src;}
       catch(e){cvSaveState('image');return;}
       if(cvBoardId!==boardId||!cvBoard)return;
-      const p=cvCenter(),dw=Math.min(440,c.width),dh=dw*c.height/c.width;
+      const p=at||cvCenter(),dw=Math.min(440,c.width),dh=dw*c.height/c.width;
       cvAddItem({type:'img',src,x:p.x-dw/2+stagger*26,y:p.y-dh/2+stagger*26,w:dw,h:dh},true);
     },'image/jpeg',.85);
   };
@@ -1546,7 +1553,7 @@ function cvSize(n){return n<1024?n+' B':n<1048576?Math.round(n/1024)+' KB':n<107
 // (Cloudflare refuses one request over 100 MB), and becomes a PDF page, a player, or a file card.
 function cvAddFiles(files,p){
   files.forEach((f,i)=>{
-    if(/^image\/(jpeg|png|webp|bmp|svg\+xml)$/.test(f.type))return cvAddImage(f,i);
+    if(/^image\/(jpeg|png|webp|bmp|svg\+xml)$/.test(f.type))return cvAddImage(f,i,p);
     const c=p||cvCenter();cvUploadFile(f,{x:c.x+(i%4)*520,y:c.y+Math.floor(i/4)*360});   // several at once: side by side, 4 to a row
   });
 }
@@ -1614,9 +1621,38 @@ async function cvUploadFile(file,p){
   document.addEventListener('keydown',e=>{if(e.code!=='Space'||!cvOpenNow())return;const ae=document.activeElement;if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA|SELECT|BUTTON/.test(ae.tagName)))return;e.preventDefault();if(!cvSpace){cvSpace=true;stage.classList.add('space');}});
   document.addEventListener('keyup',e=>{if(e.code==='Space'){cvSpace=false;stage.classList.remove('space');}});
   window.addEventListener('blur',()=>{cvSpace=false;stage.classList.remove('space');});
+  // phones and tablets: a double tap on empty board opens "add" choices there (like Miro): camera, photos, a link, a note
+  let lastTap=null;
+  stage.addEventListener('pointerdown',e=>{
+    if(e.pointerType!=='touch'||CV_PINCH.pts.size>1||cvTool!=='select'||e.target.closest('.cv-item,#cvTb,.cv-fly')){lastTap=null;return;}
+    const now=Date.now();
+    if(lastTap&&now-lastTap.t<350&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<30){lastTap=null;e.stopPropagation();cvTapMenu(e);return;}   // stop: the page's "tap outside closes menus" would close it at once
+    lastTap={t:now,x:e.clientX,y:e.clientY};
+  });
+  function cvTapMenu(e){
+    const p=cvPoint(e),cx=e.clientX,cy=e.clientY;CV_TAPPED=Date.now();
+    const pick=(accept,camera)=>{const f=document.createElement('input');f.type='file';f.accept=accept;if(camera)f.capture='environment';else f.multiple=true;
+      f.onchange=()=>{if(f.files&&f.files.length)cvAddFiles([...f.files],p);};f.click();};
+    menuOpen({getBoundingClientRect:()=>({left:cx,right:cx+110,top:cy,bottom:cy})},`<div class="mh">Add here</div>
+      <button data-a="photo">Take a photo</button><button data-a="library">Upload from your photos</button>
+      <button data-a="link">Paste a link</button><button data-a="note">Sticky note</button>`,m=>{
+      m.querySelector('[data-a="photo"]').onclick=()=>{menuClose();pick('image/*',true);};
+      m.querySelector('[data-a="library"]').onclick=()=>{menuClose();pick('image/*,video/*',false);};
+      m.querySelector('[data-a="note"]').onclick=()=>{menuClose();const it=cvAddItem({type:'note',text:'',x:p.x-105,y:p.y-60,w:210,h:120},true);
+        const el=stage.querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(el)cvEditNote(el);};
+      m.querySelector('[data-a="link"]').onclick=()=>{
+        m.innerHTML=`<div class="mh">Paste a link</div><div class="mlink"><input type="url" inputmode="url" autocomplete="off" placeholder="https://…"><button class="go">Add</button></div><div class="merr"></div>`;
+        const inp=m.querySelector('input'),add=()=>{const u=cvExtractUrl(inp.value.trim());
+          if(!u){m.querySelector('.merr').textContent='That does not look like a web address.';return;}
+          menuClose();cvNewLink(u,p.x-140,p.y-55);};
+        m.querySelector('.go').onclick=add;inp.addEventListener('keydown',ev=>{if(ev.key==='Enter')add();});inp.focus();
+        if(navigator.clipboard&&navigator.clipboard.readText)navigator.clipboard.readText().then(t=>{const u=cvExtractUrl(String(t||'').trim());if(u&&!inp.value)inp.value=u;}).catch(()=>{});
+      };
+    });
+  }
   // double-click empty space → sticky note
   stage.addEventListener('dblclick',e=>{
-    if(e.target.closest('.cv-item'))return;
+    if(e.target.closest('.cv-item')||Date.now()-CV_TAPPED<800)return;   // a phone's double tap opened the menu instead
     const p=cvPoint(e);
     const it=cvAddItem({type:'note',text:'',x:p.x-100,y:p.y-60,w:210,h:120});
     const el=stage.querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(el)cvEditNote(el);
