@@ -507,7 +507,13 @@
   .vc-stop:hover{background:var(--lost);color:#fff}
   .vc-thread{flex:1 1 auto;min-height:0;max-height:calc(100vh - 230px);overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding-right:4px}
   .vc-thread:empty{display:none}
-  .vc-grab,.vc-last{display:none}   /* phones only: the voice card is a sheet at the bottom (see the 760px rules) */
+  .vc-grab,.vc-last{display:none}
+  .vc-prog{font-size:12.5px;color:var(--muted)}   /* Clewbert's own voice downloading: one line and a bar, so the card never changes size */
+  .vc-prog-row{display:flex;gap:10px;align-items:baseline;margin-bottom:6px}
+  .vc-prog-row span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vc-prog-row b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;min-width:9ch;text-align:right}
+  .vc-prog i{display:block;height:6px;border-radius:3px;background:#e5e7eb;overflow:hidden}
+  .vc-prog i b{display:block;height:100%;width:0;background:#10b981;border-radius:3px;transition:width .3s}   /* phones only: the voice card is a sheet at the bottom (see the 760px rules) */
   .vc-turn{display:flex;flex-direction:column;gap:6px}
   .vc-turn+.vc-turn{border-top:1px solid var(--border);padding-top:12px}
   .vc-q{font-style:italic;color:var(--muted);font-size:13px}
@@ -730,6 +736,7 @@
   <div class="vc-thread" id="vcThread"></div>
   <div class="vc-heard" id="vcHeard"></div>
   <div class="vc-note" id="vcNote"></div>
+  <div class="vc-prog" id="vcProg" hidden><div class="vc-prog-row"><span>Getting Clewbert's voice (one time only)</span><b id="vcProgN"></b></div><i><b id="vcProgBar"></b></i></div>
   <form class="vc-type" id="vcType"><input id="vcInput" placeholder="Or type a question" autocomplete="off"><button>Ask</button></form>
 </div>
 
@@ -2055,9 +2062,10 @@ async function vcOpen(){
   if(VC.on){vcClose();return;}
   VC.on=true;VC.muted=false;$('#vcMute').classList.remove('on');$('#vc').hidden=false;if(vcMobile())vcSheet('half');VC.scope=null;vcTitle();vcNote('');vcAudio();vcSetState('');vcVoices();newsAskPermission();NEWS.first=true;
   if(vcMode()==='browser'){   // Clewbert's own voice: downloaded the first time, from the browser's store after that
-    VB.progress=b=>vcNote(`Getting Clewbert's voice ready, one time only: ${Math.round(b/1e6)} of about 480 MB.`);vcNote("Getting Clewbert's voice ready…");
-    try{const dev=await vbLoad();vcNote(dev==='wasm'?'This browser cannot use the graphics chip, so the voice will be slow. Chrome or Edge on a recent computer works best.':'');}
-    catch(e){vcNote("Clewbert's voice did not load ("+e.message+"). Close and reopen the mic to try again, or type below.");return;}
+    const prog=$('#vcProg');prog.hidden=false;vcNote('');
+    VB.progress=b=>{$('#vcProgN').textContent=Math.round(b/1e6)+' / 480 MB';$('#vcProgBar').style.width=Math.min(99,b/480e6*100)+'%';};VB.progress(0);
+    try{const dev=await vbLoad();prog.hidden=true;vcNote(dev==='wasm'?'This browser cannot use the graphics chip, so the voice will be slow. Chrome or Edge on a recent computer works best.':'');}
+    catch(e){prog.hidden=true;vcNote("Clewbert's voice did not load ("+e.message+"). Close and reopen the mic to try again, or type below.");return;}
     if(!VC.on)return;
   }
   try{await vcEars();vcSetState('listening');newsPoll();}
