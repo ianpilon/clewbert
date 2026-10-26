@@ -315,16 +315,19 @@ WHAT THIS APP CAN DO (you control it through "show" and "view"; never say you ca
   NOT a demo. When the user wants to see something running ("build a demo", "show me it working"), and there is no working
   demo item for it, that is agent work: a "follow_up" of the task it belongs to (or a new "task"), asking the team to
   build a working demo page. Never tell them to copy code into a file.
+- "open_item": when they ask to OPEN a link, PDF, file or picture that is on the board ("open the YouTube link", "open
+  the quick guide"), put that item's number in "open_item" and say you are opening it in a new tab. If more than one
+  item could be meant ("open the link" with two links), leave it null and ask which one, naming them. Never use
+  "web_card" for something already on the board: opening it is "open_item".
 - "web_card": when the user wants to SEE a website himself ("open that site so we can look at it", "pull up their site"),
   put its address (from the items, or one they say) in "web_card": the live page opens as a card on the board that they
   can scroll and click. Say it is on the board.
 - "add_teammate": inside a board, when the user asks to add someone to the team ("add a developer", "we need a designer"),
   put {"name": "<short role name>", "role": "<what they do, in plain words>"} in "add_teammate". Starter roles you can
   name: Researcher, Writer, Analyst, Developer (reads a site's code to find how something works), Fact-checker.
-- It CANNOT edit, move, delete or create items (only agent tasks do that, and web_card), change colours, or open new
-  browser tabs. If asked, say so plainly
+- It CANNOT edit, move, delete or create items (only agent tasks do that, and web_card), change colours, or open tabs other than "open_item". If asked, say so plainly
   and say what you can do instead. Never claim to have done anything else.
-Reply with JSON only: {"answer": "<what to say>", "sources": [<item numbers that answer the question, outlined for the user; not ones you mention only to rule them out>], "show": [<item numbers to show, or empty>], "view": null, "open": null, "task": null, "task_mode": "team", "agent_answer": null, "follow_up": null, "web_card": null, "add_teammate": null, "steer": null}"""
+Reply with JSON only: {"answer": "<what to say>", "sources": [<item numbers that answer the question, outlined for the user; not ones you mention only to rule them out>], "show": [<item numbers to show, or empty>], "view": null, "open": null, "task": null, "task_mode": "team", "agent_answer": null, "follow_up": null, "web_card": null, "open_item": null, "add_teammate": null, "steer": null}"""
 
 
 def ask_model(question, history, entries, scope):
@@ -340,7 +343,7 @@ def ask_model(question, history, entries, scope):
     out = chat(msgs, 500)
     return (str(out.get('answer') or out.get('_text') or '').strip(), out.get('sources') or [], out.get('show') or [], out.get('view'),
             out.get('open'), out.get('task'), out.get('agent_answer'), out.get('task_mode'), out.get('follow_up'),
-            out.get('web_card'), out.get('add_teammate'), out.get('steer'))
+            out.get('web_card'), out.get('add_teammate'), out.get('steer'), out.get('open_item'))
 
 
 BACKGROUND = {'conn': None}   # the brief reader's call in flight, cut when a question arrives
@@ -602,7 +605,7 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
         again = ask_model(question + ' (Say something new: do not repeat your last answer.)', history, entries, scope)
         if same_words(again[0], history[-1]['a']) < .7:
             reply = again
-    said, nums, show_nums, view, go, task, agent_answer, task_mode, follow_up, web_card, add_teammate, steer = reply
+    said, nums, show_nums, view, go, task, agent_answer, task_mode, follow_up, web_card, add_teammate, steer, open_num = reply
 
     def pick(numbers):
         out = []
@@ -615,6 +618,10 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
                 out.append(entries[i])
         return out
     used = pick(nums)
+    opening = [e for e in pick([open_num]) if e['item']]   # "open the YouTube link": the page opens it in a new tab
+    if opening:
+        web_card = None   # the model also asked for a web card: that made a second copy of the link
+        used = opening + [e for e in used if e not in opening]
     if not used and said:   # the model read an item but listed no sources: outline the item the question names and the answer is taken from
         asked = set(tokens(question))   # a long PDF matches most answers, so the question has to name it ("the quick guide PDF")
         best = max(((same_words(said, e.get('notes') or e['text']), n) for n, e in enumerate(entries)
@@ -643,7 +650,7 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
             task = question
         said = ("There's no working demo on the board yet, only code pasted as text. I've asked the team to build one: "
                 "it will show up as a live demo card in their frame, and I'll tell you when it's ready.")
-    if asked_to_see and not shown and not task and not follow_up:   # "dive into <frame>": zoom there even when the model left "show" empty
+    if asked_to_see and not shown and not task and not follow_up and not web_card and not opening:   # "put their site on the board" is not the "Put things on the board" frame   # "dive into <frame>": zoom there even when the model left "show" empty
         shown = named_frame(question, entries)
     opened = (layout['targets'].get(str(go or '').strip().strip('"').lower()) if layout and asked_to_see and not shown else None)
     if layout and asked_to_see and not shown and not opened and TOP.search(question):
@@ -678,6 +685,7 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
             'agent_answer': which_answer(agent_answer, entries, waiting),
             'follow_up': which_task(follow_up, entries),
             'steer': which_task(steer, entries, running=True),
+            'open_item': {'board': opening[0]['board'], 'item': opening[0]['item']} if opening else None,
             'web_card': str(web_card).strip() if isinstance(web_card, str) and re.match(r'^(https?://)?[\w.-]+\.[a-z]{2,}', str(web_card).strip(), re.I) else None,
             'add_teammate': add_teammate if isinstance(add_teammate, dict) and str(add_teammate.get('name') or '').strip() and len(boards) == 1 else None,
             'view': view if view in ('fit', 'in', 'out', 'brief') else None,

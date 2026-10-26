@@ -532,6 +532,7 @@
   .vc-src button:hover{border-color:#f59e0b;background:#fffbeb}
   .vc-src button b{font-weight:700;color:var(--muted);margin-right:5px}
   .vc-note{font-size:11.5px;color:var(--muted)}
+  .vc-openbtn{display:block;margin-top:6px;padding:8px 12px;border-radius:8px;background:var(--primary);color:#fff;font-weight:600;font-size:12.5px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .vc-type{display:flex;gap:6px;margin-top:2px}
   .vc-type input{flex:1;min-width:0;padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:13px;outline:none;color:var(--ink)}
   .vc-type input:focus{border-color:var(--primary)}
@@ -2281,6 +2282,7 @@ async function vcAsk(q){
   else if(j.open)vcGoTo(j.open);   // the user asked to go to a space or a whole board
   else if(j.view)vcView(j.view);
   else if(board&&cvBoardId===board){const ids=(j.sources||[]).filter(s=>s.board===board&&s.item).map(s=>s.item);if(ids.length)vcFocus(ids);}
+  if(j.open_item&&j.open_item.board===board&&cvBoardId===board)vcOpenItem(j.open_item.item);   // "open the YouTube link"
   vcSay(j.answer,seq,false);
 }
 function vcGo(s){
@@ -2359,6 +2361,18 @@ function vcWebCard(w){   // the live page as a card in the middle of the view, s
   if(w.frameable){cvAddItem({type:'web',url:w.url,x,y,w:cw*k,h:ch*k},true);return;}
   const it=cvAddItem({type:'link',url:w.url,x,y,w:280*k,h:110*k,pending:true,tries:1},true);cvUnfurl(cvBoardId,it.id,w.url);
   vcNote('That site does not allow being shown inside other pages, so it is a link card instead: click it to open the site.');
+}
+function vcOpenItem(id){   // opens what clicking the item opens; Chrome lets a page open a tab only right after a click, so if it is blocked, a button does it
+  const it=cvBoard&&cvBoard.items.find(i=>i.id===id);if(!it)return;
+  const url=it.type==='file'?it.src:it.url?cvOpenUrl(it):it.type==='img'?it.src:null;
+  if(!url){vcNote('That item has nothing to open.');return;}
+  const w=window.open(url,'_blank');
+  if(w){w.opener=null;return;}
+  const name=it.type==='link'?(it.unfurl&&it.unfurl.title)||it.url:it.label||'it';
+  vcNote('');const a=document.createElement('a');a.className='vc-openbtn';a.href=url;a.target='_blank';a.rel='noopener';
+  a.textContent='Open: '+String(name).slice(0,60)+' ↗';a.onclick=()=>setTimeout(()=>vcNote(''),0);
+  $('#vcNote').append('Your browser blocked the new tab. ',a);
+  if(vcMobile())vcSheet('half');   // the folded sheet hides the button
 }
 function vcGoTo(o){
   if(o.board){if(cvBoardId!==o.board)location.hash=o.board;return;}
