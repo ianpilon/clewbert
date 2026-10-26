@@ -244,6 +244,7 @@
   .cv-area.sel .cv-dlchip{display:inline-flex}
   .haslink .cv-urlchip:has(~.cv-dlchip){max-width:calc(100% - 48px)}
   .cv-img.haslink{cursor:pointer}
+  .cv-img.uploading::after{content:"Uploading…";position:absolute;left:8px;top:8px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.94);box-shadow:var(--shadow);font-size:11px;color:var(--muted)}
   .cv-linkpop{position:fixed;z-index:90;display:none;flex-direction:column;gap:8px;width:340px;max-width:calc(100vw - 16px);background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(16,20,28,.22);padding:12px}
   .cv-linkpop.open{display:flex}
   .cv-linkpop label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
@@ -742,7 +743,7 @@ async function api(path,opt={}){
 }
 const putJson=body=>({method:'PUT',headers:{'Content-Type':'application/json'},body});
 function boardBody(b){const ids=new Set(b.items.map(i=>i.id));   // agent items this page removed: the server keeps the ones it has not seen yet
-  return JSON.stringify({name:b.name,items:b.items.filter(i=>!i.uploading).map(({pending,...i})=>i),view:b.view,deleted:[...agSeen(b.id)].filter(id=>!ids.has(id))});}
+  return JSON.stringify({name:b.name,items:b.items.filter(i=>!i.uploading).map(({pending,_local,...i})=>i),view:b.view,deleted:[...agSeen(b.id)].filter(id=>!ids.has(id))});}
 
 let cvBoard=null, cvBoardId=null, cvSel=new Set(), cvUidN=1, cvDropN=0, cvSpace=false;   // cvSel: the selected item ids
 const cvView={x:60,y:40,s:1};
@@ -1189,7 +1190,9 @@ function cvItemEl(it){
     // big boards (1,300 pictures, 350 MB) would fill the connection for minutes: cvSharpen loads a picture only
     // once it is on screen, as the 400 px copy, and the full one only when it shows large
     const th=it.preview||cvSharp.has(it.src)?it.src:cvThumb(it.src);
-    el.innerHTML=`<div class="frame"><img ${th!==it.src?`data-thumb="${escapeAttr(th)}" data-full="${escapeAttr(it.src)}"`:`src="${escapeAttr(th)}"`} draggable="false"></div>`;
+    el.innerHTML=it._local?`<div class="frame"><img src="${escapeAttr(it._local)}" draggable="false"></div>`   // added on this device: shown from its own copy
+      :`<div class="frame"><img ${th!==it.src?`data-thumb="${escapeAttr(th)}" data-full="${escapeAttr(it.src)}"`:`src="${escapeAttr(th)}"`} draggable="false"></div>`;
+    if(it.uploading)el.classList.add('uploading');
     if(it.url){
       el.classList.add('haslink');
       let dom=it.url;try{dom=new URL(safeUrl(it.url)).hostname.replace(/^www\./,'');}catch(e){}
@@ -1526,22 +1529,30 @@ function cvLinkPopOpen(it,el){
 function cvLinkPopClose(){$('#cvLinkPop').classList.remove('open');cvLinkTarget=null;}
 function cvLinkPopOpenNow(){return $('#cvLinkPop').classList.contains('open');}
 
-// screenshots are shrunk to ≤1600px JPEG, uploaded once, and referenced by URL from the board
+// screenshots and photos are shrunk to ≤1600px JPEG and show at once from this device's copy ("Uploading…" on them),
+// while the upload runs behind; the board then keeps the stored copy's address. Waiting for the upload, then fetching
+// the picture back, made a phone photo take seconds to appear.
 function cvAddImage(file,stagger=0,at){
   const boardId=cvBoardId,img=new Image();
   img.onload=()=>{
     const MAX=1600,k=Math.min(1,MAX/Math.max(img.naturalWidth,img.naturalHeight));
     const c=document.createElement('canvas');
     c.width=Math.max(1,Math.round(img.naturalWidth*k));c.height=Math.max(1,Math.round(img.naturalHeight*k));
+    if(cvBoardId!==boardId||!cvBoard)return;
+    const p=at||cvCenter(),dw=Math.min(440,c.width),dh=dw*c.height/c.width;   // shown now, as the photo itself; shrunk and uploaded behind it
+    const it=cvAddItem({type:'img',src:'',uploading:true,_local:img.src,x:p.x-dw/2+stagger*26,y:p.y-dh/2+stagger*26,w:dw,h:dh},true);
     const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);ctx.drawImage(img,0,0,c.width,c.height);
-    URL.revokeObjectURL(img.src);
     c.toBlob(async blob=>{
       let src;
       try{src=(await api('images',{method:'POST',headers:{'Content-Type':'image/jpeg'},body:blob})).src;}
-      catch(e){cvSaveState('image');return;}
-      if(cvBoardId!==boardId||!cvBoard)return;
-      const p=at||cvCenter(),dw=Math.min(440,c.width),dh=dw*c.height/c.width;
-      cvAddItem({type:'img',src,x:p.x-dw/2+stagger*26,y:p.y-dh/2+stagger*26,w:dw,h:dh},true);
+      catch(e){if(cvBoardId===boardId&&cvBoard&&cvBoard.items.includes(it))cvDrop([it.id]);cvSaveState('image');return;}
+      it.src=src;delete it.uploading;   // not saved until now: the board only ever stores pictures that arrived
+      if(cvBoardId===boardId&&cvBoard){
+        if(!cvBoard.items.includes(it))return;   // deleted while it uploaded
+        const el=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`);if(el)el.classList.remove('uploading');cvSave();
+      }else{   // you went to another board meanwhile: add it to the one it was dropped on
+        try{const b=await api('boards/'+boardId);b.items.push(it);await api('boards/'+boardId,putJson(boardBody(b)));CV_CACHE.delete(boardId);}catch(e){}
+      }
     },'image/jpeg',.85);
   };
   img.src=URL.createObjectURL(file);
