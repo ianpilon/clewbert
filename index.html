@@ -1039,6 +1039,7 @@ function cvDrop(ids){
   $('#cvWorld').querySelectorAll('.cv-item').forEach(el=>{if(ids.has(el.dataset.id))el.remove();});
   $('#cvEmpty').style.display=cvBoard.items.length?'none':'grid';cvMarkSel();cvSave();
 }
+const CV_PINCH={pts:new Map(),on:false,used:false};   // fingers on the board; used = a pinch happened since the first touch
 function cvRender(){
   const w=$('#cvWorld');w.innerHTML='';
   cvBoard.items.forEach(it=>w.appendChild(cvItemEl(it)));
@@ -1288,7 +1289,7 @@ function cvItemEl(it){
     if(it.type!=='area'&&group.length===1){it.z=++cvBoard.maxZ;el.style.zIndex=it.z;}
     const world=$('#cvWorld');let start=group.map(i=>({i,x:i.x,y:i.y,el:i===it?el:world.querySelector(`.cv-item[data-id="${i.id}"]`)}));
     const sx=e.clientX,sy=e.clientY;let moved=false;
-    const mv=ev=>{if(!moved&&Math.abs(ev.clientX-sx)+Math.abs(ev.clientY-sy)>3){moved=true;
+    const mv=ev=>{if(CV_PINCH.used)return;if(!moved&&Math.abs(ev.clientX-sx)+Math.abs(ev.clientY-sy)>3){moved=true;
         if(e.altKey){   // option-drag: the copies move, the originals stay where they were
           const copies=cvCloneInto(cvWithContents(new Set(group.map(i=>i.id))),0,0),sel=[...cvSel];
           cvRender();cvSelect(sel.map(id=>copies.orig.get(id)).filter(Boolean));
@@ -1296,7 +1297,7 @@ function cvItemEl(it){
       const dx=(ev.clientX-sx)/cvView.s,dy=(ev.clientY-sy)/cvView.s;
       for(const g of start){g.i.x=g.x+dx;g.i.y=g.y+dy;if(g.el){g.el.style.left=g.i.x+'px';g.el.style.top=g.i.y+'px';}}
       if(start.length>1)cvGroupBox();cvArrowsFollow();};
-    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);if(moved)cvSave();
+    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);if(moved)cvSave();if(CV_PINCH.used)return;
       if(!moved&&group.length>1)cvSelect(it.id);   // a click (no drag) inside a group selects just that one
       if(!moved&&group.length===1&&(it.type==='link'||(it.type==='img'&&it.url)))window.open(cvOpenUrl(it),'_blank','noopener');
       if(!moved&&group.length===1&&it.type==='file'&&it.src)window.open(it.src,'_blank','noopener');
@@ -1591,7 +1592,7 @@ async function cvUploadFile(file,p){
     e.preventDefault();
     stage.classList.add('panning');
     const sx=e.clientX,sy=e.clientY,ox=cvView.x,oy=cvView.y;
-    const mv=ev=>{cvView.x=ox+ev.clientX-sx;cvView.y=oy+ev.clientY-sy;cvApplyView();};
+    const mv=ev=>{if(CV_PINCH.used)return;cvView.x=ox+ev.clientX-sx;cvView.y=oy+ev.clientY-sy;cvApplyView();};
     const up=()=>{stage.classList.remove('panning');window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);};
     window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);
   });
@@ -1620,6 +1621,25 @@ async function cvUploadFile(file,p){
     const it=cvAddItem({type:'note',text:'',x:p.x-100,y:p.y-60,w:210,h:120});
     const el=stage.querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(el)cvEditNote(el);
   });
+  // two fingers (phone, tablet): pinch zooms around the point between them, and moving them pans
+  const pts=CV_PINCH.pts,gap=()=>{const [a,b]=[...pts.values()];return Math.hypot(a.x-b.x,a.y-b.y)||1;},
+    mid=()=>{const [a,b]=[...pts.values()],r=stage.getBoundingClientRect();return {x:(a.x+b.x)/2-r.left,y:(a.y+b.y)/2-r.top};};
+  stage.addEventListener('pointerdown',e=>{
+    if(e.pointerType!=='touch')return;
+    pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pts.size!==2)return;
+    e.stopPropagation();e.preventDefault();   // the second finger starts no drag of its own
+    const m=mid();Object.assign(CV_PINCH,{on:true,used:true,d0:gap(),m0:m,s0:cvView.s,wx:(m.x-cvView.x)/cvView.s,wy:(m.y-cvView.y)/cvView.s});
+  },true);
+  window.addEventListener('pointermove',e=>{
+    if(!pts.has(e.pointerId))return;
+    pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(!CV_PINCH.on||pts.size<2)return;
+    const m=mid(),s2=Math.min(3,Math.max(.002,CV_PINCH.s0*gap()/CV_PINCH.d0));   // the board point under your fingers stays under them
+    cvView.s=s2;cvView.x=m.x-CV_PINCH.wx*s2;cvView.y=m.y-CV_PINCH.wy*s2;cvApplyView();
+  },true);
+  const lift=e=>{if(!pts.delete(e.pointerId))return;if(pts.size<2)CV_PINCH.on=false;if(!pts.size)setTimeout(()=>{if(!pts.size)CV_PINCH.used=false;},0);};
+  window.addEventListener('pointerup',lift,true);window.addEventListener('pointercancel',lift,true);
   // scroll = pan · pinch / ⌘-scroll = zoom around cursor
   stage.addEventListener('wheel',e=>{
     if(!cvOpenNow())return;
