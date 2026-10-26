@@ -78,11 +78,35 @@ def image_name(ref):
     return m.group(1) if m else None
 
 
+COUNT_NAMES = {'sticky note': 'sticky notes', 'text': 'text items', 'picture': 'pictures', 'PDF': 'PDFs', 'video': 'videos',
+               'audio': 'sound clips', 'file': 'files', 'link': 'links', 'frame': 'frames', 'drawing': 'marker drawings',
+               'sticker': 'stickers', 'arrow': 'arrows', 'web': 'web pages', 'shot': "agent browser screenshots"}
+
+
+def board_contents(b):
+    """Exact numbers of each kind of item: the items the voice sees are only the ones that match the question."""
+    n = {}
+    for it in b.get('items', []):
+        t = it.get('type')
+        k = {'area': 'frame', 'ink': 'drawing', 'emoji': 'sticker', 'link': 'link', 'arrow': 'arrow', 'file': 'file',
+             'web': 'web', 'shot': 'shot'}.get(t)
+        if t == 'note':
+            k = 'text' if it.get('color') == 'none' else 'sticky note'
+        elif t == 'img':
+            k = 'PDF' if str(it.get('url') or '').endswith('.pdf') else 'picture'
+        elif t == 'media':
+            k = 'audio' if it.get('kind') == 'audio' else 'video'
+        if k:
+            n[k] = n.get(k, 0) + 1
+    parts = ['%d %s' % (v, k if v == 1 else COUNT_NAMES[k]) for k, v in sorted(n.items(), key=lambda kv: -kv[1])]
+    return 'This board holds exactly: ' + (', '.join(parts) if parts else 'nothing yet') + '.'
+
+
 def item_words(it, reader):
     """(kind, words) for one board item, as the model will see it."""
     t = it.get('type')
-    if t == 'note':
-        return 'note', it.get('text') or ''
+    if t == 'note':   # the text tool makes a note with no colour: words on the board, not a sticky note
+        return 'text' if it.get('color') == 'none' else 'sticky note', it.get('text') or ''
     if t == 'area':
         return 'frame title', it.get('text') or ''
     if t == 'link':
@@ -172,7 +196,7 @@ def context(question, history, boards, reader):
     chunks = passages(boards, reader)
     picked, words = [], 0
     # short notes and frame titles always go first when they fit: they carry the board's own wording
-    short = [c for c in chunks if c['kind'] in ('note', 'frame title') and c['part'] == 0]
+    short = [c for c in chunks if c['kind'] in ('sticky note', 'text', 'frame title') and c['part'] == 0]
     if sum(len(c['text'].split()) for c in short) <= BUDGET_WORDS // 2:
         picked, words = short[:], sum(len(c['text'].split()) for c in short)
     for c in rank(question, history, chunks):
@@ -209,7 +233,9 @@ do not hold what they look for, use the board descriptions in the map to say whi
 that it is a likely place, not a sure one.
 Use ONLY the numbered items below. A "board brief" item is a summary of the WHOLE board written after reading all of
 it: use it for broad questions (what is this board about, review it, main themes, people, decisions, what is missing,
-next steps) and the other items for details. Between the two are the board's frames: a "frame gist" item says in a line
+next steps) and the other items for details. A "sticky note" item is a sticky note; a "text" item is words typed
+straight on the board (a heading or a paragraph), not a sticky note. For "how many" questions about one board, use the
+numbers in the "board contents" item: the other items are only the ones that match the question. Between the two are the board's frames: a "frame gist" item says in a line
 what one frame holds, a "frame summary" item sums up a whole frame. Use them to say what is where on the board and for
 questions about one frame or part of the board; when the user asks to go into, dive into or show a frame, put that frame
 item's number in "show" (the board zooms to the frame) and tell him what it holds. To go deeper ("more on that"), use
@@ -521,6 +547,9 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
     briefs = briefs or {}
     entries = brief_entries(boards, briefs, scope, question, history) + context(question, history, boards, reader)
     entries += [dict(t, kind='agent task') for t in tasks]   # {board, boardName, item (its frame), run, text}
+    if len(boards) == 1:
+        entries.append({'board': boards[0]['id'], 'boardName': boards[0].get('name', ''), 'item': None, 'kind': 'board contents',
+                        'frame': '', 'text': board_contents(boards[0])})
     if team_text and len(boards) == 1:
         entries.append({'board': boards[0]['id'], 'boardName': boards[0].get('name', ''), 'item': None, 'kind': 'board team',
                         'frame': '', 'text': team_text})
