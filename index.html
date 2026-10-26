@@ -205,7 +205,8 @@
   .cv-item.sel .frame{outline:calc(2px / var(--zs,1)) solid #3b82f6;outline-offset:calc(1px / var(--zs,1))}
   .cv-item img{width:100%;height:100%;object-fit:fill;display:block;pointer-events:none}
   .cv-note .frame{background:#fff9c2;border-color:#eadf8d;padding:10px 12px;font-size:13px;line-height:1.45;overflow:auto}
-  .cv-note:not(.plain) .frame{padding:.77em .92em}   /* a sticky's padding scales with its text (10 x 12 px at 13 px) */
+  .cv-note:not(.plain) .frame{padding:.77em .92em}
+  .cv-note .frame{overflow-wrap:anywhere}   /* a long key or link breaks inside the note, as it does while you edit it */   /* a sticky's padding scales with its text (10 x 12 px at 13 px) */
   .cv-note .frame[contenteditable="plaintext-only"]{cursor:text}
   .cv-note .frame:focus{outline:2px solid #d8c83a;outline-offset:1px}
   /* a link card scales as a whole, like a picture: its text and spacing are sized from the card's width (13px at 300px wide) */
