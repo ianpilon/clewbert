@@ -36,7 +36,9 @@ leaves your computer. It is used with an Anthropic key, and anyone can choose it
 card's menu. Chrome or Edge on a recent computer keeps up with a conversation; without WebGPU it works, but slowly. Change models or voices later with the gear (Settings).
 
 The first time it runs, the data folder gets three example boards in an Examples space: **Start here** (a tour of
-the app, with a PDF, a Markdown file, a picture, and YouTube and GitHub link cards), **Product launch brainstorm** (messy research to make sense of) and **Plan a team offsite** (a job ready
+the app, with a PDF, a Markdown file, a picture, and YouTube and GitHub link cards, and a "Build your first team" button:
+Clewbert talks you through building your first agent team out loud, then the team writes a one-page plan for your first
+week while you watch), **Product launch brainstorm** (messy research to make sense of) and **Plan a team offsite** (a job ready
 for the agent team). Their content is made up. Change them or delete them; deleted ones do not come back.
 
 ## Settings at startup (optional)

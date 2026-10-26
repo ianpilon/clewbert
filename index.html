@@ -226,6 +226,32 @@
   .cv-link .dom2{font-size:.81em;font-weight:600;color:var(--muted-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cv-link .lfoot a{margin-left:auto;margin-top:0;white-space:nowrap;font-size:.846em}
   .cv-media .frame,.cv-file .frame{display:flex;flex-direction:column}
+  /* the onboarding team card: scales as a whole (14px at 700px wide); the guide fills it in as you decide */
+  .cv-item.cv-team{container-type:inline-size}
+  .cv-team .frame{font-size:2cqw;background:#fff;border:1px solid var(--border);border-radius:1em;padding:1.4em 1.6em;display:flex;flex-direction:column;gap:.9em;overflow:hidden;box-shadow:0 .3em 1.2em rgba(15,23,42,.06)}
+  .cv-team .tc-top{display:flex;align-items:baseline;gap:.8em}
+  .cv-team .tc-label{font-size:.78em;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#1d4ed8}
+  .cv-team .tc-name{font-weight:700;font-size:1.15em}
+  .cv-team .tc-mission{color:var(--muted);font-size:.93em}
+  .cv-team .tc-steps{display:flex;gap:.45em}
+  .cv-team .tc-steps span{flex:1;font-size:.8em;font-weight:600;padding:.45em .6em;border-radius:.6em;background:#f1f3f6;color:var(--muted-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cv-team .tc-steps span.done{background:#dcfce7;color:#166534}
+  .cv-team .tc-steps span.now{background:#1d4ed8;color:#fff}
+  .cv-team .tc-body{flex:1;min-height:0;display:flex;flex-direction:column;gap:.5em;overflow:hidden}
+  .cv-team .tc-m{display:flex;gap:.7em;align-items:flex-start;padding:.55em .7em;border-radius:.6em;background:#f8f9fb;animation:tcIn .35s ease-out}
+  .cv-team .tc-m i{flex:none;width:.75em;height:.75em;border-radius:50%;margin-top:.35em}
+  .cv-team .tc-m b{font-weight:700}
+  .cv-team .tc-m em{display:block;font-style:normal;font-size:.8em;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-2)}
+  .cv-team .tc-m span{color:var(--muted)}
+  .cv-team .tc-h{font-size:.9em;color:var(--muted);padding-left:1.45em;animation:tcIn .35s ease-out}
+  .cv-team .tc-empty{color:var(--muted);line-height:1.55;font-size:1.2em;margin:.4em 0 .6em}
+  .cv-team .tc-body>.tc-go,.cv-team .tc-body>.tc-live{margin-top:.5em}
+  .cv-team .tc-go{align-self:flex-start;display:inline-flex;align-items:center;gap:.6em;padding:.75em 1.3em;border:none;border-radius:.7em;background:#1d4ed8;color:#fff;font:inherit;font-weight:700;font-size:1.05em;cursor:pointer}
+  .cv-team .tc-go:hover{background:#1e40af}
+  .cv-team .tc-live{align-self:flex-start;font-weight:600;color:#1d4ed8}
+  .cv-team .tc-live::before{content:'';display:inline-block;width:.6em;height:.6em;border-radius:50%;background:#16a34a;margin-right:.5em;animation:tcPulse 1.4s ease-in-out infinite}
+  @keyframes tcIn{from{opacity:0;transform:translateY(.4em)}to{opacity:1;transform:none}}
+  @keyframes tcPulse{50%{opacity:.3}}
   .cv-media .mbar,.cv-file .mbar{display:flex;align-items:center;gap:7px;padding:7px 10px;font-size:12px;font-weight:600;border-bottom:1px solid var(--border);background:#f8f9fb;min-width:0}
   .cv-media .mbar .nm,.cv-file .mbar .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cv-media .mbar a,.cv-file .mbar a{font-size:11px;color:#1d4ed8;text-decoration:none;white-space:nowrap}
@@ -1373,6 +1399,16 @@ function cvItemEl(it){
     el.innerHTML=`<div class="frame"><div class="mbar"><span class="ext">${escapeHtml(ext)}</span><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'File')}</span>${it.src?`<a href="${escapeAttr(it.src)}" target="_blank" rel="noopener">Open ↗</a>`:''}</div>${it.uploading?`<div class="upbar"><i></i></div><div class="fprev">Uploading…</div>`:`<div class="fprev">${escapeHtml(it.preview||'')}</div>`}</div>`;
     if(it.size&&!it.uploading)el.querySelector('.fprev').insertAdjacentHTML(it.preview?'afterbegin':'beforeend',`<span class="fsize">${cvSize(it.size)}${it.preview?'\n':''}</span>`);
     const a=el.querySelector('.mbar a');if(a)a.addEventListener('pointerdown',e=>e.stopPropagation());
+  }else if(it.type==='team'){ // the onboarding team card: a button that starts the guide, then the team as it is decided
+    const c=it.card||{},on=GD.on&&GD.id===it.id,steps=['One helper','Pass the baton','The captain','See it work'],lv=c.level||0;
+    const ms=[c.captain&&{n:c.captain.name,j:c.captain.job,col:'#1d4ed8',tag:'Captain'},...(c.helpers||[]).map((h,n)=>({n:h.name,j:h.job,col:GD_COLORS[n%GD_COLORS.length],tag:'Helper '+(n+1)}))].filter(Boolean);
+    el.innerHTML=`<div class="frame"><div class="tc-top"><span class="tc-label">Your first team</span>${c.team_name?`<span class="tc-name">${escapeHtml(c.team_name)}</span>`:''}</div>
+      <div class="tc-mission">Mission: a one-page plan for your first week with Clewbert</div>
+      <div class="tc-steps">${steps.map((t,n)=>`<span class="${c.done||n+1<lv?'done':n+1===lv?'now':''}">${n+1}. ${t}</span>`).join('')}</div>
+      <div class="tc-body">${ms.length?ms.map(m=>`<div class="tc-m"><i style="background:${m.col}"></i><div><em>${m.tag}</em><b>${escapeHtml(m.n)}</b> <span>${escapeHtml(m.j||'')}</span></div></div>`).join('')
+        +(c.handoffs||[]).map(h=>`<div class="tc-h">${escapeHtml(h.from)} → ${escapeHtml(h.to)}: ${escapeHtml(h.what)}</div>`).join('')
+        :`<div class="tc-empty">Clewbert talks you through building a team of AI helpers, out loud, in about three minutes. You only say yes, pick names, or change what you like. Your team fills in here as you decide, then makes the plan while you watch.</div>`}
+      ${on?`<span class="tc-live">Clewbert is guiding you. Just talk.</span>`:`<button class="tc-go">▶ ${c.done?'Build it again':ms.length?'Keep building with Clewbert':'Build your first team with Clewbert'}</button>`}</div></div>`;
   }else if(it.type==='ink'){ // a marker stroke; only the line itself takes clicks, so things under it stay reachable
     const d=escapeAttr(it.d||''),hw=(it.sw||3)*4;
     el.innerHTML=`<div class="frame"><svg viewBox="0 0 ${it.vw||it.w} ${it.vh||it.h}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="${escapeAttr(it.color||'#1f2430')}" stroke-width="${it.sw||3}" stroke-linecap="round" stroke-linejoin="round"/><path class="hit" d="${d}" fill="none" stroke="transparent" stroke-width="${hw}" stroke-linecap="round"/></svg></div>`;
@@ -1456,6 +1492,7 @@ function cvItemEl(it){
       if(!moved&&group.length>1)cvSelect(it.id);   // a click (no drag) inside a group selects just that one
       if(!moved&&group.length===1&&(it.type==='link'||(it.type==='img'&&it.url)))window.open(cvOpenUrl(it),'_blank','noopener');
       if(!moved&&group.length===1&&it.type==='file'&&it.src)window.open(it.src,'_blank','noopener');
+      if(!moved&&group.length===1&&it.type==='team'&&e.target.closest('.tc-go'))gdStart(it.id);
       if(!moved&&group.length===1&&it.type==='shot')window.open('api/shots/'+it.run+'.jpg','_blank','noopener');
       if(!moved&&vid&&!e.shiftKey){if(vid.paused)vid.play();else vid.pause();}};
     window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);
@@ -2043,7 +2080,7 @@ function vcThread(toBottom){
   const box=$('#vcThread'),near=box.scrollHeight-box.scrollTop-box.clientHeight<60;
   box.innerHTML='';
   const add=(t,pending)=>{const el=document.createElement('div');el.className='vc-turn';
-    el.innerHTML=`<div class="vc-q">“${escapeHtml(t.q)}”${t.t?`<span class="vc-when">${escapeHtml(vcAgo(t.t))}</span>`:''}</div><div class="vc-answer${pending&&!t.a?' wait':''}">${escapeHtml(t.a||'Looking…')}</div><div class="vc-src"></div>`;
+    el.innerHTML=`${t.q?`<div class="vc-q">“${escapeHtml(t.q)}”${t.t?`<span class="vc-when">${escapeHtml(vcAgo(t.t))}</span>`:''}</div>`:''}<div class="vc-answer${pending&&!t.a?' wait':''}">${escapeHtml(t.a||'Looking…')}</div><div class="vc-src"></div>`;
     const src=el.querySelector('.vc-src');
     (t.sources||[]).slice(0,6).forEach(s=>{const b=document.createElement('button');
       b.innerHTML=`<b>${escapeHtml(VC.scope===cvBoardId?s.kind:s.boardName)}</b>${escapeHtml(String(s.snippet||'').replace(/\s+/g,' ').slice(0,70))}`;
@@ -2077,6 +2114,7 @@ async function vcOpen(){
   catch(e){vcSetState('');vcNote(e&&e.name==='NotAllowedError'?'Microphone blocked. Allow it in the address bar, or type below.':'Listening is not available right now. You can type a question below.');}
 }
 function vcClose(){
+  if(GD.on)gdEnd();
   VC.on=false;VC.askSeq++;vcStopSpeaking();
   if(VC.ws){try{VC.ws.close();}catch(e){}VC.ws=null;}
   if(VC.node){try{VC.node.disconnect();}catch(e){}VC.node=null;}
@@ -2258,6 +2296,7 @@ function vcHeard(text,stop){
     if(text.split(/\s+/).length<2||vcIsEcho(text))return;
     vcStopSpeaking();
   }else if(stop||vcIsStop(text))return;   // a lone stop word is never a question
+  if(GD.on){gdTurn('reply',text);return;}
   vcAsk(text);
 }
 async function vcAsk(q){
@@ -2374,6 +2413,45 @@ function vcOpenItem(id){   // opens what clicking the item opens; Chrome lets a 
   $('#vcNote').append('Your browser blocked the new tab. ',a);
   if(vcMobile())vcSheet('half');   // the folded sheet hides the button
 }
+/* ---------------- Onboarding guide: Clewbert talks first and builds a first agent team with you (guide.py) ---------------- */
+const GD={on:false,id:null,quiet:0,timer:null},GD_COLORS=['#0f766e','#9333ea','#c2410c','#0369a1','#be123c'];
+function gdItem(){return cvBoard&&cvBoard.items.find(i=>i.id===GD.id);}
+function gdPaint(){const it=gdItem(),old=it&&$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`);if(old)old.replaceWith(cvItemEl(it));}
+async function gdStart(id){
+  const it=cvBoard&&cvBoard.items.find(i=>i.id===id);if(!it||GD.on)return;
+  if(it.card&&it.card.done){it.card=null;it.history=[];}   // "Build it again"
+  GD.on=true;GD.id=id;GD.quiet=0;gdPaint();
+  if(!VC.on)await vcOpen();
+  if(!VC.on){gdEnd();return;}   // the voice did not open (no microphone, or closed while loading)
+  vcFocus([id],true);   // now that the voice card is open, the team card sits clear of it
+  gdTurn('start');
+}
+function gdEnd(){GD.on=false;clearTimeout(GD.timer);gdPaint();}
+async function gdTurn(event,text){
+  const it=gdItem();if(!GD.on||!it)return;
+  clearTimeout(GD.timer);if(event==='reply')GD.quiet=0;
+  const seq=++VC.askSeq,board=cvBoardId;
+  $('#vcHeard').textContent='';vcNote('');vcSetState('thinking');
+  if(text){VC.pending={q:text};vcThread(true);}
+  let j;
+  try{j=await api('guide/'+board,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event,text:text||'',card:it.card||null,history:it.history||[]})});}
+  catch(e){VC.pending=null;vcNote(e.message&&e.message.startsWith('No model')?e.message:'Clewbert did not answer. Say something to try again.');vcSetState(VC.ws?'listening':'');return;}
+  VC.pending=null;
+  if(seq!==VC.askSeq||!GD.on||cvBoardId!==board)return;
+  it.history=[...(it.history||[]),...(text?[{who:'you',text}]:[]),{who:'guide',text:j.say}].slice(-16);
+  it.card={...j.card,done:!!j.done};cvSave();gdPaint();
+  VC.turns.push({q:text||'',a:j.say,t:Date.now()});vcThread(true);
+  if(j.started)agPoll().then(()=>agReveal(j.started.frame));   // the team starts on the plan: show its frame
+  if(j.done||j.started)gdEnd();   // from here on, talking to the board works as usual
+  vcSay(j.say,seq,false);
+  VC.chain.then(()=>{if(GD.on&&seq===VC.askSeq)gdArm();});
+}
+function gdArm(){   // quiet for 8 seconds: the guide decides and moves on (three times in a row at most)
+  clearTimeout(GD.timer);if(GD.quiet>=3)return;
+  GD.timer=setTimeout(()=>{if(!GD.on)return;
+    if(VC.state!=='listening'||$('#vcHeard').textContent||$('#vcInput').value||document.activeElement===$('#vcInput')){gdArm();return;}   // they are talking or typing, or an answer is on its way
+    GD.quiet++;gdTurn('quiet');},8000);
+}
 function vcGoTo(o){
   if(o.board){if(cvBoardId!==o.board)location.hash=o.board;return;}
   location.hash=o.space?'s/'+o.space:'';
@@ -2474,7 +2552,7 @@ async function vcClearTalk(){
   try{await api('talk/'+VC.scope,{method:'DELETE'});VC.turns=[];VC.pending=null;vcThread(true);}catch(e){vcNote('Not cleared. Reload the page and try again.');}
 }
 $('#vcVoice').onchange=()=>{try{localStorage.setItem('cc_voice',vcVoice());}catch(e){}};
-$('#vcType').onsubmit=e=>{e.preventDefault();const q=$('#vcInput').value.trim();if(!q)return;$('#vcInput').value='';vcAudio();vcStopSpeaking();vcAsk(q);};
+$('#vcType').onsubmit=e=>{e.preventDefault();const q=$('#vcInput').value.trim();if(!q)return;$('#vcInput').value='';vcAudio();vcStopSpeaking();if(GD.on)gdTurn('reply',q);else vcAsk(q);};
 $('#vcInput').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Escape')vcClose();});
 document.addEventListener('keydown',e=>{
   const ae=document.activeElement,typing=ae&&(ae.isContentEditable||/INPUT|TEXTAREA|SELECT/.test(ae.tagName));

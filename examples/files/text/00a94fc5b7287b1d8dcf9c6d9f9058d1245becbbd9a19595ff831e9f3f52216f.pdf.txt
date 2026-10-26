@@ -1,0 +1,21 @@
+Clewbert quick guide
+A brainstorming partner you talk to, with an agent team behind you.
+1. Bring in anything
+Paste screenshots and links, drop PDFs, documents, videos and any other file.
+Clewbert reads it all, including the words inside pictures and PDFs.
+2. Talk to it
+Click the microphone and ask out loud: "What is on this board?"
+Say "show me" or "go into" a frame, and the board moves there.
+Answers come only from your boards. The items used light up.
+3. Hand work to your team
+Press A, say what you need, and press Start.
+The Lead splits the work, teammates research, read, write and build demos.
+Their questions show up on the board. They ask before sending or buying anything.
+4. Keep it private
+Your boards are plain files on the computer that runs Clewbert.
+Pick the model for each job in Settings, including models on your own machine.
+Clewbert can also hear and speak with its own free voice, inside your browser.
+Handy keys
+N sticky note T text A agent task M mute the microphone
+Cmd+Z undo Shift+Cmd+Z redo Esc close what is open
+Example file for the Start here board. Change it, or delete it.

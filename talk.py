@@ -134,6 +134,11 @@ def item_words(it, reader):
         return 'sticker', it.get('ch') or ''
     if t == 'web':
         return ('working demo' if it.get('demo') else 'web page on the board'), (it.get('label') or '') + ' ' + (it.get('url') or '')
+    if t == 'team':   # the onboarding team card (guide.py)
+        c = it.get('card') or {}
+        return 'team card', ('Your first team, mission: a one-page plan for your first week. ' + '; '.join(
+            '%s: %s' % (m['name'], m.get('job', '')) for m in ([c['captain']] if c.get('captain') else []) + (c.get('helpers') or []))
+            ) if c else 'A button that starts Clewbert guiding you through building your first agent team, out loud.'
     if t == 'shot':
         return 'agent browser view', 'The agent\'s browser, last on ' + (it.get('label') or 'a page')
     if t == 'media':

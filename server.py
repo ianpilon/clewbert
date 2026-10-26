@@ -22,7 +22,7 @@ import ssl
 if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.pem'):
     # the python.org Python ships without certificates until "Install Certificates" is run: use the Mac's own list
     ssl._create_default_https_context = lambda: ssl.create_default_context(cafile='/etc/ssl/cert.pem')
-import models, talk
+import guide, models, talk
 import briefs
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools'))
 import miro_import
@@ -580,6 +580,25 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 raise ValueError
             return self.reply(200, {'ok': RUNNER.answer(parts[2], text)})
+        if len(parts) == 3 and parts[:2] == ['api', 'guide'] and BOARD_ID.match(parts[2]):   # onboarding: the guide builds a first team
+            req, bid = json.loads(self.read_body()), parts[2]
+            try:
+                board = read_board(bid)
+            except FileNotFoundError:
+                return self.reply(404, {'error': 'no such board'})
+            card = guide.tidy(req.get('card')) if isinstance(req.get('card'), dict) else None
+            try:
+                out = guide.turn(str(req.get('event') or 'reply'), str(req.get('text') or ''), card, req.get('history') or [])
+            except models.NoModel:
+                return self.reply(503, {'error': 'no model', 'message': 'No model is set up yet. Open Settings (the gear on the home page) and pick one.'})
+            except (OSError, ValueError, KeyError):
+                return self.reply(503, {'error': 'the model did not answer'})
+            RUNNER.set_team(bid, guide.members(out['card'], agents.STARTERS['lead']['role']))   # the board's team is the one on the card
+            if out['run']:
+                files = [i['id'] for i in board.get('items') or [] if str(i.get('url') or '').endswith('.pdf') or str(i.get('label') or '').endswith('.md')]
+                r = RUNNER.start(bid, guide.TASK, files, None, 'team')
+                out['started'] = {'run': r['id'], 'frame': r['frame']}
+            return self.reply(200, out)
         if parts == ['api', 'ask']:
             req = json.loads(self.read_body())
             question = str(req.get('question') or '').strip()[:500]
@@ -876,7 +895,7 @@ def seed_examples():
     if os.path.exists(mark) or os.listdir(BOARDS):
         return
     src = os.path.join(HERE, 'examples')
-    for sub, dest in (('images', IMAGES), ('files', FILES)):   # the PDF, Markdown file and picture the Start here board shows
+    for sub, dest in (('images', IMAGES), ('files', FILES), ('text', READER.text)):   # the PDF, Markdown file and picture the Start here board shows, already read
         folder = os.path.join(src, 'files', sub)
         for fn in os.listdir(folder) if os.path.isdir(folder) else []:
             if not os.path.exists(os.path.join(dest, fn)):

@@ -1,0 +1,22 @@
+# Your agent team
+
+Every board has a team. You can rename them, change their jobs in plain words, and add teammates under **Agents** (top right).
+
+## Lead
+Reads your task and the board, splits the work into parts, and hands each part to a teammate. When the parts are done, the Lead writes the final answer in the task's frame.
+
+## Researcher
+Searches the web, reads pages and documents, and puts what it finds on the board as notes and link cards, each with where it came from.
+
+## Writer
+Turns the findings into something you can use: a summary, a plan, an email draft. It writes from what is on the board, not from memory.
+
+## Starters you can add
+- **Analyst**: compares options and says which is best and why.
+- **Fact-checker**: checks the claims on the board against their sources.
+- **Developer**: reads code and builds small working demos you can open.
+
+## How they work with you
+- Each part of a task gets its own frame, joined to the Lead's by an arrow.
+- When they need you, their question shows up on the board and under Tasks. Answer it there or out loud.
+- They always ask before anything that sends, buys, books, posts or signs up.
