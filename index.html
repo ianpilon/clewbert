@@ -502,6 +502,7 @@
   .vc-stop:hover{background:var(--lost);color:#fff}
   .vc-thread{flex:1 1 auto;min-height:0;max-height:calc(100vh - 230px);overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding-right:4px}
   .vc-thread:empty{display:none}
+  .vc-grab,.vc-last{display:none}   /* phones only: the voice card is a sheet at the bottom (see the 760px rules) */
   .vc-turn{display:flex;flex-direction:column;gap:6px}
   .vc-turn+.vc-turn{border-top:1px solid var(--border);padding-top:12px}
   .vc-q{font-style:italic;color:var(--muted);font-size:13px}
@@ -534,6 +535,17 @@
     .cv-title{width:auto;flex:1;max-width:none;min-width:0}
     .cv-crumb{max-width:calc(100vw - 84px)}   /* the view switch moved into ⋯: the title gets the room */
     .cv-views{display:none}
+    /* the voice card: a sheet at the bottom with three heights; slim = one line, so the board shows what the voice points at */
+    #vc{left:0;right:0;top:auto;bottom:0;width:auto;max-width:none;border-radius:16px 16px 0 0;
+      height:46vh;max-height:none;padding-top:4px;transition:height .18s ease}
+    #vc.full{height:calc(100vh - 64px)}
+    #vc.slim{height:auto}
+    .vc-grab{display:block;padding:6px 0 8px;margin:0 auto;width:80px;cursor:grab;touch-action:none}
+    .vc-grab i{display:block;width:40px;height:5px;border-radius:3px;background:#d3d7dd;margin:0 auto}
+    .vc-thread{max-height:none}
+    .vc.slim .vc-thread,.vc.slim .vc-type,.vc.slim .vc-heard,.vc.slim .vc-note{display:none}
+    .vc.slim .vc-last{display:block;font-size:14px;line-height:1.4;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:2px 2px 6px;cursor:pointer}
+    .vc.slim .vc-last:empty{display:none}
     .cv-menu .cv-mview{display:block}
     #cvMenuBtn.waiting::after{display:block}
     .cv-zoom{display:none}
@@ -701,6 +713,7 @@
 </div>
 <div class="menu" id="menu" hidden></div>   <!-- shared ⋯ menu: outside #home so it also opens on a board -->
 <div class="vc" id="vc" hidden>
+  <div class="vc-grab" id="vcGrab" title="Drag up for the conversation, down to see the board"><i></i></div>
   <div class="vc-head">
     <b id="vcTitle">Talk to this board</b><span class="vc-state" id="vcState"></span><i class="vc-level" id="vcLevel" title="What the microphone hears"><b></b></i><button class="vc-mute" id="vcMute" title="Mute your microphone (M): nothing you say reaches the voice until you unmute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path class="slash" d="M3 3l18 18"/></svg></button>
     <select id="vcVoice" hidden></select>
@@ -708,6 +721,7 @@
     <button class="vc-more" id="vcMore" title="Voice and conversation options">⋯</button>
     <button class="vc-x" id="vcClose" title="Stop talking (Esc)">×</button>
   </div>
+  <div class="vc-last" id="vcLast"></div>
   <div class="vc-thread" id="vcThread"></div>
   <div class="vc-heard" id="vcHeard"></div>
   <div class="vc-note" id="vcNote"></div>
@@ -1983,6 +1997,8 @@ function vcThread(toBottom){
     box.appendChild(el);};
   VC.turns.forEach(t=>add(t,false));
   if(VC.pending)add(VC.pending,true);
+  const last=VC.pending||VC.turns[VC.turns.length-1];   // the slim sheet's one line
+  $('#vcLast').textContent=last?(VC.pending?'“'+last.q+'” …':last.a||''):'';
   if(toBottom||near)box.scrollTop=box.scrollHeight;
 }
 function vcVoice(){return $('#vcVoice').value;}
@@ -1995,7 +2011,7 @@ async function vcVoices(){
 }
 async function vcOpen(){
   if(VC.on){vcClose();return;}
-  VC.on=true;VC.muted=false;$('#vcMute').classList.remove('on');$('#vc').hidden=false;VC.scope=null;vcTitle();vcNote('');vcAudio();vcSetState('');vcVoices();newsAskPermission();NEWS.first=true;
+  VC.on=true;VC.muted=false;$('#vcMute').classList.remove('on');$('#vc').hidden=false;if(vcMobile())vcSheet('half');VC.scope=null;vcTitle();vcNote('');vcAudio();vcSetState('');vcVoices();newsAskPermission();NEWS.first=true;
   if(vcMode()==='browser'){   // Clewbert's own voice: downloaded the first time, from the browser's store after that
     VB.progress=b=>vcNote(`Getting Clewbert's voice ready, one time only: ${Math.round(b/1e6)} of about 480 MB.`);vcNote("Getting Clewbert's voice ready…");
     try{const dev=await vbLoad();vcNote(dev==='wasm'?'This browser cannot use the graphics chip, so the voice will be slow. Chrome or Edge on a recent computer works best.':'');}
@@ -2291,18 +2307,33 @@ function vcView(v){
   if(!cvBoard)return;
   if(v==='fit')$('#cvFit').click();else if(v==='in')$('#cvZoomIn').click();else if(v==='out')$('#cvZoomOut').click();else if(v==='brief')bpOpen();
 }
+function vcMobile(){return matchMedia('(max-width:760px)').matches;}
+// phones: the sheet's height. slim = one line (the board shows), half = the last exchange, full = the whole conversation
+function vcSheet(h){const v=$('#vc');v.classList.toggle('slim',h==='slim');v.classList.toggle('full',h==='full');VC.sheet=h;if(h!=='slim')vcThread(true);}
+(function(){
+  const g=$('#vcGrab');let y0=null;
+  g.addEventListener('pointerdown',e=>{y0=e.clientY;g.setPointerCapture(e.pointerId);e.preventDefault();});
+  g.addEventListener('pointerup',e=>{if(y0===null)return;const dy=e.clientY-y0,h=VC.sheet||'half';y0=null;
+    if(dy<-30)vcSheet(h==='slim'?'half':'full');            // dragged up: more conversation
+    else if(dy>30)vcSheet(h==='full'?'half':'slim');        // dragged down: more board
+    else vcSheet(h==='slim'?'half':'slim');});              // a tap: open or fold
+  $('#vcLast').addEventListener('click',()=>vcSheet('half'));
+})();
 function vcFocus(ids,close){
-  if(!cvBoard)return;VC.hl=new Set(ids);cvRender();
+  if(!cvBoard)return;
+  if(vcMobile()&&!$('#vc').hidden)vcSheet('slim');   // phones: fold the sheet so what it points at is in viewVC.hl=new Set(ids);cvRender();
   let its=ids.map(id=>cvBoard.items.find(i=>i.id===id)).filter(Boolean);if(!its.length)return;   // in the order given: best match first
   if(close&&its.length>1){   // sources far apart would stay tiny: zoom to the best match, the others stay outlined
     const xs=its.map(i=>i.x),ys=its.map(i=>i.y),span=Math.max(Math.max(...its.map(i=>i.x+i.w))-Math.min(...xs),Math.max(...its.map(i=>i.y+i.h))-Math.min(...ys));
     if(span>4*Math.max(...its.map(i=>Math.max(i.w,i.h))))its=[its[0]];
   }
   const r=$('#cvStage').getBoundingClientRect(),x0=Math.min(...its.map(i=>i.x)),y0=Math.min(...its.map(i=>i.y)),x1=Math.max(...its.map(i=>i.x+i.w)),y1=Math.max(...its.map(i=>i.y+i.h));
-  const left=$('#vc').hidden?0:Math.min(430,r.width/2),right=$('#bp').hidden?0:Math.min(420,r.width/2);   // keep clear of the voice card and the brief
-  const room=Math.max(200,r.width-left-right);
-  const s=Math.min(close?3:1,Math.max(.002,Math.min((room-120)/Math.max(1,x1-x0),(r.height-120)/Math.max(1,y1-y0))));   // "show me" fills the free space
-  cvView.s=s;cvView.x=left+(room-(x1-x0)*s)/2-x0*s;cvView.y=(r.height-(y1-y0)*s)/2-y0*s;cvApplyView();
+  const mob=vcMobile(),sheet=mob&&!$('#vc').hidden?$('#vc').getBoundingClientRect().height:0;   // phones: the sheet covers the bottom
+  const left=mob?Math.max(0,$('#cvTb').getBoundingClientRect().right-r.left):$('#vc').hidden?0:Math.min(430,r.width/2),   // phones: clear of the toolbar
+    right=mob||$('#bp').hidden?0:Math.min(420,r.width/2);   // keep clear of the voice card and the brief
+  const room=Math.max(200,r.width-left-right),tall=Math.max(160,r.height-sheet),pad=mob?40:120;
+  const s=Math.min(close?3:1,Math.max(.002,Math.min((room-pad)/Math.max(1,x1-x0),(tall-pad)/Math.max(1,y1-y0))));   // "show me" fills the free space
+  cvView.s=s;cvView.x=left+(room-(x1-x0)*s)/2-x0*s;cvView.y=(tall-(y1-y0)*s)/2-y0*s;cvApplyView();
 }
 // speech is queued so a filler finishes before the answer starts; a new question or "stop" cuts everything
 function vcSay(text,seq,isFiller){
