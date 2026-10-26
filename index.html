@@ -1168,6 +1168,10 @@ function cvItemEl(it){
     el.innerHTML=`<div class="frame"><div class="mbar"><span class="ext">${escapeHtml(ext)}</span><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'File')}</span>${it.src?`<a href="${escapeAttr(it.src)}" target="_blank" rel="noopener">Open ↗</a>`:''}</div>${it.uploading?`<div class="upbar"><i></i></div><div class="fprev">Uploading…</div>`:`<div class="fprev">${escapeHtml(it.preview||'')}</div>`}</div>`;
     if(it.size&&!it.uploading)el.querySelector('.fprev').insertAdjacentHTML(it.preview?'afterbegin':'beforeend',`<span class="fsize">${cvSize(it.size)}${it.preview?'\n':''}</span>`);
     const a=el.querySelector('.mbar a');if(a)a.addEventListener('pointerdown',e=>e.stopPropagation());
+    if(it.src&&!it.uploading){   // like a PDF: save it under its own name
+      el.insertAdjacentHTML('beforeend',`<a class="cv-dlchip" href="${escapeAttr(it.src)}" download="${escapeAttr(String(it.label||'file').replace(/[\\/:*?"<>|]+/g,' ').trim()||'file')}" title="Download this file"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></a>`);
+      el.querySelector('.cv-dlchip').addEventListener('pointerdown',e=>e.stopPropagation());
+    }
   }else if(it.type==='ink'){ // a marker stroke; only the line itself takes clicks, so things under it stay reachable
     const d=escapeAttr(it.d||''),hw=(it.sw||3)*4;
     el.innerHTML=`<div class="frame"><svg viewBox="0 0 ${it.vw||it.w} ${it.vh||it.h}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="${escapeAttr(it.color||'#1f2430')}" stroke-width="${it.sw||3}" stroke-linecap="round" stroke-linejoin="round"/><path class="hit" d="${d}" fill="none" stroke="transparent" stroke-width="${hw}" stroke-linecap="round"/></svg></div>`;
