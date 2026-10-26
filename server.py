@@ -16,7 +16,7 @@ Binds 127.0.0.1 only; Cloudflare Access sits in front of it on the tunnel.
   DATA_DIR/spaces.json        the spaces (folders) boards are sorted into; a board's "space" names one, or none
   DATA_DIR/runs/<id>.json     agent tasks: each one fills a frame on its board (see agents/runner.py)
 """
-import gzip, hashlib, html, json, mimetypes, os, queue, re, secrets, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
+import gzip, hashlib, html, json, mimetypes, os, queue, re, secrets, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import ssl
 if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.pem'):
@@ -76,6 +76,34 @@ READER = talk.Reader(IMAGES, os.path.join(DATA, 'text'), os.path.join(HERE, 'bin
 
 def board_path(bid):
     return os.path.join(BOARDS, bid + '.json')
+
+
+# ---------- link previews: read from the page's own tags, here (no outside service, no daily limit) ----------
+PRIVATE_NET = re.compile(r'^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|::1$|fc|fd|fe80)')
+
+
+def unfurl(url):
+    """{title, desc, img, pub} of a web page from its og:/twitter: tags and <title>; refuses addresses on your own network."""
+    host = urllib.parse.urlsplit(url).hostname or ''
+    if not re.match(r'^https?://', url) or not host or any(PRIVATE_NET.match(a[4][0]) for a in socket.getaddrinfo(host, None)):
+        raise ValueError
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+                                               '(KHTML, like Gecko) Chrome/130.0 Safari/537.36', 'Accept-Language': 'en'})
+    with urllib.request.urlopen(req, timeout=8) as f:
+        if 'html' not in (f.headers.get('Content-Type') or ''):
+            return {}
+        page = f.read(800000).decode(f.headers.get_content_charset() or 'utf-8', 'replace')
+    meta = {}
+    for m in re.finditer(r'<meta\s[^>]*>', page, re.I):
+        k = re.search(r'(?:property|name)\s*=\s*["\']([^"\']+)', m.group(0), re.I)
+        v = re.search(r'content\s*=\s*"([^"]*)"|content\s*=\s*\'([^\']*)\'', m.group(0), re.I)
+        if k and v:
+            meta.setdefault(k.group(1).lower(), html.unescape(v.group(1) if v.group(1) is not None else v.group(2)).strip())
+    t = re.search(r'<title[^>]*>(.*?)</title>', page, re.I | re.S)
+    img = meta.get('og:image') or meta.get('twitter:image') or ''
+    return {'title': (meta.get('og:title') or meta.get('twitter:title') or (html.unescape(t.group(1)).strip() if t else ''))[:300],
+            'desc': (meta.get('og:description') or meta.get('description') or meta.get('twitter:description') or '')[:500],
+            'img': urllib.parse.urljoin(url, img) if img else '', 'pub': meta.get('og:site_name') or ''}
 
 
 # ---------- live: every open copy of a board hears what another copy does (moves as they happen, saves when done) ----------
@@ -303,6 +331,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, f.read(), 'text/html; charset=utf-8', {'Cache-Control': 'no-cache'})
         if len(parts) == 3 and parts[:2] == ['api', 'live'] and BOARD_ID.match(parts[2]):
             return self.live(parts[2])
+        if parts == ['api', 'unfurl']:
+            url = (urllib.parse.parse_qs(self.path.partition('?')[2]).get('url') or [''])[0][:2000]
+            try:
+                return self.reply(200, unfurl(url))
+            except (OSError, ValueError, UnicodeError):
+                return self.reply(200, {})   # no preview: the page shows the plain link card
         if parts == ['api', 'session']:   # the ears ask this who is calling, with the caller's cookie
             who = talk.access_user(self.headers.get('Cookie'))
             return self.reply(200, {'user': {'id': 'clewbert', 'name': who}}) if who else self.reply(401, {'error': 'not signed in'})

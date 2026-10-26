@@ -1578,8 +1578,8 @@ function paintCanvasPreview(items,box,count,bounds){
   const n=count??items.length;badge.textContent=n+' item'+(n===1?'':'s');
 }
 
-// URL unfurling — fetch title/description/thumbnail for pasted links via microlink.io
-// (free, no key, CORS-open; only the pasted URL is sent). Falls back to a plain link card.
+// URL unfurling: title, description and picture for pasted links, read by our own server from the page's tags
+// (no outside service, so no daily limit). Falls back to a plain link card.
 async function cvUnfurl(boardId,itemId,url){
   const patch=async fn=>{
     if(cvBoardId===boardId&&cvBoard){const it=cvBoard.items.find(i=>i.id===itemId);if(it){fn(it);cvSettle(it);cvRender();cvSave();}return;}
@@ -1588,12 +1588,10 @@ async function cvUnfurl(boardId,itemId,url){
       if(it){fn(it);await api('boards/'+boardId,putJson(boardBody(b)));}
     }catch(e){}
   };
-  try{
-    const res=await fetch('https://api.microlink.io/?url='+encodeURIComponent(safeUrl(url)));
-    const j=await res.json();
-    if(j.status!=='success')throw new Error(j.status);
-    const d=j.data||{};
-    const u={title:d.title||'',desc:d.description||'',img:(d.image&&d.image.url)||'',pub:d.publisher||''};
+  try{   // the server reads the page's own preview tags; 10 s at most, then the plain card stays
+    const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),10000);
+    let d={};try{d=await (await fetch('api/unfurl?url='+encodeURIComponent(safeUrl(url)),{signal:ctl.signal})).json();}finally{clearTimeout(timer);}
+    const u={title:d.title||'',desc:d.desc||'',img:d.img||'',pub:d.pub||''};
     if(!u.title&&!u.img)throw new Error('empty');
     await patch(it=>{delete it.pending;it.unfurl=u;if(u.img){it.w=300;it.h=270;}else{it.w=300;it.h=132;}});
   }catch(e){
