@@ -16,7 +16,7 @@ Binds 127.0.0.1 only; Cloudflare Access sits in front of it on the tunnel.
   DATA_DIR/spaces.json        the spaces (folders) boards are sorted into; a board's "space" names one, or none
   DATA_DIR/runs/<id>.json     agent tasks: each one fills a frame on its board (see agents/runner.py)
 """
-import gzip, hashlib, html, json, mimetypes, os, queue, re, secrets, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
+import gzip, hashlib, html, json, mimetypes, os, queue, re, secrets, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import ssl
 if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.pem'):
@@ -876,6 +876,11 @@ def seed_examples():
     if os.path.exists(mark) or os.listdir(BOARDS):
         return
     src = os.path.join(HERE, 'examples')
+    for sub, dest in (('images', IMAGES), ('files', FILES)):   # the PDF, Markdown file and picture the Start here board shows
+        folder = os.path.join(src, 'files', sub)
+        for fn in os.listdir(folder) if os.path.isdir(folder) else []:
+            if not os.path.exists(os.path.join(dest, fn)):
+                shutil.copyfile(os.path.join(folder, fn), os.path.join(dest, fn))
     for fn in sorted(os.listdir(src)) if os.path.isdir(src) else []:
         if fn.endswith('.json'):
             with open(os.path.join(src, fn)) as f:
