@@ -85,7 +85,7 @@ COUNT_NAMES = {'sticky note': 'sticky notes', 'text': 'text items', 'picture': '
 
 def board_contents(b):
     """Exact numbers of each kind of item: the items the voice sees are only the ones that match the question."""
-    n = {}
+    n, seen, copies = {}, set(), {}
     for it in b.get('items', []):
         t = it.get('type')
         k = {'area': 'frame', 'ink': 'drawing', 'emoji': 'sticker', 'link': 'link', 'arrow': 'arrow', 'file': 'file',
@@ -98,7 +98,17 @@ def board_contents(b):
             k = 'audio' if it.get('kind') == 'audio' else 'video'
         if k:
             n[k] = n.get(k, 0) + 1
-    parts = ['%d %s' % (v, k if v == 1 else COUNT_NAMES[k]) for k, v in sorted(n.items(), key=lambda kv: -kv[1])]
+            f = it.get('url') if k == 'PDF' else it.get('src') if k in ('picture', 'video', 'audio', 'file') else None
+            if f and f in seen:   # the same file again: a copy (often hidden under the first)
+                copies[k] = copies.get(k, 0) + 1
+            elif f:
+                seen.add(f)
+    parts = []
+    for k, v in sorted(n.items(), key=lambda kv: -kv[1]):
+        c = copies.get(k, 0)
+        parts.append('%d %s' % (v, k if v == 1 else COUNT_NAMES[k]) +
+                     (' (%d different; %s)' % (v - c, '1 is a copy of one already on the board' if c == 1 else
+                                              '%d are copies of ones already on the board' % c) if c else ''))
     return 'This board holds exactly: ' + (', '.join(parts) if parts else 'nothing yet') + '.'
 
 
