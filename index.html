@@ -2382,7 +2382,8 @@ function vcSheet(h){const v=$('#vc');v.classList.toggle('slim',h==='slim');v.cla
 })();
 function vcFocus(ids,close){
   if(!cvBoard)return;
-  if(vcMobile()&&!$('#vc').hidden)vcSheet('slim');   // phones: fold the sheet so what it points at is in viewVC.hl=new Set(ids);cvRender();
+  if(vcMobile()&&!$('#vc').hidden)vcSheet('slim');   // phones: fold the sheet so what it points at is in view
+  VC.hl=new Set(ids);cvRender();
   let its=ids.map(id=>cvBoard.items.find(i=>i.id===id)).filter(Boolean);if(!its.length)return;   // in the order given: best match first
   if(close&&its.length>1){   // sources far apart would stay tiny: zoom to the best match, the others stay outlined
     const xs=its.map(i=>i.x),ys=its.map(i=>i.y),span=Math.max(Math.max(...its.map(i=>i.x+i.w))-Math.min(...xs),Math.max(...its.map(i=>i.y+i.h))-Math.min(...ys));

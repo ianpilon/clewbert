@@ -648,7 +648,8 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
                 used.append(e)
     said = re.sub(r'\s*(?:Sources?:\s*)?(?:\[\d+\][,;\s]*(?:and\s*)?)+(?=[.!?]|$)', '', said).strip()   # item numbers are not spoken
     said = re.sub(r'(?<!\.)\.\.(?!\.)', '.', said)
-    bad = unsupported_numbers(said, [e.get('notes') or e['text'] for e in (used or entries)] + ([layout['text']] if layout else []), question)
+    bad = unsupported_numbers(said, [e.get('notes') or e['text'] for e in (used or entries)] + ([layout['text']] if layout else [])
+                              + [e.get('frame') or '' for e in entries], question)   # "the 5. Bring in anything frame": a frame's name is on the board too
     checked = not bad
     if bad:
         said = "I found related items, but I couldn't confirm the details in them, so I won't guess. They're highlighted for you."
