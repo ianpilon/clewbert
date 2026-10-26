@@ -16,7 +16,7 @@ Binds 127.0.0.1 only; Cloudflare Access sits in front of it on the tunnel.
   DATA_DIR/spaces.json        the spaces (folders) boards are sorted into; a board's "space" names one, or none
   DATA_DIR/runs/<id>.json     agent tasks: each one fills a frame on its board (see agents/runner.py)
 """
-import gzip, hashlib, html, json, mimetypes, os, re, secrets, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
+import gzip, hashlib, html, json, mimetypes, os, queue, re, secrets, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import ssl
 if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.pem'):
@@ -76,6 +76,21 @@ READER = talk.Reader(IMAGES, os.path.join(DATA, 'text'), os.path.join(HERE, 'bin
 
 def board_path(bid):
     return os.path.join(BOARDS, bid + '.json')
+
+
+# ---------- live: every open copy of a board hears what another copy does (moves as they happen, saves when done) ----------
+LIVE, LIVE_LOCK = {}, threading.Lock()   # board id -> {queue: client id}
+
+
+def live_send(bid, msg, sender):
+    with LIVE_LOCK:
+        listeners = list((LIVE.get(bid) or {}).items())
+    for q, client in listeners:
+        if client != sender:
+            try:
+                q.put_nowait(msg)
+            except queue.Full:   # a copy that stopped reading: it catches up from the next save
+                pass
 
 
 def read_board(bid):
@@ -255,10 +270,39 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self.handle_one(self.delete)
 
+    def live(self, bid):
+        """Server-sent events for one open board: what other copies of it do, until the page goes away."""
+        client = (urllib.parse.parse_qs(self.path.partition('?')[2]).get('client') or [''])[0][:40]
+        q = queue.Queue(maxsize=500)
+        with LIVE_LOCK:
+            LIVE.setdefault(bid, {})[q] = client
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('X-Accel-Buffering', 'no')
+        self.end_headers()
+        try:
+            self.wfile.write(b': open\n\n')
+            self.wfile.flush()
+            while True:
+                try:
+                    msg = q.get(timeout=20)
+                except queue.Empty:
+                    msg = None   # a comment every 20 s keeps the connection (and Cloudflare) from timing out
+                self.wfile.write(b': ping\n\n' if msg is None else ('data: %s\n\n' % json.dumps(msg)).encode())
+                self.wfile.flush()
+        except OSError:   # the page closed or moved to another board
+            pass
+        finally:
+            with LIVE_LOCK:
+                (LIVE.get(bid) or {}).pop(q, None)
+
     def get(self, parts):
         if parts in ([], ['index.html']):
             with open(os.path.join(HERE, 'index.html'), 'rb') as f:
                 return self.reply(200, f.read(), 'text/html; charset=utf-8', {'Cache-Control': 'no-cache'})
+        if len(parts) == 3 and parts[:2] == ['api', 'live'] and BOARD_ID.match(parts[2]):
+            return self.live(parts[2])
         if parts == ['api', 'session']:   # the ears ask this who is calling, with the caller's cookie
             who = talk.access_user(self.headers.get('Cookie'))
             return self.reply(200, {'user': {'id': 'clewbert', 'name': who}}) if who else self.reply(401, {'error': 'not signed in'})
@@ -586,6 +630,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {'text': models.hear(self.read_body())})
             except OSError as e:
                 return self.reply(502, {'error': str(e)[:300]})
+        if len(parts) == 3 and parts[:2] == ['api', 'live'] and BOARD_ID.match(parts[2]):   # a move as it happens, or "I have control"
+            req = json.loads(self.read_body())
+            if req.get('kind') not in ('move', 'claim'):
+                raise ValueError
+            live_send(parts[2], {k: req.get(k) for k in ('kind', 'client', 'device', 'items')}, str(req.get('client') or ''))
+            return self.reply(200, {'ok': True})
         if parts == ['api', 'speak']:
             req = json.loads(self.read_body())
             text, voice = str(req.get('text') or '').strip()[:2000], str(req.get('voice') or '').strip()
@@ -695,6 +745,7 @@ class Handler(BaseHTTPRequestHandler):
             board['updated'] = now_ms()
             write_json(board_path(bid), board)
         BRIEFER.touch(bid)   # read the changed parts again once the edits settle
+        live_send(bid, {'kind': 'saved', 'updated': board['updated']}, self.headers.get('X-Client') or '')
         self.reply(200, {'updated': board['updated']})
 
     def delete(self, parts):

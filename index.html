@@ -149,6 +149,7 @@
   .cv-title:hover{border-color:var(--border)}
   .cv-title:focus{border-color:var(--primary);background:#fff}
   .cv-save{font-size:11.5px;color:var(--muted-2);white-space:nowrap}
+  .cv-follow{font-size:11.5px;color:#1d4ed8;background:#eff5ff;border-radius:999px;padding:2px 9px;white-space:nowrap}
   .cv-save.error{color:var(--lost);font-weight:600}
   .cv-zoom{font-size:11.5px;color:var(--muted);min-width:42px;text-align:center;font-variant-numeric:tabular-nums}
   .cv-stage{flex:1;position:relative;overflow:hidden;cursor:default;touch-action:none;
@@ -622,7 +623,7 @@
 <!-- Board -->
 <div class="cv" id="cv">
   <div class="cv-head">   <!-- floating pills over the board, no bar -->
-    <div class="pill cv-crumb"><button class="cv-back" id="cvBack" title="Back to the boards">← All boards</button><span class="cv-sep">/</span><input class="cv-title" id="cvTitle" spellcheck="false" title="Board name: click to rename"><span class="cv-save" id="cvSaveState"></span></div>
+    <div class="pill cv-crumb"><button class="cv-back" id="cvBack" title="Back to the boards">← All boards</button><span class="cv-sep">/</span><input class="cv-title" id="cvTitle" spellcheck="false" title="Board name: click to rename"><span class="cv-save" id="cvSaveState"></span><span class="cv-follow" id="cvLive" hidden></span></div>
     <div class="cv-right"><div class="pill cv-views" id="cvViews"><button data-v="canvas" class="on" title="The board">Canvas</button><button data-v="team" id="cvOrgBtn" title="This board's agent team as an org chart: who reports to whom, why, what each one is doing; edit anyone with ⋯">Agents</button><button data-v="tasks" id="cvTasksBtn" title="Every agent task on this board: waiting on you, working, done">Tasks<i class="dot" hidden></i></button></div><button class="pill pill-btn" id="cvMenuBtn" title="More">⋯</button></div>
     <div class="pill cv-menu" id="cvMenu" hidden><button class="cv-brief" id="cvBriefBtn">Board brief</button><button id="cvHelpBtn">Shortcuts and tips</button><button id="cvStgBtn">Settings: models and keys</button></div>
     <div class="pill cv-help" id="cvHelp" hidden><b>Shortcuts and tips</b><ul>
@@ -741,7 +742,10 @@ async function api(path,opt={}){
   if(!r.ok){let m='';try{m=(await r.json()).message||'';}catch(e){}throw Object.assign(new Error(m||'HTTP '+r.status),{status:r.status});}   // the server's own words when it has them
   return r.json();
 }
-const putJson=body=>({method:'PUT',headers:{'Content-Type':'application/json'},body});
+// live between devices: this copy's name, so the server does not echo its own saves and moves back to it
+const CV_LIVE={client:Math.random().toString(36).slice(2,10),es:null,board:null,lead:false,opened:false,snap:null,timer:0,
+  device:/iPhone|Android.*Mobile|Mobile/.test(navigator.userAgent)?'phone':/iPad|Android/.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&/Mac/.test(navigator.userAgent))?'tablet':'computer'};
+const putJson=body=>({method:'PUT',headers:{'Content-Type':'application/json','X-Client':CV_LIVE.client},body});
 function boardBody(b){const ids=new Set(b.items.map(i=>i.id));   // agent items this page removed: the server keeps the ones it has not seen yet
   return JSON.stringify({name:b.name,items:b.items.filter(i=>!i.uploading).map(({pending,_local,...i})=>i),view:b.view,deleted:[...agSeen(b.id)].filter(id=>!ids.has(id))});}
 
@@ -1015,7 +1019,7 @@ async function openBoard(id){
   if(cvFocusTitle){cvFocusTitle=false;$('#cvTitle').focus();$('#cvTitle').select();}
   if(VC.openBrief){VC.openBrief=false;bpOpen();}else if(BP.open)bpLoad();
   if(VC.focus){const f=VC.focus,c=VC.close;VC.focus=null;VC.close=false;vcFocus(f,c);}
-  vcTitle();agPoll();
+  vcTitle();agPoll();liveOpen(id);
   if(fresh)fresh.then(nb=>{
     CV_CACHE.set(id,nb);
     if(cvBoardId!==id||!nb||nb.updated===b.updated||cvDirty.has(id)||cvSaving)return;   // you already changed something: keep your copy
@@ -1024,10 +1028,73 @@ async function openBoard(id){
   }).catch(()=>{});
 }
 function closeBoard(){
-  cvLinkPopClose();clearTimeout(AG.timer);agFlyClose();tkpClose();orgClose();
+  liveClose();cvLinkPopClose();clearTimeout(AG.timer);agFlyClose();tkpClose();orgClose();
   if(cvBoard){CV_CACHE.set(cvBoardId,cvBoard);cvSave(true);}
   cvBoardId=null;cvBoard=null;
 }
+/* Live between devices (like Miro): every open copy of a board hears the others. While you drag or resize, the moves go
+   out about ten times a second; each save tells the other copies to fetch the board and redraw only what changed. The
+   copy you last touched is in control: the others show "Following your phone" and flush anything unsaved first, so an
+   older copy never writes over newer work. Each copy keeps its own view (where it is panned and zoomed). */
+function liveOpen(id){
+  liveClose();CV_LIVE.board=id;CV_LIVE.opened=false;
+  const es=new EventSource('api/live/'+id+'?client='+CV_LIVE.client);CV_LIVE.es=es;
+  es.onopen=()=>{if(CV_LIVE.opened)liveRefresh();CV_LIVE.opened=true;};   // back after a dropped connection: catch up
+  es.onmessage=e=>{let m;try{m=JSON.parse(e.data);}catch(er){return;}if(CV_LIVE.board!==cvBoardId)return;
+    if(m.kind==='claim'){CV_LIVE.lead=false;if(cvDirty.has(cvBoardId))cvSave(true);liveLabel('Following your '+(m.device||'other screen'));}
+    else if(m.kind==='move')liveMoves(m.items||[]);
+    else if(m.kind==='saved')liveRefresh();};
+}
+function liveClose(){if(CV_LIVE.es){CV_LIVE.es.close();CV_LIVE.es=null;}CV_LIVE.board=null;CV_LIVE.lead=false;liveLabel('');}
+function liveLabel(t){const el=$('#cvLive');el.textContent=t;el.hidden=!t;}
+function liveSend(msg){if(!CV_LIVE.board)return;fetch('api/live/'+CV_LIVE.board,{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({...msg,client:CV_LIVE.client,device:CV_LIVE.device})}).catch(()=>{});}
+function liveTake(){if(!cvBoard||CV_LIVE.lead)return;CV_LIVE.lead=true;liveLabel('');liveSend({kind:'claim'});}   // touched here: this copy is in control
+function liveMoves(items){
+  const w=$('#cvWorld');
+  for(const m of items){const it=cvBoard.items.find(i=>i.id===m.id);if(!it)continue;
+    Object.assign(it,{x:m.x,y:m.y,w:m.w,h:m.h});if(m.fs)it.fs=m.fs;
+    const el=w.querySelector(`.cv-item[data-id="${m.id}"]`);if(!el)continue;
+    el.style.left=it.x+'px';el.style.top=it.y+'px';if(!it.grow){el.style.width=it.w+'px';el.style.height=it.h+'px';}
+    if(m.fs){const f=el.querySelector('.frame');if(f)f.style.fontSize=m.fs+'px';}}
+  cvArrowsFollow();cvGroupBox();
+}
+async function liveRefresh(){
+  const id=cvBoardId;if(!id||cvDirty.has(id)||cvSaving)return;   // your own unsaved change goes first; its save brings the rest
+  let nb;try{nb=await api('boards/'+id);}catch(e){return;}
+  if(cvBoardId!==id||!cvBoard||cvDirty.has(id)||(nb.updated||0)<=(cvBoard.updated||0))return;
+  cvApplyRemote(nb);CV_CACHE.set(id,cvBoard);
+}
+function cvApplyRemote(nb){   // redraw only the items that changed: a full redraw makes every picture flash while it reloads
+  const w=$('#cvWorld'),old=new Map(cvBoard.items.map(i=>[i.id,i])),next=new Set((nb.items||[]).map(i=>i.id));
+  w.querySelectorAll('.cv-item').forEach(el=>{if(!next.has(el.dataset.id))el.remove();});
+  const look=i=>JSON.stringify({...i,x:0,y:0,w:0,h:0,z:0,_local:0});
+  for(const n of nb.items||[]){
+    const o=old.get(n.id),el=w.querySelector(`.cv-item[data-id="${n.id}"]`);
+    if(o&&o._local)n._local=o._local;
+    if(!o||!el)w.appendChild(cvItemEl(n));
+    else if(look(o)!==look(n))el.replaceWith(cvItemEl(n));
+    else{el.style.left=n.x+'px';el.style.top=n.y+'px';el.style.zIndex=n.z||1;if(!n.grow){el.style.width=n.w+'px';el.style.height=n.h+'px';}}
+  }
+  Object.assign(cvBoard,{items:nb.items||[],name:nb.name,updated:nb.updated});
+  cvBoard.maxZ=cvBoard.items.reduce((m,i)=>Math.max(m,i.z||1),1);
+  [...cvSel].forEach(id=>{if(!next.has(id))cvSel.delete(id);});
+  if(document.activeElement!==$('#cvTitle'))$('#cvTitle').value=cvBoard.name;
+  $('#cvEmpty').style.display=cvBoard.items.length?'none':'grid';
+  cvMarkSel();cvArrowsFollow();cvSharpen();
+}
+(function(){   // taking control, and sending moves while a finger or the mouse is down
+  const geo=i=>i.x+','+i.y+','+i.w+','+i.h+','+(i.fs||'');
+  const diff=()=>{if(!cvBoard||!CV_LIVE.snap)return;const out=[];
+    for(const i of cvBoard.items){const g=geo(i);if(CV_LIVE.snap.get(i.id)!==g){CV_LIVE.snap.set(i.id,g);if(CV_LIVE.snap.has(i.id+'#'))out.push({id:i.id,x:i.x,y:i.y,w:i.w,h:i.h,fs:i.fs});}}
+    if(out.length)liveSend({kind:'move',items:out});};
+  document.addEventListener('pointerdown',e=>{if(!cvOpenNow()||!e.target.closest('#cv'))return;liveTake();
+    if(!e.target.closest('#cvStage'))return;
+    CV_LIVE.snap=new Map();for(const i of cvBoard.items){CV_LIVE.snap.set(i.id,geo(i));CV_LIVE.snap.set(i.id+'#',1);}   // '#': it existed already (new items arrive with the save)
+    clearInterval(CV_LIVE.timer);CV_LIVE.timer=setInterval(diff,100);},true);
+  window.addEventListener('pointerup',()=>{if(!CV_LIVE.timer)return;clearInterval(CV_LIVE.timer);CV_LIVE.timer=0;diff();CV_LIVE.snap=null;},true);
+  document.addEventListener('keydown',()=>{if(cvOpenNow())liveTake();},true);
+})();
 function cvOpenNow(){return $('#cv').classList.contains('open')&&!!cvBoard;}
 
 let cvSharpenT=0;const cvSharp=new Set();   // full pictures already fetched: a redraw keeps them sharp
