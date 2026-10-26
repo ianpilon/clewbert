@@ -136,6 +136,12 @@
   .cv-menu[hidden],.cv-help[hidden]{display:none}
   .cv-menu button{border:none;background:none;text-align:left;padding:8px 10px;border-radius:7px;font:inherit;font-size:13px;color:var(--ink)}
   .cv-menu button:hover,.cv-menu button.on{background:#f1f3f6}
+  .cv-menu .cv-mview{display:none}   /* phones: Canvas · Agents · Tasks live here instead of in the header */
+  .cv-menu button.cv-mview.on{font-weight:700}
+  .cv-menu button.cv-mview.on::after{content:" ✓";color:var(--muted)}
+  .cv-menu hr.cv-mview{border:none;border-top:1px solid var(--border);margin:5px 0}
+  #cvMenuBtn.waiting{position:relative}
+  #cvMenuBtn.waiting::after{display:none;content:"";position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;background:#e5484d}
   .cv-help{position:absolute;right:16px;top:56px;width:420px;max-width:calc(100vw - 32px);padding:14px 16px;font-size:12.5px;line-height:1.55;color:var(--ink)}
   .cv-help ul{margin:8px 0 0;padding-left:18px}
   .cv-help kbd{font:inherit;font-size:11px;border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 4px;background:#f8f9fb}
@@ -525,8 +531,11 @@
     .home-head .mic{margin-left:auto}
     .cv-sep{display:none}
     .cv-head{padding:8px 10px;gap:6px}
-    .cv-title{width:auto;flex:1;max-width:120px}
-    .cv-views button{padding:6px 9px}
+    .cv-title{width:auto;flex:1;max-width:none;min-width:0}
+    .cv-crumb{max-width:calc(100vw - 84px)}   /* the view switch moved into ⋯: the title gets the room */
+    .cv-views{display:none}
+    .cv-menu .cv-mview{display:block}
+    #cvMenuBtn.waiting::after{display:block}
     .cv-zoom{display:none}
   }
   /* Welcome: shown until a model answers; nothing else is reachable before that */
@@ -625,7 +634,7 @@
   <div class="cv-head">   <!-- floating pills over the board, no bar -->
     <div class="pill cv-crumb"><button class="cv-back" id="cvBack" title="Back to the boards">← All boards</button><span class="cv-sep">/</span><input class="cv-title" id="cvTitle" spellcheck="false" title="Board name: click to rename"><span class="cv-save" id="cvSaveState"></span><span class="cv-follow" id="cvLive" hidden></span></div>
     <div class="cv-right"><div class="pill cv-views" id="cvViews"><button data-v="canvas" class="on" title="The board">Canvas</button><button data-v="team" id="cvOrgBtn" title="This board's agent team as an org chart: who reports to whom, why, what each one is doing; edit anyone with ⋯">Agents</button><button data-v="tasks" id="cvTasksBtn" title="Every agent task on this board: waiting on you, working, done">Tasks<i class="dot" hidden></i></button></div><button class="pill pill-btn" id="cvMenuBtn" title="More">⋯</button></div>
-    <div class="pill cv-menu" id="cvMenu" hidden><button class="cv-brief" id="cvBriefBtn">Board brief</button><button id="cvHelpBtn">Shortcuts and tips</button><button id="cvStgBtn">Settings: models and keys</button></div>
+    <div class="pill cv-menu" id="cvMenu" hidden><button class="cv-mview" data-mv="canvas">Canvas</button><button class="cv-mview" data-mv="team">Agents</button><button class="cv-mview" data-mv="tasks" id="cvMTasks">Tasks</button><hr class="cv-mview"><button class="cv-brief" id="cvBriefBtn">Board brief</button><button id="cvHelpBtn">Shortcuts and tips</button><button id="cvStgBtn">Settings: models and keys</button></div>
     <div class="pill cv-help" id="cvHelp" hidden><b>Shortcuts and tips</b><ul>
       <li><kbd>⌘V</kbd> paste screenshots and links · drag in any file</li><li>Drag empty space to select · <kbd>Space</kbd>+drag, two-finger scroll or middle button to pan · <kbd>⌘</kbd>-scroll to zoom</li>
       <li>Tools: <kbd>V</kbd> select · <kbd>N</kbd> note · <kbd>T</kbd> text · <kbd>P</kbd> marker · <kbd>A</kbd> agent task</li><li>Double-click for a note, or a note to edit it · hold <kbd>⌥</kbd> while resizing to grow from the centre</li>
@@ -2435,7 +2444,7 @@ function agPaint(){
   w.querySelectorAll('.cv-web').forEach(el=>{const it=cvBoard.items.find(i=>i.id===el.dataset.id),rr=it&&it.demo&&agRun(it.run),f=el.querySelector('iframe');   // a fixed demo reloads
     if(rr&&f){const src=it.url+'?v='+(rr.demo_v||0);if(f.dataset.v!==src){f.dataset.v=src;f.src=src;}}});
   const waiting=AG.runs.filter(r=>r.status==='waiting').length;
-  $('#cvTasksBtn .dot').hidden=!waiting;$('#cvTasksBtn').title=waiting?`${waiting} task${waiting===1?' is':'s are'} waiting on you`:'Every agent task on this board: waiting on you, working, done';
+  $('#cvTasksBtn .dot').hidden=!waiting;$('#cvMTasks').textContent=waiting?`Tasks · ${waiting} waiting`:'Tasks';$('#cvMenuBtn').classList.toggle('waiting',!!waiting);$('#cvTasksBtn').title=waiting?`${waiting} task${waiting===1?' is':'s are'} waiting on you`:'Every agent task on this board: waiting on you, working, done';
   agAnnounce();
 }
 /* Closing the loop. The page asks the server what you have not been told yet, on every board: tasks that ended
@@ -2549,12 +2558,14 @@ $('#agTask').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Ente
 function sideClose(except){if(except!=='bp'&&BP.open)bpClose();}
 // a board has views: Canvas, Team (the org chart) and Tasks; one switch in the header picks between them
 function viewMark(){const v=!$('#org').hidden?'team':'canvas';
-  document.querySelectorAll('#cvViews button').forEach(b=>b.classList.toggle('on',b.dataset.v==='tasks'?!$('#tkp').hidden:b.dataset.v===v));}
+  document.querySelectorAll('#cvViews button').forEach(b=>b.classList.toggle('on',b.dataset.v==='tasks'?!$('#tkp').hidden:b.dataset.v===v));
+  document.querySelectorAll('#cvMenu [data-mv]').forEach(b=>b.classList.toggle('on',b.dataset.mv==='tasks'?!$('#tkp').hidden:b.dataset.mv===v));}
 function cvSwitch(v){   // Canvas and Team are the views; Tasks opens or closes its card over either
   if(v==='tasks'){$('#tkp').hidden?tkpOpen():tkpClose();return;}
   if(v!=='team'&&!$('#org').hidden)orgClose();if(v==='team'&&$('#org').hidden)orgOpen();viewMark();}
 $('#cvViews').onclick=e=>{const b=e.target.closest('button[data-v]');if(b)cvSwitch(b.dataset.v);};
-$('#cvMenuBtn').onclick=e=>{e.stopPropagation();$('#cvHelp').hidden=true;$('#cvMenu').hidden=!$('#cvMenu').hidden;};
+$('#cvMenu').querySelectorAll('[data-mv]').forEach(b=>b.addEventListener('click',()=>{$('#cvMenu').hidden=true;cvSwitch(b.dataset.mv);}));
+$('#cvMenuBtn').onclick=e=>{e.stopPropagation();$('#cvHelp').hidden=true;viewMark();$('#cvMenu').hidden=!$('#cvMenu').hidden;};
 $('#cvStgBtn').onclick=e=>{e.stopPropagation();$('#cvMenu').hidden=true;stgOpen();};
 $('#cvHelpBtn').onclick=e=>{e.stopPropagation();$('#cvMenu').hidden=true;$('#cvHelp').hidden=false;};
 document.addEventListener('pointerdown',e=>{if(!e.target.closest('#cvMenu,#cvMenuBtn,#cvHelp')){$('#cvMenu').hidden=true;$('#cvHelp').hidden=true;}});
