@@ -1033,6 +1033,12 @@ function cvSharpen(){   // on screen: the 400 px copy from 16 px wide, the full 
       else if(img.dataset.thumb){img.src=img.dataset.thumb;delete img.dataset.thumb;}});},250);
 }
 function cvApplyView(save=true){cvSharpen();$('#cvWorld').style.transform=`translate(${cvView.x}px,${cvView.y}px) scale(${cvView.s})`;$('#cvWorld').style.setProperty('--zs',cvView.s);document.querySelectorAll('#cvWorld .cv-area').forEach(el=>{const w=parseFloat(el.style.width)*cvView.s;el.classList.toggle('tiny',w<140);el.classList.toggle('small',w<520);});$('#cvZoomPct').textContent=(cvView.s<.1?(cvView.s*100).toFixed(1):Math.round(cvView.s*100))+'%';if(cvBoard&&save){cvBoard.view={x:cvView.x,y:cvView.y,s:cvView.s};cvSave();}}
+// adding or deleting touches only those items: a full redraw rebuilds every picture, which flashes white while it reloads
+function cvDrop(ids){
+  ids=new Set(ids);cvBoard.items=cvBoard.items.filter(i=>!ids.has(i.id));ids.forEach(id=>cvSel.delete(id));
+  $('#cvWorld').querySelectorAll('.cv-item').forEach(el=>{if(ids.has(el.dataset.id))el.remove();});
+  $('#cvEmpty').style.display=cvBoard.items.length?'none':'grid';cvMarkSel();cvSave();
+}
 function cvRender(){
   const w=$('#cvWorld');w.innerHTML='';
   cvBoard.items.forEach(it=>w.appendChild(cvItemEl(it)));
@@ -1134,7 +1140,8 @@ function cvFree(x,y,w,h,skip){
   return {x,y};
 }
 function cvSettle(it){if(!cvBoard||!cvBoard.items.includes(it))return;const p=cvFree(it.x,it.y,it.w,it.h,new Set([it]));it.x=p.x;it.y=p.y;}   // it grew after loading
-function cvAddItem(it,free){if(free){const p=cvFree(it.x,it.y,it.w,it.h);it.x=p.x;it.y=p.y;}it.id='c'+Date.now().toString(36)+(cvUidN++);it.z=++cvBoard.maxZ;cvBoard.items.push(it);cvRender();cvSelect(it.id);cvSave();return it;}
+function cvAddItem(it,free){if(free){const p=cvFree(it.x,it.y,it.w,it.h);it.x=p.x;it.y=p.y;}it.id='c'+Date.now().toString(36)+(cvUidN++);it.z=++cvBoard.maxZ;cvBoard.items.push(it);
+  $('#cvWorld').appendChild(cvItemEl(it));$('#cvEmpty').style.display='none';cvSharpen();cvSelect(it.id);cvSave();return it;}
 function cvIsDark(hex){const m=/^#?([0-9a-f]{6})$/i.exec(hex);if(!m)return false;const n=parseInt(m[1],16);return (.299*(n>>16)+.587*(n>>8&255)+.114*(n&255))<140;}
 function cvEditNote(f){f.contentEditable='plaintext-only';f.focus();const r=document.createRange();r.selectNodeContents(f);r.collapse(false);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);}
 function cvIsUrl(t){return /^https?:\/\/\S+$/i.test(t);}
@@ -1262,7 +1269,7 @@ function cvItemEl(it){
   if(lb){lb.addEventListener('pointerdown',e=>e.stopPropagation());lb.onclick=()=>cvLinkPopOpen(it,el);}
 
   el.querySelector('.rm').addEventListener('pointerdown',e=>e.stopPropagation());
-  el.querySelector('.rm').onclick=()=>{cvBoard.items=cvBoard.items.filter(i=>i.id!==it.id);cvSel.delete(it.id);cvRender();cvSave();};
+  el.querySelector('.rm').onclick=()=>cvDrop([it.id]);
 
   // drag to move (click without movement on a note focuses it for editing)
   el.addEventListener('pointerdown',e=>{
@@ -1714,7 +1721,7 @@ async function cvUploadFile(file,p){
     if(!cvSel.size||typing||(e.key!=='Delete'&&e.key!=='Backspace'))return;
     e.preventDefault();
     if(cvSel.size>1&&!confirm(`Delete these ${cvSel.size} items?`))return;
-    cvBoard.items=cvBoard.items.filter(i=>!cvSel.has(i.id));cvSel=new Set();cvRender();cvSave();
+    cvDrop([...cvSel]);
   });
 })();
 
