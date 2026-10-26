@@ -1344,6 +1344,9 @@ function cvItemEl(it){
       el.innerHTML=`<div class="frame"><span class="dom">${escapeHtml(dom)}</span><span class="url">${escapeHtml(it.url)}</span>${it.pending?'<span class="fetching">fetching preview…</span>':''}<a href="${escapeAttr(safeUrl(it.url))}" target="_blank" rel="noopener">Open ↗</a></div>`;
     }
     el.querySelector('a').addEventListener('pointerdown',e=>e.stopPropagation());
+    const th=el.querySelector('.thumb img');   // a preview picture that will not load (GitHub sometimes answers "too many requests"):
+    if(th)th.addEventListener('error',()=>{if(!th.dataset.retried){th.dataset.retried=1;setTimeout(()=>{th.src=u.img+(u.img.includes('?')?'&':'?')+'r=1';},4000);}
+      else th.closest('.thumb').remove();});   // one more try, then the card shows its words without a broken picture
   }else if(it.type==='media'){ // a dropped video or sound: drags like an image, a click plays or pauses, the player's own strip still works
     const ext=escapeAttr(it.src);
     el.innerHTML=`<div class="frame"><div class="mbar"><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'Video')}</span><a href="${ext}" target="_blank" rel="noopener">Open ↗</a></div>${it.kind==='audio'?`<audio controls preload="${it.preview?'none':'metadata'}" src="${ext}"></audio>`:`<video controls preload="${it.preview?'none':'metadata'}" playsinline src="${ext}"></video>`}</div>`;
