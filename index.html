@@ -508,6 +508,10 @@
   .vc-thread{flex:1 1 auto;min-height:0;max-height:calc(100vh - 230px);overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding-right:4px}
   .vc-thread:empty{display:none}
   .vc-grab,.vc-last{display:none}
+  .vc.tucked{cursor:pointer}   /* folded while the agent box is open (vcTuck) */
+  .vc.tucked .vc-thread,.vc.tucked .vc-type,.vc.tucked .vc-heard,.vc.tucked .vc-note,.vc.tucked .vc-prog{display:none}
+  .vc.tucked .vc-last{display:block;font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:6px}
+  .vc.tucked .vc-last:empty{display:none}
   .vc-prog{font-size:12.5px;color:var(--muted)}   /* Clewbert's own voice downloading: one line and a bar, so the card never changes size */
   .vc-prog-row{display:flex;gap:10px;align-items:baseline;margin-bottom:6px}
   .vc-prog-row span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1911,13 +1915,13 @@ async function cvUploadFile(file,p){
     else cvAddItem({type:'note',text:txt,x:p.x-105,y:p.y-60,w:210,h:120},true);
   });
   document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&!$('#agFly').hidden){agFlyClose();return;}   // the agent box sits over the folded voice card: it goes first
     if(e.key==='Escape'&&VC.on){vcClose();return;}
     if(e.key==='Escape'&&BP.open&&!(document.activeElement&&(document.activeElement.isContentEditable||/INPUT|TEXTAREA/.test(document.activeElement.tagName)))){bpClose();return;}
     if(!cvOpenNow())return;
     const ae=document.activeElement,typing=ae&&(ae.isContentEditable||/INPUT|TEXTAREA/.test(ae.tagName));
     if(e.key==='Escape'&&!$('#org').hidden){if(ORG.editing)oeClose();else orgClose();return;}
     if(e.key==='Escape'&&!$('#tkp').hidden){tkpClose();return;}
-    if(e.key==='Escape'&&!$('#agFly').hidden){agFlyClose();return;}
     if(!typing&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&e.key.toLowerCase()==='a'){e.preventDefault();agFlyOpen();return;}
     if(e.key==='Escape'&&!typing&&(cvTool!=='select'||!$('#cvEmojiFly').hidden)){cvSetTool('select');return;}
     if(!typing&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&CV_TOOL_KEYS[e.key.toLowerCase()]){cvSetTool(CV_TOOL_KEYS[e.key.toLowerCase()]);return;}
@@ -2060,7 +2064,7 @@ async function vcVoices(){
 }
 async function vcOpen(){
   if(VC.on){vcClose();return;}
-  VC.on=true;VC.muted=false;$('#vcMute').classList.remove('on');$('#vc').hidden=false;if(vcMobile())vcSheet('half');VC.scope=null;vcTitle();vcNote('');vcAudio();vcSetState('');vcVoices();newsAskPermission();NEWS.first=true;
+  VC.on=true;VC.muted=false;$('#vcMute').classList.remove('on');$('#vc').hidden=false;$('#vc').classList.toggle('tucked',!$('#agFly').hidden);if(vcMobile())vcSheet($('#agFly').hidden?'half':'slim');VC.scope=null;vcTitle();vcNote('');vcAudio();vcSetState('');vcVoices();newsAskPermission();NEWS.first=true;
   if(vcMode()==='browser'){   // Clewbert's own voice: downloaded the first time, from the browser's store after that
     const prog=$('#vcProg');prog.hidden=false;vcNote('');
     VB.progress=b=>{$('#vcProgN').textContent=Math.round(b/1e6)+' / 480 MB';$('#vcProgBar').style.width=Math.min(99,b/480e6*100)+'%';};VB.progress(0);
@@ -2601,10 +2605,16 @@ function agFlyOpen(follow){if(!cvBoard)return;newsAskPermission();
   AG.follow=follow&&follow.id?follow:null;   // a follow-up on a task that ended, or a new task
   $('#agFly .ag-h').textContent=AG.follow?(AG.follow.steer?'Redirect: ':'Follow up: ')+newsShort(AG.follow.task,10):'Agent task';$('#agMode').hidden=!!AG.follow;
   $('#agTask').placeholder=AG.follow?(AG.follow.steer?'What should they do differently? For example: use the Developer to read the site\'s code.':'What else should they do? It goes in the same frame.'):'What should the agent do? For example: find three brokers in Nova Scotia and put each on a note.';
-  agWho();cvSetTool('select');const f=$('#agFly');f.hidden=false;$('#tbAgent').classList.add('on');
+  agWho();cvSetTool('select');const f=$('#agFly');f.hidden=false;$('#tbAgent').classList.add('on');vcTuck(true);
   const st=$('#cvStage').getBoundingClientRect(),vc=$('#vc'),vcBottom=vc.hidden||vc.classList.contains('right')?0:vc.getBoundingClientRect().bottom-st.top+8;
   f.style.top=Math.max($('#cvTb').offsetTop+$('#tbAgent').offsetTop-5,vcBottom)+'px';agCtx();$('#agTask').focus();}
-function agFlyClose(){$('#agFly').hidden=true;$('#tbAgent').classList.remove('on');}
+function agFlyClose(){$('#agFly').hidden=true;$('#tbAgent').classList.remove('on');vcTuck(false);}
+// the agent box and the voice card share the top left: while the box is open the voice card folds to its title bar
+// (and the latest answer), still listening; a click on the folded card closes the box and brings the conversation back
+function vcTuck(on){const v=$('#vc');if(v.hidden&&on)return;
+  if(vcMobile()){if(on&&!v.hidden){VC.untuck=VC.sheet;vcSheet('slim');}else if(!on&&VC.untuck){vcSheet(VC.untuck);VC.untuck=null;}return;}
+  v.classList.toggle('tucked',on);}
+$('#vc').addEventListener('click',e=>{if($('#vc').classList.contains('tucked')&&!e.target.closest('button,select,input'))agFlyClose();});
 async function agStart(){
   const task=$('#agTask').value.trim();if(!task||!cvBoard)return;
   if(AG.follow){const f=AG.follow;$('#agStart').disabled=true;
