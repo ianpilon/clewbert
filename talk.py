@@ -129,7 +129,7 @@ def item_words(it, reader):
         words = reader.words(image_name(it.get('src')) or '')
         if it.get('url'):
             words += '\nLink on it: ' + it['url']
-        return 'screenshot', words.strip()
+        return 'screenshot', words.strip() or (it.get('label') or 'A picture with no words in it.')   # a photo is still findable
     if t == 'emoji':
         return 'sticker', it.get('ch') or ''
     if t == 'web':
@@ -153,7 +153,25 @@ def frame_of(it, areas):
 
 
 def tokens(s):
-    return [w for w in re.findall(r"[a-z0-9][a-z0-9'&.-]*[a-z0-9]|[a-z0-9]", s.lower()) if w not in STOP]
+    """Words for matching; a plural matches its singular ("PDFs" finds a PDF, "photos" a photo)."""
+    out = []
+    for w in re.findall(r"[a-z0-9][a-z0-9'&.-]*[a-z0-9]|[a-z0-9]", s.lower()):
+        if w in STOP:
+            continue
+        if len(w) > 3 and w.endswith('s') and not w.endswith(('ss', 'us', 'is')):
+            w = w[:-1]
+        out.append(w)
+    return out
+
+
+# words in a question that name a kind of item: those items always go to the model (up to KIND_MAX), so "is there a
+# PDF?" then "zoom into it" can show it even when no other word of the question matches it
+KIND_WORDS = {'pdf': 'PDF', 'picture': 'screenshot', 'photo': 'screenshot', 'image': 'screenshot', 'screenshot': 'screenshot',
+              'pic': 'screenshot', 'sticky': 'sticky note', 'note': 'sticky note', 'stickie': 'sticky note', 'text': 'text',
+              'heading': 'text', 'file': 'file', 'markdown': 'file', 'md': 'file', 'document': 'file', 'doc': 'file',
+              'video': 'video', 'audio': 'audio', 'sound': 'audio', 'link': 'link', 'frame': 'frame title',
+              'sticker': 'sticker', 'emoji': 'sticker', 'demo': 'working demo'}
+KIND_MAX = 8
 
 
 def passages(boards, reader):
@@ -209,6 +227,11 @@ def context(question, history, boards, reader):
     short = [c for c in chunks if c['kind'] in ('sticky note', 'text', 'frame title') and c['part'] == 0]
     if sum(len(c['text'].split()) for c in short) <= BUDGET_WORDS // 2:
         picked, words = short[:], sum(len(c['text'].split()) for c in short)
+    named = {KIND_WORDS[w] for w in tokens(question) + (tokens(history[-1]['q']) if history else []) if w in KIND_WORDS}
+    for c in [c for c in chunks if c['kind'] in named and c['part'] == 0][:KIND_MAX]:
+        if c not in picked:
+            picked.append(c)
+            words += len(c['text'].split())
     for c in rank(question, history, chunks):
         if words >= BUDGET_WORDS:
             break
