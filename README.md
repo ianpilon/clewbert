@@ -2,6 +2,8 @@
 
 Boards you can talk to, with a team of AI agents that works on them.
 
+![The Start here board: a PDF, a Markdown file, a picture, YouTube and GitHub cards, and sticky notes on one canvas](docs/start-here.png)
+
 A clew is the ball of thread that led Theseus out of the labyrinth; it is where the word "clue" comes from.
 You bring the pile of screenshots, links, PDFs and half-formed ideas. Clewbert and its helpers find the thread.
 
