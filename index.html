@@ -692,7 +692,7 @@
 
 <script>
 const $=s=>document.querySelector(s);
-function safeUrl(u){u=(u||'').trim();if(!u)return '';return /^https?:\/\//i.test(u)?u:'https://'+u;}
+function safeUrl(u){u=(u||'').trim();if(!u)return '';return /^https?:\/\//i.test(u)||/^api\//.test(u)?u:'https://'+u;}   // api/... = a file kept by this app (a PDF on the board)
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function escapeAttr(s){return escapeHtml(s==null?'':s);}
 
