@@ -654,7 +654,7 @@
     <div class="pill cv-help" id="cvHelp" hidden><b>Shortcuts and tips</b><ul>
       <li><kbd>⌘V</kbd> paste screenshots and links · drag in any file</li><li>Drag empty space to select · <kbd>Space</kbd>+drag, two-finger scroll or middle button to pan · <kbd>⌘</kbd>-scroll to zoom</li>
       <li>Tools: <kbd>V</kbd> select · <kbd>N</kbd> note · <kbd>T</kbd> text · <kbd>P</kbd> marker · <kbd>A</kbd> agent task</li><li>Double-click for a note, or a note to edit it · hold <kbd>⌥</kbd> while resizing to grow from the centre</li>
-      <li>Voice: <kbd>M</kbd> mutes the mic · <kbd>Esc</kbd> closes what is open</li></ul></div>
+      <li><kbd>⌘Z</kbd> undo · <kbd>⇧⌘Z</kbd> redo</li><li>Voice: <kbd>M</kbd> mutes the mic · <kbd>Esc</kbd> closes what is open</li></ul></div>
   </div>
   <div class="cv-stage" id="cvStage">
     <div class="cv-world" id="cvWorld"></div>
@@ -786,6 +786,7 @@ function cvSaveState(s){const el=$('#cvSaveState');el.classList.toggle('error',s
   el.textContent=s==='saving'?'Saving…':s==='saved'?'Saved':s==='error'?'Not saved. Retrying. Reload the page if this stays.':s==='image'?'Screenshot not saved. Try pasting it again.':s==='upload'?'File not uploaded. Try dropping it again.':s==='toolarge'?'File not uploaded: files can be up to 4 GB.':s==='gone'?'Not saved: this board was deleted.':'';}
 function cvSave(now){
   if(!cvBoard)return;
+  cvHistNote();
   cvDirty.set(cvBoardId,cvBoard);cvSaveState('saving');
   clearTimeout(cvSaveTimer);cvSaveTimer=setTimeout(cvFlush,now?0:600);
 }
@@ -1042,7 +1043,7 @@ async function openBoard(id){
   $('#cvTitle').value=cvBoard.name;document.title=cvBoard.name+' · Clewbert';
   cvSaveState('');
   $('#home').hidden=true;$('#cv').classList.add('open');
-  cvRender();
+  cvRender();cvHistReset();
   if(cvFocusTitle){cvFocusTitle=false;$('#cvTitle').focus();$('#cvTitle').select();}
   if(VC.openBrief){VC.openBrief=false;bpOpen();}else if(BP.open)bpLoad();
   if(VC.focus){const f=VC.focus,c=VC.close;VC.focus=null;VC.close=false;vcFocus(f,c);}
@@ -1051,7 +1052,7 @@ async function openBoard(id){
     CV_CACHE.set(id,nb);
     if(cvBoardId!==id||!nb||nb.updated===b.updated||cvDirty.has(id)||cvSaving)return;   // you already changed something: keep your copy
     cvBoard=nb;if(!Array.isArray(cvBoard.items))cvBoard.items=[];cvBoard.maxZ=cvBoard.items.reduce((m,i)=>Math.max(m,i.z||1),1);
-    cvBoard.items.forEach(i=>{if(i.agent)agSeen(id).add(i.id);});$('#cvTitle').value=cvBoard.name;cvRender();
+    cvBoard.items.forEach(i=>{if(i.agent)agSeen(id).add(i.id);});$('#cvTitle').value=cvBoard.name;cvRender();cvHistReset();
   }).catch(()=>{});
 }
 function closeBoard(){
@@ -1059,6 +1060,33 @@ function closeBoard(){
   if(cvBoard){CV_CACHE.set(cvBoardId,cvBoard);cvSave(true);}
   cvBoardId=null;cvBoard=null;
 }
+/* Undo and redo (⌘Z, ⇧⌘Z): the board as it was after each change, per board, the last 100. A change is noted half a
+   second after it is saved, so a burst of typing or one drag is one step. Changes that arrive from another device or an
+   agent are not steps of yours: they become the new starting point instead. */
+const CV_HIST={board:null,last:null,undo:[],redo:[],t:0};
+function cvHistState(){return JSON.stringify(cvBoard.items.filter(i=>!i.uploading).map(({pending,_local,...i})=>i));}
+function cvHistReset(){if(!cvBoard)return;clearTimeout(CV_HIST.t);CV_HIST.t=0;Object.assign(CV_HIST,{board:cvBoardId,last:cvHistState(),undo:[],redo:[]});}
+function cvHistCommit(){clearTimeout(CV_HIST.t);CV_HIST.t=0;if(!cvBoard||CV_HIST.board!==cvBoardId)return;
+  const cur=cvHistState();if(cur===CV_HIST.last)return;
+  CV_HIST.undo.push(CV_HIST.last);if(CV_HIST.undo.length>100)CV_HIST.undo.shift();CV_HIST.redo=[];CV_HIST.last=cur;}
+function cvHistNote(){if(CV_HIST.board!==cvBoardId)return;clearTimeout(CV_HIST.t);CV_HIST.t=setTimeout(cvHistCommit,500);}
+function cvHistGo(back){
+  if(!cvBoard||CV_HIST.board!==cvBoardId)return;cvHistCommit();
+  const from=back?CV_HIST.undo:CV_HIST.redo,to=back?CV_HIST.redo:CV_HIST.undo;if(!from.length)return;
+  to.push(CV_HIST.last);CV_HIST.last=from.pop();
+  const local=new Map(cvBoard.items.filter(i=>i._local).map(i=>[i.id,i._local])),items=JSON.parse(CV_HIST.last),ids=new Set(items.map(i=>i.id));
+  items.forEach(i=>{if(local.has(i.id))i._local=local.get(i.id);});
+  cvBoard.items.forEach(i=>{if(i.agent&&!ids.has(i.id))items.push(i);});   // agents' work is theirs: your undo never removes it
+  cvApplyRemote({...cvBoard,items});clearTimeout(CV_HIST.t);   // redraws only what changed
+  cvDirty.set(cvBoardId,cvBoard);cvSaveState('saving');clearTimeout(cvSaveTimer);cvSaveTimer=setTimeout(cvFlush,300);   // saved, without becoming a new step
+}
+document.addEventListener('keydown',e=>{
+  if(!cvOpenNow()||!(e.metaKey||e.ctrlKey))return;
+  const k=e.key.toLowerCase(),ae=document.activeElement;
+  if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA|SELECT/.test(ae.tagName)))return;   // typing: the text's own undo
+  if(k==='z'){e.preventDefault();cvHistGo(!e.shiftKey);}else if(k==='y'){e.preventDefault();cvHistGo(false);}
+});
+
 /* Live between devices (like Miro): every open copy of a board hears the others. While you drag or resize, the moves go
    out about ten times a second; each save tells the other copies to fetch the board and redraw only what changed. The
    copy you last touched is in control: the others show "Following your phone" and flush anything unsaved first, so an
@@ -1090,7 +1118,7 @@ async function liveRefresh(){
   const id=cvBoardId;if(!id||cvDirty.has(id)||cvSaving)return;   // your own unsaved change goes first; its save brings the rest
   let nb;try{nb=await api('boards/'+id);}catch(e){return;}
   if(cvBoardId!==id||!cvBoard||cvDirty.has(id)||(nb.updated||0)<=(cvBoard.updated||0))return;
-  cvApplyRemote(nb);CV_CACHE.set(id,cvBoard);
+  cvApplyRemote(nb);CV_CACHE.set(id,cvBoard);if(CV_HIST.board===id)CV_HIST.last=cvHistState();   // another device's change: a new starting point
 }
 function cvApplyRemote(nb){   // redraw only the items that changed: a full redraw makes every picture flash while it reloads
   const w=$('#cvWorld'),old=new Map(cvBoard.items.map(i=>[i.id,i])),next=new Set((nb.items||[]).map(i=>i.id));
