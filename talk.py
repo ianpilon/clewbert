@@ -491,6 +491,9 @@ def named_target(question, said, targets):
     return None
 
 
+SOURCE_MATCH = .5   # share of the answer's words found in one item's text
+
+
 def same_words(a, b):
     """How much of answer a is already in answer b (share of a's words), for catching a repeated answer."""
     wa, wb = set(tokens(a)), set(tokens(b))
@@ -612,6 +615,13 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
                 out.append(entries[i])
         return out
     used = pick(nums)
+    if not used and said:   # the model read an item but listed no sources: outline the item the question names and the answer is taken from
+        asked = set(tokens(question))   # a long PDF matches most answers, so the question has to name it ("the quick guide PDF")
+        best = max(((same_words(said, e.get('notes') or e['text']), n) for n, e in enumerate(entries)
+                    if e['item'] and e['kind'] not in ('frame summary', 'frame gist', 'frame title', 'board brief', 'agent task')
+                    and asked & set(tokens(e['kind'] + ' ' + ' '.join(e['text'].split()[:6])))), default=(0, 0))
+        if best[0] >= SOURCE_MATCH:
+            used = [entries[best[1]]]
     # move the board only when the user asked to see something; otherwise the page just outlines the sources as usual
     asked_to_see = bool(SEE.search(question)) or bool(YES.search(question) and history and OFFER.search(history[-1]['a']))   # "yes" to "Want me to open it?"
     shown = [e for e in pick(show_nums) if e['item']] if asked_to_see else []   # board items only (the brief is not on the canvas)
