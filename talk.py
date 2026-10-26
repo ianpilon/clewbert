@@ -278,6 +278,8 @@ have broken lines or small reading mistakes.
 Your answer is spoken aloud: plain sentences, no lists, no markdown, at most four short sentences, and say numbers the
 way they are written in the items. If the items do not answer the question, say plainly that you could not find it on
 the board(s); never guess and never use outside knowledge.
+Answer only about what they asked for. When they name a kind of thing ("YouTube links", "the PDF"), talk about and list
+in "sources" only the items that match; never describe the other items to rule them out ("the other link is GitHub").
 
 WHAT THIS APP CAN DO (you control it through "show" and "view"; never say you cannot do these):
 - Show items: when the user asks to zoom in on, show, go to, find, point at or look at something, put its item number(s) in
@@ -497,6 +499,23 @@ def named_target(question, said, targets):
 SOURCE_MATCH = .5   # share of the answer's words found in one item's text
 
 
+def no_rule_out(said, used, entries):
+    """"Any YouTube links?" gets the YouTube link, not "The other link is GitHub": a sentence about an item the answer
+    did not come from, ruling it out, is dropped (the model adds one even when told not to)."""
+    parts = re.split(r'(?<=\D[.!?])\s+|(?<=[.!?]["\'])\s+', said.strip())   # "the 5. Bring in anything frame" is one sentence
+    others = [e for e in entries if e['item'] and e not in used and e['kind'] not in ('frame summary', 'frame gist', 'frame title')]
+    if len(parts) < 2 or not used or not others:
+        return said
+    def about_other(s):
+        if not re.match(r"(?:the |this |that )?(?:board's )?other\b|.*\b(?:is|are) not\b|.*\bdoes not count\b", s, re.I):
+            return False
+        ours = max(same_words(s, e.get('notes') or e['text']) for e in used)
+        theirs = max(same_words(s, e.get('notes') or e['text']) for e in others)
+        return theirs > ours
+    kept = [s for s in parts if not about_other(s)]
+    return ' '.join(kept) if kept else said
+
+
 def same_words(a, b):
     """How much of answer a is already in answer b (share of a's words), for catching a repeated answer."""
     wa, wb = set(tokens(a)), set(tokens(b))
@@ -658,6 +677,7 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
     if layout and asked_to_see and not shown and not opened:   # the model can say "I have opened the Sales board" and leaves "open" empty
         opened = named_target(question, said, layout['targets'])
     said = no_roll_call(said, entries)
+    said = no_rule_out(said, used, entries)
     for e in shown:   # went into a frame but the answer is about something else: say what the frame holds
         if e['kind'] in ('frame summary', 'frame gist') and e['frame'].lower() not in said.lower():
             said = 'Here is the %s frame. %s' % (e['frame'], ' '.join(re.split(r'(?<=[.!?])\s+', e['notes'])[:2]))
