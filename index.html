@@ -205,6 +205,7 @@
   .cv-item.sel .frame{outline:calc(2px / var(--zs,1)) solid #3b82f6;outline-offset:calc(1px / var(--zs,1))}
   .cv-item img{width:100%;height:100%;object-fit:fill;display:block;pointer-events:none}
   .cv-note .frame{background:#fff9c2;border-color:#eadf8d;padding:10px 12px;font-size:13px;line-height:1.45;overflow:auto}
+  .cv-note:not(.plain) .frame{padding:.77em .92em}   /* a sticky's padding scales with its text (10 x 12 px at 13 px) */
   .cv-note .frame[contenteditable="plaintext-only"]{cursor:text}
   .cv-note .frame:focus{outline:2px solid #d8c83a;outline-offset:1px}
   /* a link card scales as a whole, like a picture: its text and spacing are sized from the card's width (13px at 300px wide) */
@@ -1423,10 +1424,11 @@ function cvItemEl(it){
     const sx=e.clientX,sy=e.clientY,ow=it.w,oh=it.h,ox=it.x,oy=it.y,ar=ow/oh;
     if(it.grow){cvTextResize(e,it,el,h.dataset.c,hx,hy);return;}
     const v=it.type==='media'&&el.querySelector('video'),vr=v&&(it.ar||(v.videoWidth?v.videoHeight/v.videoWidth:0));   // videos keep their shape too
+    const sticky=it.type==='note'&&it.color!=='none',ofs=it.fs||13;   // a sticky note scales as a whole: its text grows with it
     const mv=ev=>{const k=ev.altKey?2:1;   // Option held: grow from the centre, all sides at once (Miro, Photoshop)
       const nw=Math.max(it.type==='media'?160:70,ow+k*hx*(ev.clientX-sx)/cvView.s);
-      const nh=['img','emoji','ink','link'].includes(it.type)?nw/ar:vr?Math.round(nw*vr)+cvBarH(el):Math.max(56,oh+k*hy*(ev.clientY-sy)/cvView.s);
-      it.w=nw;it.h=nh;
+      const nh=['img','emoji','ink','link'].includes(it.type)||sticky?nw/ar:vr?Math.round(nw*vr)+cvBarH(el):Math.max(56,oh+k*hy*(ev.clientY-sy)/cvView.s);
+      it.w=nw;it.h=nh;if(sticky){it.fs=ofs*nw/ow;el.querySelector('.frame').style.fontSize=it.fs+'px';}
       it.x=ev.altKey?ox-(nw-ow)/2:hx<0?ox+ow-nw:ox;it.y=ev.altKey?oy-(nh-oh)/2:hy<0?oy+oh-nh:oy;
       el.style.width=nw+'px';el.style.height=nh+'px';el.style.left=it.x+'px';el.style.top=it.y+'px';cvArrowsFollow();if(it.type==='web')cvWebFit(el);};
     const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);cvSave();};
