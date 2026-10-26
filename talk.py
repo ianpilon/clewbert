@@ -324,7 +324,7 @@ WHAT THIS APP CAN DO (you control it through "show" and "view"; never say you ca
 - It CANNOT edit, move, delete or create items (only agent tasks do that, and web_card), change colours, or open new
   browser tabs. If asked, say so plainly
   and say what you can do instead. Never claim to have done anything else.
-Reply with JSON only: {"answer": "<what to say>", "sources": [<item numbers you used>], "show": [<item numbers to show, or empty>], "view": null, "open": null, "task": null, "task_mode": "team", "agent_answer": null, "follow_up": null, "web_card": null, "add_teammate": null, "steer": null}"""
+Reply with JSON only: {"answer": "<what to say>", "sources": [<item numbers that answer the question, outlined for the user; not ones you mention only to rule them out>], "show": [<item numbers to show, or empty>], "view": null, "open": null, "task": null, "task_mode": "team", "agent_answer": null, "follow_up": null, "web_card": null, "add_teammate": null, "steer": null}"""
 
 
 def ask_model(question, history, entries, scope):
