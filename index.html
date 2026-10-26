@@ -230,6 +230,13 @@
   .cv-item .lnkbtn:hover,.cv-item .lnkbtn.haslink{color:#1d4ed8;border-color:#c5d9fb;background:#eff5ff}
   .cv-urlchip{position:absolute;left:8px;bottom:8px;display:inline-flex;align-items:center;gap:5px;max-width:calc(100% - 16px);padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.95);border:1px solid var(--border);box-shadow:var(--shadow);font-size:11px;font-weight:600;color:#1d4ed8;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cv-urlchip:hover{background:#eff5ff;border-color:#c5d9fb}
+  .cv-dlchip{position:absolute;right:8px;bottom:8px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:999px;background:rgba(255,255,255,.95);border:1px solid var(--border);box-shadow:var(--shadow);color:#1d4ed8}
+  .cv-dlchip:hover{background:#eff5ff;border-color:#c5d9fb}
+  .cv-note .cv-dlchip{opacity:0;transition:opacity .12s}   /* notes and text: only on hover or when selected, so stickies stay clean */
+  .cv-note:hover .cv-dlchip,.cv-note.sel .cv-dlchip{opacity:1}
+  .cv-area .cv-dlchip{display:none;pointer-events:auto}   /* frames: when selected */
+  .cv-area.sel .cv-dlchip{display:inline-flex}
+  .haslink .cv-urlchip:has(~.cv-dlchip){max-width:calc(100% - 48px)}
   .cv-img.haslink{cursor:pointer}
   .cv-linkpop{position:fixed;z-index:90;display:none;flex-direction:column;gap:8px;width:340px;max-width:calc(100vw - 16px);background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(16,20,28,.22);padding:12px}
   .cv-linkpop.open{display:flex}
@@ -693,6 +700,24 @@
 <script>
 const $=s=>document.querySelector(s);
 function safeUrl(u){u=(u||'').trim();if(!u)return '';return /^https?:\/\//i.test(u)||/^api\//.test(u)?u:'https://'+u;}   // api/... = a file kept by this app (a PDF on the board)
+function cvFileName(s,fallback){return String(s||'').replace(/[\\/:*?"<>|\n\r\t]+/g,' ').replace(/\s+/g,' ').trim().slice(0,80)||fallback;}
+// what the download button on an item saves, under a readable name: its file, or its words as a .txt (null = nothing to save)
+function cvDownload(it){
+  const ext=u=>(String(u||'').match(/\.([a-z0-9]{2,5})(?:\?|$)/i)||[,''])[1].toLowerCase(),named=(label,fb,e)=>{const n=cvFileName(label,fb);return e&&!n.toLowerCase().endsWith('.'+e)?n+'.'+e:n;};
+  if(it.uploading)return null;
+  if(it.type==='img'){
+    if(/^api\/images\/[0-9a-f]{64}\.pdf$/.test(it.url||''))return {href:it.url,name:named(it.label,'document','pdf')};
+    if(/^api\//.test(it.src||''))return {href:it.src,name:named(it.label,'Picture',ext(it.src))};
+    return null;
+  }
+  if((it.type==='media'||it.type==='file')&&/^api\//.test(it.src||''))return {href:it.src,name:named(it.label,it.type==='media'?'Video':'file',ext(it.src))};
+  if(it.type==='shot')return {href:'api/shots/'+it.run+'.jpg',name:named("Agent's browser "+(it.label||''),'Agent browser','jpg')};
+  if(it.type==='web'&&it.demo)return {href:it.url,name:named(it.label,'Demo','html')};
+  if(it.type==='note'&&String(it.text||'').trim())return {name:named(String(it.text).split(/\s+/).slice(0,6).join(' '),'Note','txt'),text:()=>it.text};
+  if(it.type==='area')return {name:named(it.text,'Frame','txt'),text:()=>[it.text||'Frame',...cvInside(it).filter(i=>i.type==='note'&&String(i.text||'').trim())
+    .sort((a,b)=>a.y-b.y||a.x-b.x).map(i=>i.text.trim())].join('\n\n')+'\n'};
+  return null;
+}
 function cvOpenUrl(it){   // where clicking an item goes: a PDF opens in a page titled with its name, anything else at its address
   const m=/^api\/images\/([0-9a-f]{64}\.pdf)$/.exec(it.url||'');
   if(!m)return safeUrl(it.url);
@@ -1168,10 +1193,6 @@ function cvItemEl(it){
     el.innerHTML=`<div class="frame"><div class="mbar"><span class="ext">${escapeHtml(ext)}</span><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'File')}</span>${it.src?`<a href="${escapeAttr(it.src)}" target="_blank" rel="noopener">Open ↗</a>`:''}</div>${it.uploading?`<div class="upbar"><i></i></div><div class="fprev">Uploading…</div>`:`<div class="fprev">${escapeHtml(it.preview||'')}</div>`}</div>`;
     if(it.size&&!it.uploading)el.querySelector('.fprev').insertAdjacentHTML(it.preview?'afterbegin':'beforeend',`<span class="fsize">${cvSize(it.size)}${it.preview?'\n':''}</span>`);
     const a=el.querySelector('.mbar a');if(a)a.addEventListener('pointerdown',e=>e.stopPropagation());
-    if(it.src&&!it.uploading){   // like a PDF: save it under its own name
-      el.insertAdjacentHTML('beforeend',`<a class="cv-dlchip" href="${escapeAttr(it.src)}" download="${escapeAttr(String(it.label||'file').replace(/[\\/:*?"<>|]+/g,' ').trim()||'file')}" title="Download this file"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></a>`);
-      el.querySelector('.cv-dlchip').addEventListener('pointerdown',e=>e.stopPropagation());
-    }
   }else if(it.type==='ink'){ // a marker stroke; only the line itself takes clicks, so things under it stay reachable
     const d=escapeAttr(it.d||''),hw=(it.sw||3)*4;
     el.innerHTML=`<div class="frame"><svg viewBox="0 0 ${it.vw||it.w} ${it.vh||it.h}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="${escapeAttr(it.color||'#1f2430')}" stroke-width="${it.sw||3}" stroke-linecap="round" stroke-linejoin="round"/><path class="hit" d="${d}" fill="none" stroke="transparent" stroke-width="${hw}" stroke-linecap="round"/></svg></div>`;
@@ -1210,6 +1231,14 @@ function cvItemEl(it){
     f.addEventListener('input',()=>{it.text=f.textContent;cvFitText(it,el);cvSave();});
     f.addEventListener('pointerdown',e=>{if(f.isContentEditable)e.stopPropagation();}); // typing in it → text selection, not drag
     if(it.ask)agAskForm(el,it);   // an agent's question: answer it right on the note
+  }
+  const dl=cvDownload(it);
+  if(dl){
+    el.insertAdjacentHTML('beforeend',`<a class="cv-dlchip" href="${escapeAttr(dl.href||'#')}" download="${escapeAttr(dl.name)}" title="Download ${escapeAttr(dl.name)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></a>`);
+    const c=el.querySelector('.cv-dlchip');c.addEventListener('pointerdown',e=>e.stopPropagation());
+    if(dl.text)c.addEventListener('click',e=>{   // words, not a stored file: made into a .txt when asked for
+      e.preventDefault();const u=URL.createObjectURL(new Blob([dl.text()],{type:'text/plain;charset=utf-8'})),a=document.createElement('a');
+      a.href=u;a.download=dl.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);});
   }
   el.insertAdjacentHTML('beforeend',`${it.type==='img'?`<button class="lnkbtn${it.url?' haslink':''}" title="${it.url?'Edit link':'Add a link — clicking the card will open it'}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></button>`:''}<button class="rm" title="Remove">×</button><span class="rsz" data-c="br"></span><span class="rsz tl" data-c="tl"></span><span class="rsz bl" data-c="bl"></span>${it.grow?'<span class="rsz r" data-c="r" title="Drag to set the width (the text wraps)"></span>':''}`);
   const lb=el.querySelector('.lnkbtn');
