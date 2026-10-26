@@ -1599,8 +1599,10 @@ async function cvUploadFile(file,p){
     e.preventDefault();
     stage.classList.add('panning');
     const sx=e.clientX,sy=e.clientY,ox=cvView.x,oy=cvView.y;
-    const mv=ev=>{if(CV_PINCH.used)return;cvView.x=ox+ev.clientX-sx;cvView.y=oy+ev.clientY-sy;cvApplyView();};
-    const up=()=>{stage.classList.remove('panning');window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);};
+    let moved=false;
+    const mv=ev=>{if(CV_PINCH.used)return;if(Math.abs(ev.clientX-sx)+Math.abs(ev.clientY-sy)>5)moved=true;cvView.x=ox+ev.clientX-sx;cvView.y=oy+ev.clientY-sy;cvApplyView();};
+    const up=()=>{stage.classList.remove('panning');window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);
+      if(!moved&&!CV_PINCH.used&&e.pointerType==='touch')cvSelect(null);};   // a finger's tap on empty board deselects, like a click
     window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);
   });
   function cvMarquee(e){
