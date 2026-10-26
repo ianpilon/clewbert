@@ -1286,6 +1286,13 @@ function cvItemEl(it){
     el.innerHTML=it._local?`<div class="frame"><img src="${escapeAttr(it._local)}" draggable="false"></div>`   // added on this device: shown from its own copy
       :`<div class="frame"><img ${th!==it.src?`data-thumb="${escapeAttr(th)}" data-full="${escapeAttr(it.src)}"`:`src="${escapeAttr(th)}"`} draggable="false"></div>`;
     if(it.uploading)el.classList.add('uploading');
+    const im=el.querySelector('img');
+    if(!it._local&&!it.src)im.removeAttribute('src');   // no address yet: an empty card, not a broken-picture icon
+    im.addEventListener('error',()=>{   // a picture that does not load tries the next copy: this device's, the 400 px one, the full one
+      const tried=(im.dataset.tried||'')+'|'+(im.getAttribute('src')||''),next=[cvThumb(it.src),it.src].find(u=>u&&!tried.includes('|'+u+'|')&&!tried.endsWith('|'+u));
+      if(im.getAttribute('src')===it._local)delete it._local;
+      im.dataset.tried=tried;if(next){delete im.dataset.thumb;delete im.dataset.full;setTimeout(()=>{im.src=next;},400);}
+    });
     if(it.url){
       el.classList.add('haslink');
       let dom=it.url;try{dom=new URL(safeUrl(it.url)).hostname.replace(/^www\./,'');}catch(e){}
