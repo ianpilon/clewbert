@@ -207,20 +207,22 @@
   .cv-note .frame{background:#fff9c2;border-color:#eadf8d;padding:10px 12px;font-size:13px;line-height:1.45;overflow:auto}
   .cv-note .frame[contenteditable="plaintext-only"]{cursor:text}
   .cv-note .frame:focus{outline:2px solid #d8c83a;outline-offset:1px}
-  .cv-link .frame{padding:11px 13px;display:flex;flex-direction:column;gap:3px;justify-content:center;cursor:pointer}
-  .cv-link .dom{font-weight:700;font-size:13px}
-  .cv-link .url{font-size:11px;color:var(--muted);word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .cv-link a{font-size:11.5px;font-weight:600;color:#1d4ed8;text-decoration:none;margin-top:3px}
+  /* a link card scales as a whole, like a picture: its text and spacing are sized from the card's width (13px at 300px wide) */
+  .cv-item.cv-link{container-type:inline-size}
+  .cv-link .frame{font-size:4.333cqw;padding:.846em 1em;display:flex;flex-direction:column;gap:.23em;justify-content:center;cursor:pointer}
+  .cv-link .dom{font-weight:700;font-size:1em}
+  .cv-link .url{font-size:.846em;color:var(--muted);word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .cv-link a{font-size:.885em;font-weight:600;color:#1d4ed8;text-decoration:none;margin-top:.23em}
   .cv-link a:hover{text-decoration:underline}
   .cv-link .frame.unfurled{padding:0;gap:0;justify-content:flex-start}
   .cv-link .thumb{width:100%;flex:1 1 58%;min-height:0;overflow:hidden;border-bottom:1px solid var(--border);background:var(--canvas)}
   .cv-link .thumb img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
-  .cv-link .lbody{padding:9px 12px 10px;display:flex;flex-direction:column;gap:4px;flex:1 1 42%;min-height:0;overflow:hidden}
-  .cv-link .ltitle{font-weight:700;font-size:12.5px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .cv-link .ldesc{font-size:11px;color:var(--muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .cv-link .lfoot{display:flex;align-items:center;gap:8px;margin-top:auto;padding-top:2px}
-  .cv-link .dom2{font-size:10.5px;font-weight:600;color:var(--muted-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .cv-link .lfoot a{margin-left:auto;margin-top:0;white-space:nowrap;font-size:11px}
+  .cv-link .lbody{padding:.69em .92em .77em;display:flex;flex-direction:column;gap:.31em;flex:1 1 42%;min-height:0;overflow:hidden}
+  .cv-link .ltitle{font-weight:700;font-size:.96em;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .cv-link .ldesc{font-size:.846em;color:var(--muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .cv-link .lfoot{display:flex;align-items:center;gap:.62em;margin-top:auto;padding-top:.15em}
+  .cv-link .dom2{font-size:.81em;font-weight:600;color:var(--muted-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cv-link .lfoot a{margin-left:auto;margin-top:0;white-space:nowrap;font-size:.846em}
   .cv-media .frame,.cv-file .frame{display:flex;flex-direction:column}
   .cv-media .mbar,.cv-file .mbar{display:flex;align-items:center;gap:7px;padding:7px 10px;font-size:12px;font-weight:600;border-bottom:1px solid var(--border);background:#f8f9fb;min-width:0}
   .cv-media .mbar .nm,.cv-file .mbar .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -233,7 +235,7 @@
   .cv-file .fsize{font-size:10.5px;color:var(--muted-2);font-weight:500}
   .cv-file .upbar{height:4px;background:var(--border);margin:10px 11px 0;border-radius:2px;overflow:hidden}
   .cv-file .upbar i{display:block;height:100%;width:0;background:#2563eb}
-  .cv-link .fetching{font-size:10.5px;color:var(--muted-2);font-style:italic}
+  .cv-link .fetching{font-size:.81em;color:var(--muted-2);font-style:italic}
   /* handles and buttons keep the same size on screen at any zoom (--zs = the board's zoom), like Miro */
   .cv-item .rm{position:absolute;top:calc(-9px / var(--zs,1));right:calc(-9px / var(--zs,1));width:calc(20px / var(--zs,1));height:calc(20px / var(--zs,1));border-radius:50%;border:calc(1px / var(--zs,1)) solid var(--border);background:#fff;color:var(--muted);font-size:calc(12px / var(--zs,1));line-height:1;display:none;box-shadow:var(--shadow);padding:0;cursor:pointer}
   .cv-item:hover .rm,.cv-item.sel .rm{display:block}
@@ -1416,7 +1418,7 @@ function cvItemEl(it){
     const v=it.type==='media'&&el.querySelector('video'),vr=v&&(it.ar||(v.videoWidth?v.videoHeight/v.videoWidth:0));   // videos keep their shape too
     const mv=ev=>{const k=ev.altKey?2:1;   // Option held: grow from the centre, all sides at once (Miro, Photoshop)
       const nw=Math.max(it.type==='media'?160:70,ow+k*hx*(ev.clientX-sx)/cvView.s);
-      const nh=['img','emoji','ink'].includes(it.type)?nw/ar:vr?Math.round(nw*vr)+cvBarH(el):Math.max(56,oh+k*hy*(ev.clientY-sy)/cvView.s);
+      const nh=['img','emoji','ink','link'].includes(it.type)?nw/ar:vr?Math.round(nw*vr)+cvBarH(el):Math.max(56,oh+k*hy*(ev.clientY-sy)/cvView.s);
       it.w=nw;it.h=nh;
       it.x=ev.altKey?ox-(nw-ow)/2:hx<0?ox+ow-nw:ox;it.y=ev.altKey?oy-(nh-oh)/2:hy<0?oy+oh-nh:oy;
       el.style.width=nw+'px';el.style.height=nh+'px';el.style.left=it.x+'px';el.style.top=it.y+'px';cvArrowsFollow();if(it.type==='web')cvWebFit(el);};
