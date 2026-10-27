@@ -258,9 +258,18 @@
   .cv-media .mbar a:hover,.cv-file .mbar a:hover{text-decoration:underline}
   .cv-media video{flex:1;min-height:0;width:100%;background:#000;display:block}
   .cv-media audio{width:calc(100% - 16px);margin:auto 8px}
-  .cv-file .ext{font-size:10px;font-weight:800;letter-spacing:.04em;color:#fff;background:#64748b;border-radius:4px;padding:2px 5px;text-transform:uppercase}
-  .cv-file .fprev{flex:1;min-height:0;overflow:hidden;padding:9px 11px;font-size:11px;line-height:1.45;color:var(--muted);white-space:pre-wrap;word-break:break-word}
-  .cv-file .fsize{font-size:10.5px;color:var(--muted-2);font-weight:500}
+  /* a file card scales as a whole, like a picture: its text and spacing are sized from the card's width (12px at 260px wide) */
+  .cv-item.cv-file{container-type:inline-size}
+  .cv-file .frame{font-size:4.615cqw}
+  .cv-file .mbar{gap:.583em;padding:.583em .833em;font-size:1em}
+  .cv-file .mbar a{font-size:.917em}
+  .cv-file .ext{font-size:.833em;font-weight:800;letter-spacing:.04em;color:#fff;background:#64748b;border-radius:.4em;padding:.2em .5em;text-transform:uppercase}
+  .cv-file .fprev{flex:1;min-height:0;overflow:hidden;padding:.818em 1em;font-size:.917em;line-height:1.45;color:var(--muted);white-space:pre-wrap;word-break:break-word}
+  .cv-file .fprev.doc{color:var(--ink);-webkit-mask-image:linear-gradient(#000 calc(100% - 2.5em),transparent)}
+  .cv-file .fprev .h{font-weight:700;font-size:1.15em;margin:.4em 0 .1em}
+  .cv-file .fprev .h1{font-size:1.4em;margin-top:0}
+  .cv-file .fprev .li{padding-left:1em;text-indent:-.8em}
+  .cv-file .fsize{font-size:.955em;color:var(--muted-2);font-weight:500}
   .cv-file .upbar{height:4px;background:var(--border);margin:10px 11px 0;border-radius:2px;overflow:hidden}
   .cv-file .upbar i{display:block;height:100%;width:0;background:#2563eb}
   .cv-link .fetching{font-size:.81em;color:var(--muted-2);font-style:italic}
@@ -1398,6 +1407,9 @@ function cvItemEl(it){
     const ext=(String(it.label||'').match(/\.([a-z0-9]{1,6})$/i)||[,'file'])[1];
     el.innerHTML=`<div class="frame"><div class="mbar"><span class="ext">${escapeHtml(ext)}</span><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'File')}</span>${it.src?`<a href="${escapeAttr(it.src)}" target="_blank" rel="noopener">Open ↗</a>`:''}</div>${it.uploading?`<div class="upbar"><i></i></div><div class="fprev">Uploading…</div>`:`<div class="fprev">${escapeHtml(it.preview||'')}</div>`}</div>`;
     if(it.size&&!it.uploading)el.querySelector('.fprev').insertAdjacentHTML(it.preview?'afterbegin':'beforeend',`<span class="fsize">${cvSize(it.size)}${it.preview?'\n':''}</span>`);
+    if(it.src&&!it.uploading&&it.preview!==true&&CV_TEXT_EXT.test(ext))cvFileText(it.src).then(t=>{   // a text file shows the whole document, like the browser tab, not just its first lines
+      const fp=el.querySelector('.fprev');if(t==null||!fp)return;
+      fp.classList.add('doc');fp.innerHTML=/^(md|markdown)$/i.test(ext)?cvMarkdown(t):escapeHtml(t);});
     const a=el.querySelector('.mbar a');if(a)a.addEventListener('pointerdown',e=>e.stopPropagation());
   }else if(it.type==='team'){ // the onboarding team card: a button that starts the guide, then the team as it is decided
     const c=it.card||{},on=GD.on&&GD.id===it.id,steps=['One helper','Pass the baton','The captain','See it work'],lv=c.level||0;
@@ -1508,7 +1520,7 @@ function cvItemEl(it){
     const sticky=it.type==='note'&&it.color!=='none',ofs=it.fs||13;   // a sticky note scales as a whole: its text grows with it
     const mv=ev=>{const k=ev.altKey?2:1;   // Option held: grow from the centre, all sides at once (Miro, Photoshop)
       const nw=Math.max(it.type==='media'?160:70,ow+k*hx*(ev.clientX-sx)/cvView.s);
-      const nh=['img','emoji','ink','link'].includes(it.type)||sticky?nw/ar:vr?Math.round(nw*vr)+cvBarH(el):Math.max(56,oh+k*hy*(ev.clientY-sy)/cvView.s);
+      const nh=['img','emoji','ink','link','file'].includes(it.type)||sticky?nw/ar:vr?Math.round(nw*vr)+cvBarH(el):Math.max(56,oh+k*hy*(ev.clientY-sy)/cvView.s);
       it.w=nw;it.h=nh;if(sticky){it.fs=ofs*nw/ow;el.querySelector('.frame').style.fontSize=it.fs+'px';}
       it.x=ev.altKey?ox-(nw-ow)/2:hx<0?ox+ow-nw:ox;it.y=ev.altKey?oy-(nh-oh)/2:hy<0?oy+oh-nh:oy;
       el.style.width=nw+'px';el.style.height=nh+'px';el.style.left=it.x+'px';el.style.top=it.y+'px';cvArrowsFollow();if(it.type==='web')cvWebFit(el);};
@@ -1739,6 +1751,22 @@ function cvAddImage(file,stagger=0,at){
   img.src=URL.createObjectURL(file);
 }
 
+// Text files whose whole document a file card shows (the server's plain-text list); fetched once per page
+const CV_TEXT_EXT=/^(txt|md|markdown|csv|tsv|json|xml|yaml|yml|log|ini|toml|py|js|ts|jsx|tsx|css|sh|swift|go|rs|java|c|h|cpp|rb|sql|srt|vtt)$/i,cvTexts=new Map();
+function cvFileText(src){
+  if(!cvTexts.has(src))cvTexts.set(src,fetch(src).then(r=>r.ok?r.text():null).then(t=>t==null?null:t.slice(0,200000)).catch(()=>null));
+  return cvTexts.get(src);
+}
+// Just enough Markdown to read: headings, bullets and bold; everything else stays as written
+function cvMarkdown(t){
+  return t.split('\n').map((l,i,a)=>{
+    if(!l.trim()&&/^#{1,6}\s/.test(a[i-1]||''))return '';   // a heading has its own space below it
+    let m,h=escapeHtml(l).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>');
+    if((m=l.match(/^(#{1,6})\s+/)))return `<div class="h h${m[1].length}">${h.slice(m[0].length)}</div>`;
+    if(/^\s*[-*]\s+/.test(l))return `<div class="li">• ${h.replace(/^\s*[-*]\s+/,'')}</div>`;
+    return h+'\n';
+  }).join('');
+}
 function cvBarH(el){const b=el.querySelector('.mbar');return (b?b.offsetHeight:31)+2;}   // a video card's name bar and border, on top of the picture
 function cvSize(n){return n<1024?n+' B':n<1048576?Math.round(n/1024)+' KB':n<1073741824?(n/1048576).toFixed(n<10485760?1:0)+' MB':(n/1073741824).toFixed(1)+' GB';}
 // Images the browser can draw are shrunk like screenshots; everything else is uploaded as it is, in 20 MB pieces
@@ -1769,7 +1797,7 @@ async function cvUploadFile(file,p){
     }else if(r.kind==='video'||r.kind==='audio'){
       Object.assign(it,{type:'media',kind:r.kind,src:r.src});delete it.size;
       if(r.kind==='video'){it.w=480;it.h=301;it.x=c.x-240;it.y=c.y-150;}else{it.w=320;it.h=96;}
-    }else Object.assign(it,{src:r.src||r.url,size:r.size,preview:r.preview,h:r.preview?220:84});
+    }else Object.assign(it,{src:r.src||r.url,size:r.size,preview:r.preview,h:r.preview?(CV_TEXT_EXT.test(file.name.split('.').pop())?340:220):84});
   }catch(e){
     if(cvBoard&&cvBoardId===boardId){cvBoard.items=cvBoard.items.filter(i=>i!==it);cvSel.delete(it.id);cvRender();}
     cvSaveState(e.status===413?'toolarge':'upload');return;
