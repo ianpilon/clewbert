@@ -37,7 +37,11 @@ KEEP_RESULTS = 4          # the newest tool results stay whole; older ones are c
 OLD_RESULT_CHARS = 400
 CONTEXT_WORDS = 3000      # words of selected items given with the task
 ACTIVE = ('queued', 'working', 'waiting', 'team')
-WRITES = ('add_note', 'add_text', 'add_link', 'finish', 'ask_user', 'assign', 'make_demo')
+WRITES = ('add_note', 'add_text', 'add_link', 'finish', 'ask_user', 'assign', 'make_demo', 'group_items')
+# a task that asks to rearrange what is on the board (it once ended "Done, restructured" with nothing moved)
+REARRANGE = re.compile(r"\b(re-?arrang\w*|restructur\w*|re-?organi[sz]\w*|regroup\w*|cluster\w*|"
+                       r"(?:group|sort|move|organi[sz]e)\w* (?:the |these |those |all |every )?(?:items|notes|stickies|cards|links|content|frame|board|them|it)\b|"
+                       r"into (?:themes|groups|sections|categories|clusters))", re.I)
 BUILDING = re.compile(r"\b(build|make|create|code|implement|fix|rebuild)\w*\b.{0,80}\b(demo|page|prototype|app|site|tool|it)\b", re.I)   # a part that is to build
 BUILD = re.compile(r"\b(demo|prototype|build|make (?:a|me a|an)|page|site|website|app|tool|interface|screen|ui|ux|dashboard|landing)\b", re.I)
 GUESS = re.compile(r"\b(likely|probably|possibly|presumably|might (?:be|use|have)|may be|could be|appears to be|seems to be|"
@@ -146,6 +150,8 @@ the board: that frame is where the person looks, there is no chat. Work like thi
   for permission to do the task you were given or whether to keep going.
 - When the task is done, call finish with a short summary of what you found and what is still open.
 You cannot send email or messages, call, buy or sign up for anything: never offer to.
+On the board you can add to your frame, read every item of a frame (read_frame) and move existing items into new
+titled groups in your frame (group_items). You cannot edit, delete or recolour items, or move frames: never say you did.
 Never fill a gap with what is typical or likely ("it probably uses React", "you could try their contact form"): if you
 did not find it, say plainly that you did not find it.
 Write plainly, in short sentences. Do not repeat what is already in the frame."""
@@ -165,6 +171,9 @@ How you work:
   brief), otherwise UX Designer then UI Designer. Then the Developer builds from the design, then design reviews the
   demo and lists fixes, then the Developer fixes. Skip what does not apply. Tell each one what earlier rounds produced
   that they should use.
+- To rearrange, regroup or sort what is on the board, hand that part to a teammate: they read every item of a frame
+  (read_frame) and move the items into titled groups (group_items). Tell them which frame. Nothing on the board moves
+  unless a teammate does that, so never report the board as rearranged otherwise.
 - Do not do a teammate's part yourself. Hand out work at most %d times for one task."""
 
 
@@ -201,6 +210,12 @@ TOOLS = [
          '"scroll down 600", "click Explode", "wait 1000". You get, for the page as opened and after each step, a '
          'description of what is on screen (from a model that looked at it) and any errors. Works on any demo on this '
          'board, a teammate\'s too.', {'title': S, 'steps': {'type': 'array', 'items': S}}, ['title']),
+    tool('read_frame', 'Read EVERY item inside one frame of the board (by its title or id), one line each with its item id. '
+         'A sticky note with a card stacked right under it is one entry. Use it to work through a whole frame; '
+         'search_board only finds the best matches.', {'frame': S}),
+    tool('group_items', 'Move existing board items into a new group: a frame with this title, put in your task frame. Items '
+         'stacked right under an item (a link card under its sticky note) move with it. Call it once per group.',
+         {'title': S, 'item_ids': {'type': 'array', 'items': S}}),
     tool('ask_user', 'Ask the person one short question and wait for the answer. It shows as a note in your frame.', {'question': S}),
     tool('finish', 'End the task with a short summary of what you found and what is still open.', {'summary': S}),
 ]
@@ -221,7 +236,7 @@ ASSIGN = tool('assign', 'Hand parts of the task to teammates. Each part becomes 
               {'assignments': {'type': 'array', 'items': {'type': 'object', 'properties': {'teammate': S, 'task': S},
                                                           'required': ['teammate', 'task']}}})
 # the Lead plans, hands out and puts the answer together; it has no web tools, so it cannot do the parts itself
-LEAD_TOOLS = [t for t in TOOLS if t['function']['name'] in ('search_board', 'read_item', 'add_text', 'ask_user', 'finish')] + [ASSIGN]
+LEAD_TOOLS = [t for t in TOOLS if t['function']['name'] in ('search_board', 'read_item', 'read_frame', 'add_text', 'ask_user', 'finish')] + [ASSIGN]
 
 
 def now_ms():
@@ -421,14 +436,22 @@ class Runner:
         pick = lambda r: {'id': r['id'], 'board': r['board'], 'task': r['task'], 'status': r['status'], 'frame': r['frame'],
                           'summary': r.get('summary'), 'question': (r.get('question') or {}).get('text'), 'note': (r.get('question') or {}).get('note'),
                           'member': {k: (r.get('member') or {}).get(k) for k in ('name', 'color')} if r.get('member') else None,
-                          'lead': bool(r.get('lead')), 'ended': r.get('ended'), 'error': r.get('error')}
+                          'lead': bool(r.get('lead')), 'ended': r.get('ended'), 'error': r.get('error'),
+                          'told': bool((r.get('question') or {}).get('told'))}
         return {'done': [pick(r) for r in sorted(done, key=lambda r: r['ended'])], 'waiting': [pick(r) for r in waiting]}
 
-    def told(self, ids):
+    def told(self, ids, questions=()):
+        """Ended tasks, and waiting questions, the voice has read out: kept here, so a page reload does not read them again
+        (the page's own list of read questions was lost on every refresh, and one was read out each time)."""
         for rid in ids:
             r = self.runs.get(rid)
             if r and r.get('told') is False:
                 r['told'] = True
+                self.save(r)
+        for rid in questions:
+            r = self.runs.get(rid)
+            if r and r.get('question') and not r['question'].get('told'):
+                r['question']['told'] = True
                 self.save(r)
 
     def recent(self, bids, hours=6):
@@ -444,6 +467,11 @@ class Runner:
         for c in [self.runs[c] for c in r.get('children', []) if c in self.runs]:
             lines.append('- %s: %s, part: %s%s' % ((c.get('member') or {}).get('name', 'Teammate'), c['status'], c['task'][:200],
                                                    (' (now: %s)' % c['steps'][-1]['text']) if c['steps'] and c['status'] in ACTIVE else ''))
+        grouped = self.grouped(r)   # what really moved, so the voice never reports a rearrangement that did not happen
+        if grouped:
+            lines.append('Moved on the board: ' + '; '.join(grouped))
+        elif REARRANGE.search(r['task']):
+            lines.append('Moved on the board: nothing (no items were grouped or moved).')
         if r['status'] in ENDED:
             lines.append(self.results_of(r))
         return '\n'.join(lines)
@@ -556,6 +584,8 @@ class Runner:
         for it in self.board_items(c['board']):
             if it.get('agent') == c['id'] and it.get('type') in ('note', 'link'):
                 words.append(it.get('text') or it.get('url') or '')
+            elif it.get('agent') == c['id'] and it.get('type') == 'area' and it['id'] != c['frame']:   # a group it made
+                words.append('Group: ' + (it.get('text') or ''))
         body = ' '.join('\n'.join(words).split(' ')[:RESULT_WORDS])
         return '%s (%s), part: %s\nSummary: %s\nIn their frame:\n%s' % (
             (c.get('member') or {}).get('name', 'Teammate'), c['status'], c['task'], c.get('summary') or '(none)', body or '(nothing)')
@@ -628,7 +658,7 @@ class Runner:
                 key = name + json.dumps(args, sort_keys=True)
                 if name not in names:   # the model can call tools it was not given (a Lead searching the web): refuse
                     result = 'You do not have a tool called %s. Your tools: %s.' % (name, ', '.join(sorted(names)))
-                elif key in r.setdefault('done_calls', []) and name in ('search_board', 'read_item', 'web_search', 'read_web_page', 'read_page_source', 'search_code', 'browser_look'):
+                elif key in r.setdefault('done_calls', []) and name in ('search_board', 'read_item', 'read_frame', 'web_search', 'read_web_page', 'read_page_source', 'search_code', 'browser_look'):
                     result = 'You already did exactly this and its result is above. Do something different.'
                 else:
                     r['done_calls'].append(key)
@@ -714,18 +744,20 @@ class Runner:
         if models.choice(job):   # an outside provider picked in Settings
             choice = models.complete(job, {'messages': trimmed(messages), 'tools': tools, 'max_tokens': 16000 if job == 'builders' else 3000}, 900)['choices'][0]
             return dict(choice['message'], _cut=choice.get('finish_reason') == 'length')
-        if model == 'code':   # the strongest model that answers; servers on spare boxes can be off
-            for url, name in CODE_MODELS:
+        if model == 'code':   # the strongest model that answers (the one picked in Settings first); spare boxes can be off
+            picked = models.local('builders')
+            for url, name in ([picked] if picked else []) + [m for m in CODE_MODELS if m != picked]:
                 try:
-                    return self.ask_model(messages, tools, url, name)
+                    return self.ask_model(messages, tools, url, name, big=True)
                 except OSError:
                     continue
-        if not MODEL_URL:
+        url, name = models.local('agents') or (MODEL_URL, MODEL)
+        if not url:
             raise models.NoModel(job)
-        return self.ask_model(messages, tools, MODEL_URL, MODEL)
+        return self.ask_model(messages, tools, url, name)
 
-    def ask_model(self, messages, tools, url, name):
-        body = {'model': name, 'messages': trimmed(messages), 'tools': tools, 'max_tokens': 16000 if name in CODE_MODEL_NAMES else 3000, 'temperature': 0.3,
+    def ask_model(self, messages, tools, url, name, big=False):
+        body = {'model': name, 'messages': trimmed(messages), 'tools': tools, 'max_tokens': 16000 if big or name in CODE_MODEL_NAMES else 3000, 'temperature': 0.3,
                 'chat_template_kwargs': {'enable_thinking': False}}
         req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=900) as f:
@@ -748,6 +780,10 @@ class Runner:
             r['focus'] = it['id']
             self.step(r, 'Read a %s on the board' % kind)
             return '%s: %s' % (kind, ' '.join(words.split()[:2500]) or '(no words)')
+        if name == 'read_frame':
+            return self.read_frame(r, str(a.get('frame') or ''))
+        if name == 'group_items':
+            return self.group_items(r, str(a.get('title') or '').strip()[:80], a.get('item_ids'))
         if name in ('web_search', 'search_board') and not str(a.get('query') or '').strip():
             return 'Give the search some words.'
         if name == 'web_search':
@@ -873,9 +909,28 @@ class Runner:
             r['nudged_build'] = r.get('nudged_build', 0) + 1
             return 'Not finished: your part is to build a working demo, and none is built yet. Build it with make_demo first.'
         if name == 'finish':
+            asked = ' '.join([r['task']] + [m['content'] for m in r['messages'] if m['role'] == 'user' and 'FOLLOW-UP' in m['content']])
+            if REARRANGE.search(asked) and not r.get('move_check') and not self.moved(r):
+                r['move_check'] = True   # once: it may still end, but saying plainly that nothing moved
+                return (('Not finished: the task asks to rearrange the board, but nothing on it was moved. Hand that to a '
+                         'teammate (they have read_frame and group_items), or say plainly in your summary that nothing was moved.')
+                        if r.get('lead') else
+                        ('Not finished: your part asks to rearrange the board, but you have not moved anything. Use read_frame, '
+                         'then group_items once per group; or say plainly in your summary that nothing was moved.'))
+            left = self.left(r) if REARRANGE.search(asked) and self.moved(r) else []
+            if left and not r.get('left_check'):
+                r['left_check'] = True   # once: it groups the rest, or says what it left
+                return ('Not finished: %d items in the frame you read are not in a group yet: %s. Group them too (a group for '
+                        'odd ones out is fine), or say plainly in your summary which ones you left.'
+                        % (len(left), ', '.join(x[0]['id'] for x in left[:80])))
             if r.get('refused'):   # it cannot report work that was just turned down
                 return 'Not finished: something you just did was not done (see the replies above). Fix it first, then finish.'
             r['summary'] = str(a.get('summary') or '')[:2000]
+            g = self.grouped(r)
+            if g:   # the facts, in code, next to its own words
+                n = sum(int(re.match(r'Grouped (\d+)', x).group(1)) for x in g)
+                r['summary'] += ' [On the board: %d items moved into %d groups; %d items in the frames read are not in a group.]' % (
+                    n, len(g), len(self.left(r)))
             if a.get('summary') and not any(s['text'] == 'Added text' for s in r['steps'][r.get('step_base', 0):]):   # it already wrote its answer out
                 self.place_text(r, 'Summary', 'heading')
                 self.place_text(r, a['summary'], 'body')
@@ -911,6 +966,12 @@ class Runner:
             have = [m['name'] for m in team.values() if m['id'] in design]
             return ('Not handed out: design comes first for something people will use. Hand the design part now (%s); the '
                     'Developer builds after that, from the design.' % ', '.join(have))
+        if REARRANGE.search(asked) and not self.moved(self.root(r)) and not any(
+                isinstance(p, dict) and REARRANGE.search(str(p.get('task', ''))) for p in parts):
+            # a Lead turned "restructure the frame into themes" into "identify themes" + "write sections", and sent the same
+            # parts again 37 times when told why: so the first part gets the moving added here, in code
+            parts = [dict(parts[0], task=str(parts[0].get('task', '')).rstrip('. ') + '. Then move the items into those themes '
+                          'on the board: read_frame that frame, then one group_items call per theme, every item in exactly one group.')] + parts[1:]
         frame = next((i for i in self.board_items(r['board']) if i['id'] == r['frame']), None)
         if not frame:
             r['frame_gone'] = True
@@ -1073,20 +1134,21 @@ class Runner:
     def see(self, r, question, img=None):
         """Ask the vision model about a picture (default: the run's latest screenshot); '' when it cannot."""
         path = os.path.join(self.shots, r['id'] + '.jpg')
-        if not (VISION_MODEL_URL or models.choice('vision')) or (img is None and not os.path.exists(path)):
+        vurl, vmodel = models.local('vision') or (VISION_MODEL_URL, VISION_MODEL)   # picked in Settings, else as at startup
+        if not (vurl or models.choice('vision')) or (img is None and not os.path.exists(path)):
             return ''
         if img is None:
             with open(path, 'rb') as f:
                 img = f.read()
         img = base64.b64encode(img).decode()
-        body = {'model': VISION_MODEL, 'max_tokens': 300, 'temperature': 0.2, 'chat_template_kwargs': {'enable_thinking': False},
+        body = {'model': vmodel, 'max_tokens': 300, 'temperature': 0.2, 'chat_template_kwargs': {'enable_thinking': False},
                 'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': question},
                                                           {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,' + img}}]}]}
         try:
             if models.choice('vision'):
                 out = models.complete('vision', body, 90)
             else:
-                req = urllib.request.Request(VISION_MODEL_URL, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
+                req = urllib.request.Request(vurl, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
                 with urllib.request.urlopen(req, timeout=90) as f:
                     out = json.load(f)
             return re.sub(r'<think>.*?</think>', '', out['choices'][0]['message']['content'] or '', flags=re.S).strip()[:900]
@@ -1130,6 +1192,124 @@ class Runner:
         lines.append('SELECTED ITEMS (the person pointed at these for this task):\n' + '\n\n'.join(picked) if picked
                      else 'Nothing was selected: use search_board to find what on the board relates to the task.')
         return '\n\n'.join(lines)
+
+    def grouped(self, r):
+        """The 'Grouped ...' steps of this run and every part under it."""
+        return [x['text'] for x in r['steps'] if x['text'].startswith('Grouped')] + [
+            g for c in r.get('children', []) if c in self.runs for g in self.grouped(self.runs[c])]
+
+    def moved(self, r):
+        return bool(self.grouped(r))
+
+    def frame_called(self, items, ref):
+        # the board's own frames only: "the 2026 frame" once matched an agent's task frame titled "...the 2026 frame..."
+        frames = [i for i in items if i.get('type') == 'area' and not i.get('agent')]
+        ref = ' '.join(ref.split()).lower()
+        hit = next((f for f in frames if f['id'].lower() == ref or ' '.join((f.get('text') or '').split()).lower() == ref), None)
+        words = set(re.findall(r'[a-z0-9]+', ref)) - {'the', 'frame', 'a', 'of', 'in', 'board'}
+        score = lambda f: len(words & set(re.findall(r'[a-z0-9]+', (f.get('text') or '').lower())))
+        return hit or max((f for f in frames if score(f)), key=score, default=None)
+
+    def read_frame(self, r, ref):
+        items = self.board_items(r['board'])
+        f = self.frame_called(items, ref)
+        if not f:
+            return 'No frame called that. Frames on this board: %s.' % '; '.join(
+                '"%s" (%s)' % ((i.get('text') or '')[:60], i['id']) for i in items if i.get('type') == 'area' and not i.get('agent'))[:3000]
+        if f['id'] not in r.setdefault('read_frames', []):
+            r['read_frames'].append(f['id'])
+        st = talk.stacks([i for i in items if talk.inside(f, i)])
+        lines, words = [], 0
+        for k, stack in enumerate(st):
+            line = '[%s] ' % stack[0]['id'] + ' | with '.join(
+                '%s: %s' % (kind, ' '.join(w.split()[:40])) for kind, w in (talk.item_words(i, self.reader) for i in stack))
+            words += len(line.split())
+            if words > 9000:
+                lines.append('(%d more not shown)' % (len(st) - k))
+                break
+            lines.append(line)
+        r['focus'] = f['id']
+        self.step(r, 'Read the frame "%s" (%d items)' % ((f.get('text') or '')[:60], len(st)))
+        return 'Frame "%s" has %d items:\n%s' % (f.get('text') or '', len(st), '\n'.join(lines) or '(empty)')
+
+    def group_items(self, r, title, ids):
+        """Move board items (and what is stacked under them) into a new titled frame in the run's frame."""
+        if not title or not isinstance(ids, list) or not ids:
+            return 'Not done: give the group a title and the ids of the items to put in it.'
+        if not r.get('read_frames'):   # grouping from a few search hits once left 50 of 60 items behind
+            return 'Not done: first read the whole frame with read_frame, so every item in it gets a group.'
+        items = self.board_items(r['board'])
+        by_id = {i['id']: i for i in items}
+        of = {}
+        for stack in talk.stacks([i for i in items if i.get('type') not in ('area', 'arrow') and not i.get('agent')]):
+            for i in stack:
+                of[i['id']] = stack
+        chosen, bad = [], []
+        for x in ids:
+            x = str(x).strip('[] ')
+            if x not in of:
+                bad.append(x)
+            elif of[x] not in chosen:
+                chosen.append(of[x])
+        why = ('Not grouped: %s (no such item, or a frame, or an agent\'s own result).' % ', '.join(bad)) if bad else ''
+        groups = [i for i in items if i.get('type') == 'area' and i.get('agent') and not i.get('run')]   # groups agents made
+        taken = [s for s in chosen if any(talk.inside(g, s[0]) for g in groups)]
+        if taken:   # one item, one group (a model once put all 59 items in every group in turn)
+            why += ' Already in a group, so not moved again: %s.' % ', '.join(s[0]['id'] for s in taken)
+            chosen = [s for s in chosen if s not in taken]
+        if not chosen:
+            return 'Not done. ' + why.strip()
+        done = sum(int(re.match(r'Grouped (\d+)', x).group(1)) for x in self.grouped(self.root(r)))
+        whole = len(self.left(r)) + done
+        if whole >= 10 and len(chosen) > whole / 2:
+            return ('Not done: one group got %d of the %d items. A theme holds part of the frame, not most of it: split these '
+                    'into themes of a few items each, one group_items call per theme.' % (len(chosen), whole))
+        pad, top, gap = 40, 70, 36   # board units, the way the board's own frames hold their cards
+        cw = max(max(i['x'] + i['w'] for i in s) - min(i['x'] for i in s) for s in chosen)
+        w = max(r['lay']['inner'], cw + 2 * pad)
+        cols = max(1, int((w - 2 * pad + gap) // (cw + gap)))
+        heights = [max(i['y'] + i['h'] for i in s) - min(i['y'] for i in s) for s in chosen]
+        rows = [max(heights[k:k + cols]) for k in range(0, len(chosen), cols)]
+        area = self.place(r, {'type': 'area', 'text': title, 'color': '#ffffff'}, w, top + sum(rows) + gap * (len(rows) - 1) + pad, wide=True)
+        if not area:
+            return 'Your frame was deleted.'
+        spots = {}
+        for k, s in enumerate(chosen):
+            x0, y0 = min(i['x'] for i in s), min(i['y'] for i in s)
+            dx = area['x'] + pad + (k % cols) * (cw + gap) - x0
+            dy = area['y'] + top + sum(rows[:k // cols]) + gap * (k // cols) - y0
+            for i in s:
+                spots[i['id']] = (i['x'] + dx, i['y'] + dy)
+
+        def move(board):
+            z = max([i.get('z', 1) for i in board.get('items') or []] + [1])
+            for i in board.get('items') or []:
+                if i['id'] in spots:
+                    z += 1
+                    i['x'], i['y'], i['z'] = spots[i['id']][0], spots[i['id']][1], z
+        self.store.edit_board(r['board'], move)
+        self.changed(r['board'])
+        r['focus'] = area['id']
+        n = sum(len(s) for s in chosen)
+        self.step(r, 'Grouped %d item%s under "%s"' % (len(chosen), '' if len(chosen) == 1 else 's', title))
+        # what is left: the list read_frame gave is cut short after a few more steps, so say it again here
+        left = self.left(r)
+        gist = '\n'.join('[%s] %s' % (s[0]['id'], ' '.join(talk.item_words(s[0], self.reader)[1].split()[:8])) for s in left[:80])
+        return ('Moved %d items (%d with what is stacked under them) into the group "%s". %s\n' % (len(chosen), n, title, why)
+                + (('Still not in a group, in the frames you read (%d):\n%s' % (len(left), gist)) if left
+                   else 'Every item of the frames you read is now in a group.' if r.get('read_frames') else ''))
+
+    def read_by(self, r):
+        """The frames this run and every part under it read."""
+        return set(r.get('read_frames', [])).union(*[self.read_by(self.runs[c]) for c in r.get('children', []) if c in self.runs])
+
+    def left(self, r):
+        """Items (as stacks) still in the frames this run (or its team) read, not yet moved into a group."""
+        items = self.board_items(r['board'])
+        out = []
+        for f in [i for i in items if i['id'] in self.read_by(r)]:
+            out += talk.stacks([i for i in items if talk.inside(f, i) and not i.get('agent')])
+        return out
 
     def search(self, bid, query):
         b = self.store.read_board(bid)

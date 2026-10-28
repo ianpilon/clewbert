@@ -441,7 +441,9 @@
   .stg .stg-kn{width:92px;flex:none;align-self:center;font-size:13px;font-weight:600}
   .stg .oe-row+.oe-row{margin-top:6px}
   .stg #stgKeys{margin-top:6px}
-  .stg .oe-row select{flex:none;width:168px}
+  .stg .oe-row select{flex:none;width:150px}
+  .stg .oe-row select.stg-l{flex:1;min-width:0;width:auto}   /* your own models: the name gets the room */
+  .stg .oe-row [hidden]{display:none}
   .stg .oe-row input:disabled{background:#f6f7f9;color:var(--muted)}
   .stg .stg-msg{font-size:12.5px;color:var(--muted)}
   .stg .stg-msg.bad{color:#b91c1c}
@@ -842,7 +844,7 @@ async function cvFlush(){
   if(cvSaving||!cvDirty.size)return;
   cvSaving=true;
   const [id,b]=cvDirty.entries().next().value;cvDirty.delete(id);
-  try{const j=await api('boards/'+id,putJson(boardBody(b)));if(j&&j.updated){b.updated=j.updated;if(CV_CACHE.get(id)===b||!CV_CACHE.has(id))CV_CACHE.set(id,b);}}
+  try{const j=await api('boards/'+id,putJson(boardBody(b)));if(j&&j.updated){b.updated=j.updated;if(CV_CACHE.get(id)===b||!CV_CACHE.has(id))CV_CACHE.set(id,b);}if(j&&j.refresh)setTimeout(()=>liveRefresh(true),0);}
   catch(e){
     if(e.status===404){cvSaving=false;cvSaveState('gone');if(cvDirty.size)cvFlush();return;}   // board was deleted elsewhere: nothing to save into
     if(!cvDirty.has(id))cvDirty.set(id,b);
@@ -1162,10 +1164,10 @@ function liveMoves(items){
     if(m.fs){const f=el.querySelector('.frame');if(f)f.style.fontSize=m.fs+'px';}}
   cvArrowsFollow();cvGroupBox();
 }
-async function liveRefresh(){
+async function liveRefresh(force){
   const id=cvBoardId;if(!id||cvDirty.has(id)||cvSaving)return;   // your own unsaved change goes first; its save brings the rest
   let nb;try{nb=await api('boards/'+id);}catch(e){return;}
-  if(cvBoardId!==id||!cvBoard||cvDirty.has(id)||(nb.updated||0)<=(cvBoard.updated||0))return;
+  if(cvBoardId!==id||!cvBoard||cvDirty.has(id)||(!force&&(nb.updated||0)<=(cvBoard.updated||0)))return;   // force: the server kept moves this page had not seen
   cvApplyRemote(nb);CV_CACHE.set(id,cvBoard);if(CV_HIST.board===id)CV_HIST.last=cvHistState();   // another device's change: a new starting point
 }
 function cvApplyRemote(nb){   // redraw only the items that changed: a full redraw makes every picture flash while it reloads
@@ -2016,7 +2018,9 @@ const stgAn=n=>(/^[AEIOUx]/.test(n)?'an ':'a ')+n;   // an OpenAI, an Anthropic,
 async function stgOpen(){
   $('#stg').hidden=false;stgMsg('');
   try{STG.data=await api('settings');}catch(e){stgMsg('Settings did not load. Reload the page and try again.',true);return;}
-  STG.drop=new Set();stgPaint();
+  STG.drop=new Set();STG.own=null;stgPaint();
+  try{const j=await api('settings/local');STG.own=j.models||[];Object.assign(STG.data,{startup:j.startup,local:j.local});}catch(e){STG.own=[];}   // names as the models that really answer
+  document.querySelectorAll('#stgJobs .stg-job').forEach(row=>{if(row.querySelector('.stg-p').value==='local')stgOwnFill(row);});
 }
 function stgClose(){$('#stg').hidden=true;}
 function stgMsg(t,bad){const m=$('#stgMsg');m.textContent=t||'';m.classList.toggle('bad',!!bad);}
@@ -2024,18 +2028,40 @@ function stgPaint(){
   const d=STG.data,provs=Object.entries(d.providers);
   $('#stgJobs').innerHTML=STG_JOBS.map(([j,name,what])=>{const c=d.jobs[j];return `<div class="stg-job" data-job="${j}"><div class="stg-jn"><b>${name}</b>${what}</div>
     <div class="oe-row"><select class="stg-p" title="Who runs this job"><option value="local">Your own machines</option>${provs.map(([p,n])=>`<option value="${p}"${c.provider===p?' selected':''}>${escapeHtml(n)}</option>`).join('')}</select>
-    <input class="stg-m" list="stgL-${j}" value="${escapeAttr(c.model||'')}" autocomplete="off" spellcheck="false"><datalist id="stgL-${j}"></datalist><button class="oe-cx stg-test" title="Save, then send this model one tiny question">Test</button></div><div class="stg-res"></div></div>`;}).join('');
+    <input class="stg-m" list="stgL-${j}" value="${escapeAttr(c.model||'')}" autocomplete="off" spellcheck="false"><select class="stg-l" title="Which of your own models runs this job" hidden></select><datalist id="stgL-${j}"></datalist><button class="oe-cx stg-test" title="Save, then send this model one tiny question">Test</button></div><div class="stg-res"></div></div>`;}).join('');
   $('#stgKeys').innerHTML=provs.map(([p,n])=>`<div class="oe-row" data-prov="${p}"><span class="stg-kn">${escapeHtml(n)}</span>
     <input type="password" class="stg-k" autocomplete="new-password" spellcheck="false" placeholder="${d.keys[p]?'Saved, ends in '+escapeAttr(d.keys[p].slice(1)):'Paste your '+escapeAttr(n)+' key'}">${d.keys[p]?'<button class="oe-cx stg-rm" title="Delete this key from the server">Remove</button>':''}</div>`).join('');
   document.querySelectorAll('#stgJobs .stg-job').forEach(row=>{
     const sel=row.querySelector('.stg-p'),inp=row.querySelector('.stg-m');
-    const sync=()=>{const local=sel.value==='local';inp.disabled=local;
-      inp.placeholder=local?'Set at startup':(d.keys[sel.value]?'Pick or type a model':'Add '+stgAn(d.providers[sel.value])+' key below first');
-      if(local)inp.value='';else stgList(sel.value,row.dataset.job);};
-    sel.onchange=()=>{inp.value='';sync();};sync();
+    const lsel=row.querySelector('.stg-l');
+    const sync=()=>{const local=sel.value==='local';inp.hidden=local;lsel.hidden=!local;
+      inp.placeholder=d.keys[sel.value]?'Pick or type a model':'Add '+stgAn(d.providers[sel.value]||'')+' key below first';
+      if(local)stgOwnFill(row);else{row.querySelector('.stg-res').textContent='';stgList(sel.value,row.dataset.job);}};
+    sel.onchange=()=>{inp.value='';sync();};lsel.onchange=()=>stgOwnSay(row);sync();
     row.querySelector('.stg-test').onclick=()=>stgTest(row);
   });
   document.querySelectorAll('#stgKeys .stg-rm').forEach(b=>b.onclick=()=>{const p=b.closest('[data-prov]').dataset.prov;STG.drop.add(p);stgSave(`${d.providers[p]} key removed.`);});
+}
+/* Your own machines: a list of the models your boxes serve now (asked when the card opens, takes a few seconds), with
+   "As set at startup" first. Picked here, the job uses it; the startup model stays the fallback for builders. */
+function stgOwnFill(row){
+  const lsel=row.querySelector('.stg-l'),job=row.dataset.job,c=STG.data.jobs[job]||{},start=(STG.data.startup||{})[job]||[];
+  const now=lsel.value||(c.provider==='local'&&c.url&&c.model?c.url+'|'+c.model:'');
+  const own=STG.own||[],dup=m=>own.filter(o=>o.model===m).length>1;
+  const real=n=>(String(n).match(/answered by ([^)]+)\)/)||[0,n])[1];
+  lsel.innerHTML=`<option value="">As set at startup${start.length?' ('+escapeHtml(real(start[0][0]))+')':''}</option>`+
+    (STG.own?own.map(o=>`<option value="${escapeAttr(o.url+'|'+o.model)}">${escapeHtml(o.model)}${dup(o.model)?' · port '+escapeHtml(new URL(o.url).port):''}</option>`).join('')
+      :'<option disabled>Looking for your models…</option>');
+  if(now&&![...lsel.options].some(o=>o.value===now)){const [u,m]=now.split('|');lsel.insertAdjacentHTML('beforeend',`<option value="${escapeAttr(now)}">${escapeHtml(m)} (not answering now)</option>`);}
+  lsel.value=now;stgOwnSay(row);
+}
+function stgOwnSay(row){   // the full name on its own line: the box is narrow
+  const v=row.querySelector('.stg-l').value,start=(STG.data.startup||{})[row.dataset.job]||[],res=row.querySelector('.stg-res');
+  res.className='stg-res';
+  const real=n=>(String(n).match(/answered by ([^)]+)\)/)||[0,n])[1];   // a name another model answers is shown as that model
+  let names=(v?[v.split('|')[1]].concat(row.dataset.job==='builders'?start.map(([m])=>m):[]):start.map(([m])=>m)).map(real);
+  names=names.filter((n,k)=>names.indexOf(n)===k||k>0&&names[k-1]!==n).filter((n,k)=>k===0||n!==names[0]);
+  res.textContent=!names.length?'No model is set for this job.':'Uses '+names[0]+'.'+(names.length>1?' If it is off: '+names.slice(1).join(', then ')+'.':'');
 }
 // the model names this provider's key can use, offered as a list on the model box
 async function stgList(p,job){
@@ -2046,8 +2072,10 @@ async function stgList(p,job){
 function stgGather(){
   const jobs={},keys={};let problem='';
   document.querySelectorAll('#stgJobs .stg-job').forEach(row=>{
-    const p=row.querySelector('.stg-p').value,m=row.querySelector('.stg-m').value.trim(),name=STG_JOBS.find(x=>x[0]===row.dataset.job)[1];
-    jobs[row.dataset.job]={provider:p,model:m};
+    const p=row.querySelector('.stg-p').value,name=STG_JOBS.find(x=>x[0]===row.dataset.job)[1];
+    const [url,own]=p==='local'?(row.querySelector('.stg-l').value||'|').split('|'):['',''];
+    const m=p==='local'?own:row.querySelector('.stg-m').value.trim();
+    jobs[row.dataset.job]={provider:p,model:m,url};
     if(p!=='local'&&!m&&!problem)problem=`Pick a model for ${name}, or set it back to Your own machines.`;
   });
   document.querySelectorAll('#stgKeys [data-prov]').forEach(row=>{const v=row.querySelector('.stg-k').value.trim();if(v)keys[row.dataset.prov]=v;});
@@ -2063,12 +2091,11 @@ async function stgSave(done){
 }
 async function stgTest(row){
   const res=row.querySelector('.stg-res');
-  if(row.querySelector('.stg-p').value==='local'){res.className='stg-res';res.textContent='Uses your own machines, as set when the app starts.';return;}
   if(!await stgSave())return;
   row=document.querySelector(`#stgJobs [data-job="${row.dataset.job}"]`);const out=row.querySelector('.stg-res');
   out.className='stg-res';out.textContent='Asking the model…';
   try{const j=await api('settings/test/'+row.dataset.job,{method:'POST'});
-    out.className='stg-res '+(j.ok?'ok':'bad');out.textContent=j.ok?`Works. It answered: “${j.reply}”`:'Did not work: '+j.error;}
+    out.className='stg-res '+(j.ok?'ok':'bad');out.textContent=j.ok?`Works${j.model?', '+j.model:''}. It answered: “${j.reply}”${j.skipped&&j.skipped.length?' (did not answer first: '+j.skipped.join('; ')+')':''}`:'Did not work: '+j.error;}
   catch(e){out.className='stg-res bad';out.textContent='The test did not run. Reload the page and try again.';}
 }
 $('#stgHome').onclick=stgOpen;$('#stgClose').onclick=stgClose;$('#stgCancel').onclick=stgClose;$('#stgSave').onclick=()=>stgSave();
@@ -2079,7 +2106,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#stg').hidden){
    A question goes to api/ask with the open board (or all boards from the list); the answer is spoken through
    api/speak (the Voice Lab shim, streamed PCM) and the items it came from are highlighted. Hands-free: it listens
    again after every answer; talking over an answer (2+ words) interrupts it, "stop" just stops it. */
-const VC={scope:null,turns:[],pending:null,on:false,ws:null,stream:null,ac:null,node:null,state:'',askSeq:0,hl:new Set(),focus:null,players:[],ctls:[],said:'',chain:Promise.resolve()};
+const VC={scope:null,turns:[],pending:null,on:false,ws:null,stream:null,ac:null,node:null,state:'',askSeq:0,held:'',holdT:0,hl:new Set(),focus:null,players:[],ctls:[],said:'',chain:Promise.resolve()};
 const VC_FILLERS=['Let me look.','Checking the board.','One second.','Looking now.'];
 function vcAudio(){if(!VC.ac)VC.ac=new (window.AudioContext||window.webkitAudioContext)();if(VC.ac.state==='suspended')VC.ac.resume();return VC.ac;}
 function vcSetState(s){VC.state=s;const el=$('#vcState'),shown=VC.muted&&(s==='listening'||s==='')&&VC.on?'muted':s;el.textContent=shown;el.className='vc-state '+shown;
@@ -2308,13 +2335,28 @@ function vcLog(event,info){try{navigator.sendBeacon('api/voicelog',new Blob([JSO
 // "stop" and the ways the ears mishear it ("stop" has come back as "Dot?"); only acted on while it is answering
 const VC_STOP=/^(?:(?:ok(?:ay)?|please|hey|no) )?(?:stop(?: it| talking| that| there| please)?|stopped|stops|dot|top|stup|shh+|quiet|enough|that'?s enough|cancel|never ?mind|wait|hold on|pause|halt|shut up)(?: please)?$/;
 function vcIsStop(t){return VC_STOP.test(String(t||'').toLowerCase().replace(/[^a-z' ]/g,' ').replace(/\s+/g,' ').trim());}
-function vcStopNow(){VC.askSeq++;vcStopSpeaking();$('#vcHeard').textContent='';vcSetState(VC.ws?'listening':'');}
+function vcStopNow(){clearTimeout(VC.holdT);VC.held='';VC.askSeq++;vcStopSpeaking();$('#vcHeard').textContent='';vcSetState(VC.ws?'listening':'');}
 function vcEarsMsg(m){
   if(m.type==='partial'&&(VC.state==='speaking'||VC.state==='thinking')&&vcIsStop(m.text)){vcStopNow();return;}
-  if(m.type==='partial'&&VC.state==='listening'&&m.text)$('#vcHeard').textContent='“'+m.text+'…”';
-  else if(m.type==='dropped'||(m.type==='end'&&VC.state==='listening')||(m.type==='final'&&!m.text&&VC.state==='listening'))$('#vcHeard').textContent='';
-  else if(m.type==='final')vcHeard(String(m.text||'').trim(),!!m.stop);
+  if(m.type==='start'||(m.type==='partial'&&m.text))clearTimeout(VC.holdT);   // talking again: the question is not finished
+  if(m.type==='partial'&&VC.state==='listening'&&m.text)$('#vcHeard').textContent='“'+((VC.held?VC.held+' ':'')+m.text)+'…”';
+  else if(m.type==='dropped'||(m.type==='end'&&VC.state==='listening')||(m.type==='final'&&!m.text&&VC.state==='listening')){$('#vcHeard').textContent=VC.held?'“'+VC.held+'…”':'';if(VC.held)vcHoldOn();}
+  else if(m.type==='final')vcHold(String(m.text||'').trim(),!!m.stop);
 }
+/* The ears end a piece of speech after 0.6 s of quiet, too soon for someone still thinking ("move the fourth card...
+   to be first"). So a question is held: pieces join up while you keep talking, and it is asked only after a longer
+   quiet (longer still when the words stop on "and", "the", "um"...). A stop word acts at once. */
+const VC_HOLD=1400,VC_HOLD_MID=3000,VC_MID=/\b(and|or|but|so|then|because|the|a|an|to|of|for|with|from|into|that|this|my|is|are|like|um+|uh+|er+|hmm+)\W*$/i;
+function vcHold(text,stop){
+  if(!text||!VC.on)return;
+  if(stop||vcIsStop(text)){clearTimeout(VC.holdT);VC.held='';vcHeard(text,stop);return;}
+  if(VC.state==='speaking'||VC.state==='thinking'){   // talking over the answer: as before, it stops for 2+ real words
+    if(text.split(/\s+/).length<2||vcIsEcho(text))return;
+    VC.askSeq++;vcStopSpeaking();vcSetState('listening');
+  }
+  VC.held=(VC.held?VC.held+' ':'')+text;$('#vcHeard').textContent='“'+VC.held+'…”';vcHoldOn();
+}
+function vcHoldOn(){clearTimeout(VC.holdT);VC.holdT=setTimeout(()=>{const q=VC.held;VC.held='';if(q&&VC.on)vcHeard(q,false);},VC_MID.test(VC.held)?VC_HOLD_MID:VC_HOLD);}
 // the mic can pick up the answer being spoken: a "question" made only of the answer's own words is ignored
 function vcIsEcho(t){const w=t.toLowerCase().match(/[a-z']{3,}/g)||[];if(!w.length)return true;const said=VC.said.toLowerCase();return w.filter(x=>said.includes(x)).length/w.length>=.8;}
 function vcHeard(text,stop){
@@ -2327,6 +2369,9 @@ function vcHeard(text,stop){
   if(GD.on){gdTurn('reply',text);return;}
   vcAsk(text);
 }
+function vcSeen(){   // the part of the board on screen, in board units: "the top row" means the frame you are looking at
+  if(!cvBoardId)return null;const r=$('#cvStage').getBoundingClientRect(),s=cvView.s;
+  return [-cvView.x/s,-cvView.y/s,(r.width-cvView.x)/s,(r.height-cvView.y)/s];}
 async function vcAsk(q){
   const seq=++VC.askSeq,board=cvBoardId||null,scope=vcScope(),space=board?null:HOME.space;
   if(VC.scope!==scope)await vcLoad();
@@ -2334,7 +2379,7 @@ async function vcAsk(q){
   VC.pending={q};vcThread(true);
   const filler=setTimeout(()=>{if(seq===VC.askSeq&&VC.state==='thinking')vcSay(VC_FILLERS[Math.floor(Math.random()*VC_FILLERS.length)],seq,true);},1000);
   let j;
-  try{j=await api('ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,board,space})});}
+  try{j=await api('ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,board,space,seen:vcSeen()})});}
   catch(e){clearTimeout(filler);if(seq!==VC.askSeq||VC.scope!==scope)return;VC.pending={q,a:e.message&&e.message.startsWith('No model')?e.message:'The model did not answer. Try again in a moment.'};vcThread(true);VC.pending=null;vcSetState(VC.ws?'listening':'');return;}
   clearTimeout(filler);
   if(VC.scope===scope){VC.pending=null;VC.turns.push(j.turn);vcThread(true);}   // the server saved it either way
@@ -2344,6 +2389,7 @@ async function vcAsk(q){
   if(j.web&&cvBoardId===board)vcWebCard(j.web);   // "open that site so we can look at it"
   if(j.team&&cvBoardId===board){if(j.team.added)vcNote(`Added ${j.team.added} to this board's team.`);if(!$('#org').hidden)api('teams/'+cvBoardId).then(t=>{AG.team=t;orgPaint();orgAddList();});}
   if((j.started||j.answered||j.followed||j.steered)&&cvBoardId===board)agPoll().then(()=>{if(j.started)agReveal(j.started.frame);});   // an agent task started or got its answer
+  if(j.edited&&cvBoardId===board){if(cvDirty.has(board))cvFlush();else liveRefresh(true);}   // the voice moved cards: show where they are now
   if(j.started){}   // the view already went to the new task frame
   else if(j.show&&j.show.length)vcShow(j.show);   // the user asked to see something: go to just that, close up
   else if(j.open)vcGoTo(j.open);   // the user asked to go to a space or a whole board
@@ -2677,23 +2723,23 @@ function newsDoneLine(r){
   if(r.status!=='done')return `${newsWho(r)}${newsWhere(r)} stopped before finishing "${newsShort(r.task)}"${r.status==='failed'?', because of an error':''}.`;
   const sum=String(r.summary||'').split(/(?<=[.!?])\s+/).slice(0,2).join(' ');
   return `${newsWho(r)}${newsWhere(r)} finished "${newsShort(r.task)}".${sum?' '+newsShort(sum,45).replace(/([^.!?…])$/,'$1.'):''}`;}
-function newsTold(ids){if(ids.length)api('news/told',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runs:ids})}).catch(()=>{});}
+function newsTold(ids,questions=[]){if(ids.length||questions.length)api('news/told',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runs:ids,questions})}).catch(()=>{});}
 function agAnnounce(){
   if(!VC.on||VC.state!=='listening'||!vcVoice())return;
-  const qs=NEWS.waiting.filter(q=>!AG.said.has(q.id+q.question)),ds=NEWS.done;
+  const qs=NEWS.waiting.filter(q=>!q.told&&!AG.said.has(q.id+q.question)),ds=NEWS.done;   // told: read out before, even before a reload
   const ask=q=>`${q.member?'The '+q.member.name:'The agent'}${newsWhere(q)} is asking: ${q.question}`;
   if(NEWS.first){NEWS.first=false;   // the voice just opened: one summary of everything since you were last told
     if(ds.length+qs.length>1){
       const n=ds.length,m=qs.length;
       const head=`While you were away, ${n?`${n} task${n===1?'':'s'} ended`:''}${n&&m?' and ':''}${m?`${m} question${m===1?' is':'s are'} waiting on you`:''}.`;
-      newsTold(ds.map(d=>d.id));qs.forEach(q=>AG.said.add(q.id+q.question));NEWS.done=[];
+      newsTold(ds.map(d=>d.id),qs.map(q=>q.id));qs.forEach(q=>AG.said.add(q.id+q.question));NEWS.done=[];
       vcChime();vcSay([head,...ds.map(newsDoneLine),...qs.map(ask),'Want me to go through any of them?'].join(' '),VC.askSeq,false);return;}
   }
   const d=ds[0];
   if(d){NEWS.done=ds.slice(1);newsTold([d.id]);vcChime();
     vcSay(newsDoneLine(d)+(d.status==='done'?' Want me to read the results, show you the frame, or is there anything else?':''),VC.askSeq,false);return;}
   const q=qs[0];
-  if(q){AG.said.add(q.id+q.question);vcChime();vcSay(ask(q),VC.askSeq,false);}
+  if(q){AG.said.add(q.id+q.question);newsTold([],[q.id]);vcChime();vcSay(ask(q),VC.askSeq,false);}
 }
 function vcChime(){   // two soft notes before the voice speaks up on its own
   try{const ac=vcAudio(),t=ac.currentTime;[660,880].forEach((f,i)=>{const o=ac.createOscillator(),g=ac.createGain(),t0=t+i*.13;o.frequency.value=f;

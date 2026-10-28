@@ -26,6 +26,7 @@ import guide, models, talk
 import briefs
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools'))
 import miro_import
+import arrange
 from agents import runner as agents
 
 PORT = int(sys.argv[1])
@@ -343,7 +344,10 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 3 and parts[:2] == ['api', 'brief'] and BOARD_ID.match(parts[2]):
             return self.reply(200, BRIEFER.view(parts[2]))
         if parts == ['api', 'settings']:
-            return self.reply(200, models.public())
+            return self.reply(200, dict(models.public(), local=local_models(), startup=local_models(False)))
+        if parts == ['api', 'settings', 'local']:   # the models your own machines serve now, to pick from
+            found = own_models()
+            return self.reply(200, {'models': found, 'startup': real_names(local_models(False)), 'local': real_names(local_models())})
         if len(parts) == 4 and parts[:3] == ['api', 'settings', 'models'] and parts[3] in models.PROVIDERS:
             try:
                 return self.reply(200, {'models': models.list_models(parts[3])})
@@ -490,7 +494,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def post(self, parts):
         if len(parts) == 4 and parts[:3] == ['api', 'settings', 'test'] and parts[3] in models.JOBS:
-            return self.reply(200, models.test(parts[3]))
+            return self.reply(200, models.test(parts[3]) if models.choice(parts[3]) else local_test(parts[3]))
         if parts == ['api', 'uploads']:   # a dropped file arrives in pieces: start, PUT each piece in order, then done
             up = secrets.token_hex(6)
             open(os.path.join(UPLOADS, up), 'wb').close()
@@ -567,7 +571,8 @@ class Handler(BaseHTTPRequestHandler):
             print('%s voice %s' % (time.strftime('%Y-%m-%d %H:%M:%S'), json.dumps(info)[:600]), flush=True)
             return self.reply(204)
         if parts == ['api', 'news', 'told']:
-            RUNNER.told([str(x) for x in json.loads(self.read_body()).get('runs') or []][:200])
+            body = json.loads(self.read_body())
+            RUNNER.told([str(x) for x in body.get('runs') or []][:200], [str(x) for x in body.get('questions') or []][:200])
             return self.reply(200, {'ok': True})
         if len(parts) == 4 and parts[:2] == ['api', 'runs'] and BOARD_ID.match(parts[2]) and parts[3] in ('answer', 'stop', 'follow', 'steer'):
             if parts[3] == 'steer':
@@ -613,7 +618,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 talk_id = 'all'
             # follow-ups use the last turns of THIS conversation (board, space or all), kept on disk
-            history = [{'q': t['q'], 'a': t['a']} for t in read_talk(talk_id)['turns'][-3:]] if BOARD_ID.match(talk_id) or talk_id in ('all', 'unsorted') else []
+            history = [{'q': t['q'], 'a': t['a'], 'did': t.get('did')} for t in read_talk(talk_id)['turns'] if not t['a'].startswith(NOT_MOVED)][-3:] if BOARD_ID.match(talk_id) or talk_id in ('all', 'unsorted') else []
             if req.get('board'):
                 try:
                     boards = [read_board(str(req['board']))] if BOARD_ID.match(str(req['board'])) else []
@@ -642,10 +647,22 @@ class Handler(BaseHTTPRequestHandler):
                 tasks = [{'board': t['board'], 'boardName': names.get(t['board'], ''), 'item': t['frame'], 'run': t['id'], 'frame': '',
                           'ended': t.get('ended'), 'text': RUNNER.progress(t)} for t in sorted(RUNNER.recent(set(names)), key=lambda t: t['created'])][-6:]
                 result = talk.answer(question, history, boards, scope, READER, {b['id']: BRIEFER.load(b['id']) for b in boards}, layout,
-                                     waiting, tasks, RUNNER.team_text(boards[0]['id']) if req.get('board') else '')
+                                     waiting, tasks, RUNNER.team_text(boards[0]['id']) if req.get('board') else '', req.get('seen'))
+                edit = result.pop('edit', None)
+                shown_card = result.pop('shown_card', None)
+                did = {'card': shown_card} if shown_card else None   # "the card below that" next time means this card
+                if edit and req.get('board'):   # the voice moves cards itself; what it says comes from what really moved
+                    result['answer'], result['edited'] = do_edit(boards[0]['id'], edit)
+                    if result['edited']:   # the model sees, in later turns, that its reply did this (not only said it)
+                        did = ({'move_card': {'from': edit.get('from'), 'to': edit.get('to')}} if edit['kind'] == 'move_card'
+                               else {edit['kind'] if edit['kind'] != 'undo' else 'undo_edit': True})
+                elif arrange.CLAIM.search(result.get('answer') or ''):
+                    result['answer'] = NOT_MOVED + " Tell me which card and where it should go, and I'll move it."
+
                 task, mode = result.pop('task', None), result.pop('task_mode', 'team')
                 if task and req.get('board'):   # "have the team / an agent ...": a task frame on this board
-                    r = RUNNER.start(boards[0]['id'], task, [], None, mode)
+                    sel, about = task_items(boards[0], result.get('sources') or [], read_talk(talk_id)['turns'])
+                    r = RUNNER.start(boards[0]['id'], task + about, sel, None, mode)
                     result['started'] = {'run': r['id'], 'frame': r['frame']}
                 card = result.pop('web_card', None)   # a live web page on the board, if the site lets itself be shown there
                 if card and req.get('board'):
@@ -667,7 +684,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(503, {'error': 'no model', 'message': 'No model is set up yet. Open Settings (the gear on the home page) and pick one.'})
             except (OSError, ValueError, KeyError):
                 return self.reply(503, {'error': 'the model did not answer'})
-            turn = {'q': question, 'a': result['answer'], 'sources': result['sources'], 'checked': result.get('checked'), 't': now_ms()}
+            turn = {'q': question, 'a': result['answer'], 'sources': result['sources'], 'checked': result.get('checked'), 't': now_ms(),
+                    **({'did': did} if did else {})}
             with LOCK:
                 conv = read_talk(talk_id)
                 conv['turns'] = (conv['turns'] + [turn])[-500:]
@@ -766,7 +784,7 @@ class Handler(BaseHTTPRequestHandler):
                 write_json(SPACES, sp)
             return self.reply(200, hit[0])
         if parts == ['api', 'settings']:
-            return self.reply(200, models.save(json.loads(self.read_body())))
+            return self.reply(200, dict(models.save(json.loads(self.read_body())), local=local_models(), startup=local_models(False)))
         if len(parts) == 3 and parts[:2] == ['api', 'teams'] and BOARD_ID.match(parts[2]):
             members = json.loads(self.read_body()).get('members')
             if not isinstance(members, list):
@@ -793,13 +811,22 @@ class Handler(BaseHTTPRequestHandler):
                     req['items'].append(i)
                 elif i.get('run') and i['id'] in sent:
                     sent[i['id']]['h'] = max(sent[i['id']].get('h', 0), i.get('h', 0))
+            # a page that has not seen a move made here yet sends the item at its old place: keep the move
+            moves = {k: v for k, v in (MOVED.get(bid) or {}).items() if time.time() - v[2] < 900}
+            MOVED[bid] = moves
+            kept = False
+            for k, (olds, new, _) in moves.items():
+                it = sent.get(k)
+                if it and any(abs(it.get('x', 0) - ox) < .5 and abs(it.get('y', 0) - oy) < .5 for ox, oy in olds):
+                    it.update(x=new['x'], y=new['y'], z=new.get('z', it.get('z')), w=new.get('w', it.get('w')), h=new.get('h', it.get('h')))
+                    kept = True
             board['items'] = req['items']
             board['view'] = req.get('view')
             board['updated'] = now_ms()
             write_json(board_path(bid), board)
         BRIEFER.touch(bid)   # read the changed parts again once the edits settle
         live_send(bid, {'kind': 'saved', 'updated': board['updated']}, self.headers.get('X-Client') or '')
-        self.reply(200, {'updated': board['updated']})
+        self.reply(200, {'updated': board['updated'], **({'refresh': True} if kept else {})})   # kept: this page should fetch the board
 
     def delete(self, parts):
         sid = self.space_id(parts)
@@ -874,13 +901,176 @@ def light(b, keep=150):
     return out
 
 
+def task_items(board, sources, turns):
+    """What a voice task is about: the items its answer was about, else the card shown in the last 15 minutes, each with
+    the card stacked with it. "Analyze the full tweet" went out with nothing selected, so the Lead searched the board
+    for "tweet" and the team studied another post. Returns (item ids, words naming the card for the task text)."""
+    items = board.get('items') or []
+    ids = [x['item'] for x in sources if x.get('item') and x.get('board') == board['id'] and x.get('kind') not in ('frame layout', 'frame summary', 'frame gist', 'board brief')]
+    if not ids:
+        last = next((t for t in reversed(turns) if (t.get('did') or {}).get('card')), None)
+        if last and now_ms() - last.get('t', 0) < 15 * 60 * 1000:
+            c = last['did']['card']
+            frame = next((i for i in items if i['id'] == c.get('frame')), None)
+            cs = arrange.cards(board, frame) if frame else []
+            if 1 <= (c.get('place') or 0) <= len(cs):
+                ids = [i['id'] for i in cs[c['place'] - 1]]
+    for st in talk.stacks([i for i in items if i.get('type') not in ('area', 'arrow')]):   # a note brings its link card, and back
+        if any(i['id'] in ids for i in st):
+            ids += [i['id'] for i in st if i['id'] not in ids]
+    words = [' '.join(talk.item_words(i, READER)[1].split()[:30]) for i in items if i['id'] in ids]
+    return ids, (' (This is about the selected card: %s)' % ' | '.join(words) if words else '')
+
+
+def local_models(picked=True):
+    """Each job's model on your own machines: [(model, address)] in the order tried; the one picked in Settings first,
+    else as the app was started with (builders keep their startup models as fallbacks)."""
+    start = {'voice': [(talk.MODEL, talk.MODEL_URL)] if talk.MODEL_URL else [],   # none until set up
+             'agents': [(agents.MODEL, agents.MODEL_URL)] if agents.MODEL_URL else [],
+             'builders': [(m, u) for u, m in agents.CODE_MODELS],
+             'vision': [(agents.VISION_MODEL, agents.VISION_MODEL_URL)] if agents.VISION_MODEL_URL else []}
+    if not picked:
+        return start
+    out = {}
+    for job, ms in start.items():
+        picked = models.local(job)
+        out[job] = ([(picked[1], picked[0])] + ([m for m in ms if m != (picked[1], picked[0])] if job == 'builders' else [])) if picked else ms
+    return out
+
+
+def real_names(jobs):
+    """The same lists, each name as the model that really answers it (a server can take one model's name and answer
+    with another), once own_models has asked."""
+    def name(m, u):
+        a = (OWN_SEEN.get((re.sub(r'/v1(/.*)?$', '', u.rstrip('/')), m)) or (None,))[0]
+        return '%s (answered by %s)' % (m, a) if a and a != m else m
+    return {j: [(name(m, u), u) for m, u in ms] for j, ms in jobs.items()}
+
+
+OWN_SEEN = {}   # (address, model name) -> (the model that really answers, when asked)
+
+
+def own_models():
+    """Every model your own machines serve, from each model server the app knows (its startup addresses and any added in
+    settings), as [{url, model}]. Each name is asked once (kept 30 minutes): a name answered by another model is left out,
+    since a server can take one model's name and answer with another, and the card would show the wrong model."""
+    import concurrent.futures
+    bases = []
+    for u in [talk.MODEL_URL, agents.MODEL_URL, agents.VISION_MODEL_URL] + [u for u, _ in agents.CODE_MODELS] + (models.load().get('servers') or []):
+        b = re.sub(r'/v1(/.*)?$', '', str(u or '').rstrip('/'))
+        if b.startswith('http') and b not in bases:
+            bases.append(b)
+
+    def names(b):
+        try:
+            with urllib.request.urlopen(b + '/v1/models', timeout=4) as f:
+                return [(b, m['id']) for m in json.load(f).get('data') or [] if m.get('id')]
+        except (OSError, ValueError):
+            return []
+
+    def real(bm):
+        b, m = bm
+        if bm not in OWN_SEEN or time.time() - OWN_SEEN[bm][1] > 1800:
+            body = json.dumps({'model': m, 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 1,
+                               'chat_template_kwargs': {'enable_thinking': False}}).encode()
+            try:
+                with urllib.request.urlopen(urllib.request.Request(b + '/v1/chat/completions', body, {'Content-Type': 'application/json'}), timeout=20) as f:
+                    OWN_SEEN[bm] = (json.load(f).get('model') or m, time.time())
+            except (OSError, ValueError):
+                OWN_SEEN[bm] = (None, time.time())
+        return OWN_SEEN[bm][0]
+    with concurrent.futures.ThreadPoolExecutor(8) as ex:
+        found = [x for xs in ex.map(names, bases) for x in xs]
+        answers = list(ex.map(real, found))
+    return [{'url': b + '/v1/chat/completions', 'model': m} for (b, m), a in zip(found, answers) if a == m]
+
+
+def local_test(job):
+    """One tiny question to each of the job's own machines: which answered, in the Settings card's words."""
+    tried = []
+    for model, url in local_models()[job]:
+        body = json.dumps({'model': model, 'messages': [{'role': 'user', 'content': 'Reply with the single word: ready'}],
+                           'max_tokens': 20, 'chat_template_kwargs': {'enable_thinking': False}}).encode()
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, body, {'Content-Type': 'application/json'}), timeout=60) as f:
+                reply = (json.load(f)['choices'][0]['message'].get('content') or '').strip()
+            return {'ok': True, 'reply': re.sub(r'<think>.*?</think>', '', reply, flags=re.S).strip()[:80], 'model': model,
+                    'skipped': tried}
+        except (OSError, ValueError, KeyError, IndexError) as e:
+            why = getattr(e, 'reason', e)
+            tried.append('%s did not answer: %s' % (model, 'connection refused, its machine is not serving it' if 'refused' in str(why)
+                                                    else 'it took too long' if 'timed out' in str(why) else str(why)[:80]))
+    return {'ok': False, 'error': '; '.join(tried) if tried else 'no model is set for this job'}
+
+
+NOT_MOVED = "I haven't moved anything."   # such turns stay out of the model's history: it read one back word for word
+
+
+def do_edit(bid, edit):
+    """A voice move, sort or undo on one board. Returns (what to say, whether the board changed)."""
+    if edit['kind'] == 'sort_frame':   # the model call happens before the lock: it takes a few seconds
+        board = read_board(bid)
+        frame = next((i for i in board['items'] if i['id'] == edit['frame']), None)
+        if not frame:
+            return 'I could not find that frame.', False
+        groups, err = arrange.themes(board, frame, READER)
+        if err:
+            return err, False
+        ids = [[i['id'] for i in s] for _, g in groups for s in g]
+
+    def change(board):
+        if edit['kind'] == 'undo':
+            what = arrange.undo(DATA, bid, board)
+            return ('Done. I put back %s.' % what) if what else 'There is nothing to put back.', bool(what)
+        frame = next((i for i in board['items'] if i['id'] == edit['frame']), None)
+        if not frame:
+            return 'I could not find that frame.', False
+        before = json.loads(json.dumps(board))
+        title = frame.get('text') or 'that'
+        if edit['kind'] == 'move_card':
+            card, err = arrange.move(board, frame, edit.get('from'), edit.get('to'), READER)
+            if err:
+                return err, False
+            arrange.keep_undo(DATA, bid, before, 'the card you moved')
+            return 'Done. "%s" is now in place %s of the %s frame.' % (card, edit['to'], title), True
+        by_id = {i['id']: i for i in board['items']}   # the sort, with the cards as they are now (edits may have come in)
+        now = [(t, [[by_id[k] for k in ks if k in by_id] for ks in ids_g]) for (t, _), ids_g in zip(groups, regroup(ids, groups))]
+        arrange.lay(board, frame, [(t, [s for s in g if s]) for t, g in now])
+        arrange.keep_undo(DATA, bid, before, 'the frame as it was before the sort')
+        return 'Done. I sorted the %s frame into %d themes: %s. Say "put it back" to undo it.' % (
+            title, len(groups), ', '.join(t for t, _ in groups)), True
+    return edit_board(bid, change)
+
+
+def regroup(ids, groups):
+    """The flat list of card ids cut back into the groups' sizes."""
+    out, k = [], 0
+    for _, g in groups:
+        out.append(ids[k:k + len(g)])
+        k += len(g)
+    return out
+
+
+MOVED = {}   # board -> {item: ([old places], new item, when)}: moves made here, kept when a page still showing an old place saves
+
+
 def edit_board(bid, fn):
-    """Change a stored board under the lock (agents write this way); returns what fn returns."""
+    """Change a stored board under the lock (agents and the voice write this way); returns what fn returns. Items it
+    moves are remembered for a while, and every open copy of the board is told to fetch it."""
     with LOCK:
         board = read_board(bid)
+        before = {i['id']: (i['x'], i['y']) for i in board.get('items') or [] if 'x' in i}
         out = fn(board)
         board['updated'] = now_ms()
         write_json(board_path(bid), board)
+        moved = {i['id']: i for i in board.get('items') or [] if i['id'] in before and (i['x'], i['y']) != before[i['id']]}
+        if moved:
+            mine = MOVED.setdefault(bid, {})
+            for k, i in moved.items():   # moved again (sort, put back, sort): a page can still show any of the earlier places
+                olds = mine[k][0] if k in mine and time.time() - mine[k][2] < 900 else []
+                mine[k] = ([p for p in olds if p != (i['x'], i['y'])] + [before[k]], dict(i), time.time())
+    if moved:
+        live_send(bid, {'kind': 'saved', 'updated': board['updated']}, '')
     return out
 
 

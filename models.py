@@ -60,6 +60,11 @@ def save(change):
         for j, v in (change.get('jobs') or {}).items():
             if j in JOBS and isinstance(v, dict) and v.get('provider') in ('local',) + tuple(PROVIDERS):
                 s.setdefault('jobs', {})[j] = {'provider': v['provider'], 'model': str(v.get('model') or '').strip()[:100]}
+                url = str(v.get('url') or '').strip()
+                if v['provider'] == 'local' and v.get('model') and url.startswith('http'):   # a model on your own machines
+                    s['jobs'][j]['url'] = url[:300]
+        if isinstance(change.get('servers'), list):   # more of your own model servers to offer, beyond the startup ones
+            s['servers'] = [str(u).strip().rstrip('/')[:300] for u in change['servers'] if str(u).strip().startswith('http')][:20]
         for p, k in (change.get('keys') or {}).items():
             if p in PROVIDERS:
                 if k is None:
@@ -72,6 +77,14 @@ def save(change):
             json.dump(s, f, indent=1)
         os.replace(tmp, SETTINGS)
     return public()
+
+
+def local(job):
+    """(address, model) when this job uses a model picked on your own machines, else None (as set at startup)."""
+    j = load().get('jobs', {}).get(job) or {}
+    if j.get('provider') == 'local' and j.get('model') and j.get('url'):
+        return j['url'], j['model']
+    return None
 
 
 def choice(job):

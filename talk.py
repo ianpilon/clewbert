@@ -157,6 +157,31 @@ def frame_of(it, areas):
     return next((a.get('text') for a in inside if a.get('text') and a.get('text') != 'Shape'), '')
 
 
+def inside(f, i):
+    """An item belongs to a frame when its middle is inside it (frames and arrows are not its items)."""
+    return (i.get('type') not in ('area', 'arrow') and f['x'] <= i['x'] + i['w'] / 2 <= f['x'] + f['w']
+            and f['y'] <= i['y'] + i['h'] / 2 <= f['y'] + f['h'])
+
+
+def stacks(items):
+    """Items stacked in one column, each right under the one before (a sticky note with its link card), as lists,
+    top item first, in reading order."""
+    below = {}
+    for a in items:
+        for b in items:
+            if b is not a and abs(b['x'] - a['x']) < 16 and abs(b['w'] - a['w']) < 4 and 0 <= b['y'] - (a['y'] + a['h']) <= 16:
+                below[a['id']] = b
+                break
+    under = {b['id'] for b in below.values()}
+    out = []
+    for a in sorted((i for i in items if i['id'] not in under), key=lambda i: (round(i['y']), i['x'])):
+        s = [a]
+        while s[-1]['id'] in below and len(s) < 20:
+            s.append(below[s[-1]['id']])
+        out.append(s)
+    return out
+
+
 def tokens(s):
     """Words for matching; a plural matches its singular ("PDFs" finds a PDF, "photos" a photo)."""
     out = []
@@ -297,7 +322,10 @@ WHAT THIS APP CAN DO (you control it through "show" and "view"; never say you ca
   space the current board is in.
 - "task": inside a board, when the user asks for agent work ("have the team find...", "have an agent find...", "start a
   task to..."), put the task in their own words in "task" and say in one sentence that it started. The board's team (a
-  Lead who hands parts to teammates) does it in the background and puts results in new frames on the board. Set
+  Lead who hands parts to teammates) does it in the background and puts results in new frames on the board.
+  The team can also sort what is on the board: read every item of a frame and move items into new titled groups
+  (rearrange, regroup, sort into themes). Only an agent task's steps say whether items really moved: never say the
+  board was rearranged unless its "agent task" item says items were grouped. Set
   "task_mode" to "one" only when the user asks for a single agent ("just one agent", "an agent on its own"), else "team".
 - "agent task" items are agent tasks on the boards: what was asked, its state (queued, working, team = teammates
   working, waiting = a question for the user, done, stopped, failed), each teammate's part and, once it ended, what it put on
@@ -332,9 +360,22 @@ WHAT THIS APP CAN DO (you control it through "show" and "view"; never say you ca
 - "add_teammate": inside a board, when the user asks to add someone to the team ("add a developer", "we need a designer"),
   put {"name": "<short role name>", "role": "<what they do, in plain words>"} in "add_teammate". Starter roles you can
   name: Researcher, Writer, Analyst, Developer (reads a site's code to find how something works), Fact-checker.
-- It CANNOT edit, move, delete or create items (only agent tasks do that, and web_card), change colours, or open tabs other than "open_item". If asked, say so plainly
-  and say what you can do instead. Never claim to have done anything else.
-Reply with JSON only: {"answer": "<what to say>", "sources": [<item numbers that answer the question, outlined for the user; not ones you mention only to rule them out>], "show": [<item numbers to show, or empty>], "view": null, "open": null, "task": null, "task_mode": "team", "agent_answer": null, "follow_up": null, "web_card": null, "open_item": null, "add_teammate": null, "steer": null}"""
+- Rearranging cards in a frame, YOURSELF, right away (no agent task): the "frame layout" items list a frame's cards
+  numbered by place (place 1 is top left, then left to right, row by row; "rows of 5" means places 6 to 10 are row 2).
+  "move_card": {"frame": <the frame layout's item number>, "from": <place>, "to": <place>} moves one card to another
+  place; the cards between shift along. "The fourth one in the top row to be first" is from 4 to 1.
+  "sort_frame": {"frame": <the frame layout's item number>} sorts the frame's cards into themes, each under a heading
+  ("sort", "group", "organise", "restructure" or "rearrange the frame into themes or topics").
+  "undo_edit": true puts back the last move or sort ("put it back", "undo that").
+  "card": {"frame": <the frame layout's item number>, "place": <place>, "under": true or false, "open": true or false}
+  ("under": true for the card stacked under the sticky note: "the card below that", "the link under it") when the user asks to show,
+  go to, zoom to or open a card by its place ("open the second card", "show me the last one in the top row"). The app
+  zooms to it, and with "open": true also opens its link in a new tab. Never use "view" or "show" for this.
+  The app says what it moved, so keep "answer" short; if no frame layout item is the frame meant, ask which frame.
+- It CANNOT edit the words of items, delete or create items (only agent tasks create them, and web_card), change
+  colours, or open tabs other than "open_item". If asked, say so plainly and say what you can do instead. Never claim
+  to have done anything you did not put in this JSON.
+Reply with JSON only: {"answer": "<what to say>", "sources": [<item numbers that answer the question, outlined for the user; not ones you mention only to rule them out>], "show": [<item numbers to show, or empty>], "view": null, "open": null, "task": null, "task_mode": "team", "agent_answer": null, "follow_up": null, "web_card": null, "open_item": null, "add_teammate": null, "steer": null, "move_card": null, "sort_frame": null, "undo_edit": null, "card": null}"""
 
 
 def ask_model(question, history, entries, scope):
@@ -345,12 +386,13 @@ def ask_model(question, history, entries, scope):
         lines.append('[%d] %s%s\n%s' % (n, e['kind'], (' (' + where + ')') if where else '', e['text']))
     msgs = [{'role': 'system', 'content': SYSTEM}]
     for h in history[-3:]:
-        msgs += [{'role': 'user', 'content': h['q']}, {'role': 'assistant', 'content': json.dumps({'answer': h['a']})}]
+        msgs += [{'role': 'user', 'content': h['q']}, {'role': 'assistant', 'content': json.dumps({'answer': h['a'], **(h.get('did') or {})})}]
     msgs.append({'role': 'user', 'content': '%s\n\nBOARD ITEMS:\n%s\n\nQUESTION: %s' % (scope_line(scope), '\n\n'.join(lines), question)})
     out = chat(msgs, 500)
     return (str(out.get('answer') or out.get('_text') or '').strip(), out.get('sources') or [], out.get('show') or [], out.get('view'),
             out.get('open'), out.get('task'), out.get('agent_answer'), out.get('task_mode'), out.get('follow_up'),
-            out.get('web_card'), out.get('add_teammate'), out.get('steer'), out.get('open_item'))
+            out.get('web_card'), out.get('add_teammate'), out.get('steer'), out.get('open_item'),
+            {k: out.get(k) for k in ('move_card', 'sort_frame', 'undo_edit', 'card')})
 
 
 BACKGROUND = {'conn': None}   # the brief reader's call in flight, cut when a question arrives
@@ -367,13 +409,14 @@ def interrupt_background():
 
 def chat(msgs, max_tokens, timeout=90, background=False):
     """One model call that should come back as JSON; {'_text': ...} when it does not."""
-    if not models.choice('voice') and not MODEL_URL:
+    if not models.choice('voice') and not models.local('voice') and not MODEL_URL:
         raise models.NoModel('voice')
     if models.choice('voice'):   # an outside provider picked in Settings
         return parse_json(models.complete('voice', {'messages': msgs, 'max_tokens': max_tokens}, timeout)['choices'][0]['message']['content'] or '')
-    body = json.dumps({'model': MODEL, 'messages': msgs, 'temperature': .2, 'max_tokens': max_tokens,
+    url, model = models.local('voice') or (MODEL_URL, MODEL)   # picked in Settings, else as set at startup
+    body = json.dumps({'model': model, 'messages': msgs, 'temperature': .2, 'max_tokens': max_tokens,
                        'chat_template_kwargs': {'enable_thinking': False}}).encode()
-    u = urllib.parse.urlsplit(MODEL_URL)
+    u = urllib.parse.urlsplit(url)
     conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=timeout)
     if background:
         BACKGROUND['conn'] = conn
@@ -493,7 +536,11 @@ def named_frame(question, entries):
 
 def named_target(question, said, targets):
     """The board or space the question names; for "open it", the one the answer says it opened. Boards before spaces."""
-    for text in (question, said if re.search(r'\bopen', said, re.I) else ''):
+    # the answer counts only where it says it opened or went to a board or space (an answer quoting a card whose title
+    # ended in a board's name opened that board): the words right after "opened", "taking you to"...
+    went = ' '.join(m.group(1) for m in re.finditer(r"\b(?:opened|opening|open|taking you to|took you to|going to|here is|here's)\b"
+                                                   r"((?:\s+the)?\s+[^.!?,\"]{1,40}?\s+(?:board|space))\b", said, re.I))
+    for text in (question, went):
         low = text.lower()
         hits = [n for n in targets if n and n != 'all boards' and re.search(r'(?<!\w)' + re.escape(n) + r'(?!\w)', low)]
         if hits:
@@ -604,7 +651,103 @@ def which_task(given, entries, running=False):
 LAST_ASK = [0.0]   # when a question last ran: the brief reader (briefs.py) waits while the user is asking
 
 
-def answer(question, history, boards, scope, reader, briefs=None, layout=None, waiting=(), tasks=(), team_text=''):
+def frame_layouts(board, question, seen, reader):
+    """The frames the question is about: named in it, else the ones mostly on screen; each with its cards by place."""
+    import arrange
+    frames = [i for i in board.get('items') or [] if i.get('type') == 'area' and not i.get('agent')]
+    asked = set(tokens(question)) | set(re.findall(r'\d{2,}', question))
+    named = [f for f in frames if asked & (set(tokens(f.get('text') or '')) | set(re.findall(r'\d{2,}', f.get('text') or '')))]
+    if not named and isinstance(seen, list) and len(seen) == 4:
+        def shown(f):
+            w = min(f['x'] + f['w'], seen[2]) - max(f['x'], seen[0])
+            h = min(f['y'] + f['h'], seen[3]) - max(f['y'], seen[1])
+            return max(w, 0) * max(h, 0)
+        named = sorted((f for f in frames if shown(f) > 0), key=shown, reverse=True)[:2]
+    return [{'board': board['id'], 'boardName': board.get('name', ''), 'item': f['id'], 'kind': 'frame layout',
+             'frame': f.get('text') or '', 'text': arrange.frame_text(board, f, reader)} for f in named[:2]]
+
+
+PLACE = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|front|start|end|place \d+|position \d+|\d+(?:st|nd|rd|th))"
+MOVE_Q = re.compile(r"\b(?:(?:move|put|make|swap|switch|place|shift|bring)\b.{0,80}\b(?:%s|before|after|place|position|spot)|"
+                    r"(?:should|to|will|must) (?:be|go|come) (?:the |in |at |to )?(?:the )?%s)\b" % (PLACE, PLACE), re.I)
+ORDINALS = {w: k for k, w in enumerate('first second third fourth fifth sixth seventh eighth ninth tenth'.split(), 1)}
+POINT = re.compile(r"\b(open|show|highlight|point|go to|zoom|take me|pull up|bring up|look at|find|which one|where)\b", re.I)
+ORD_Q = re.compile(r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|\d+(?:st|nd|rd|th))\b", re.I)
+UNDER = re.compile(r"\b(below|under|underneath|beneath)\b", re.I)
+CARD_Q = re.compile(r"\b(?:open|show|highlight|point (?:at|to)|go to|zoom (?:in )?(?:to|on|into)|take me to|pull up|bring up|look at|find)\b.{0,30}?\b(?:the )?"
+                    r"(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|\d+(?:st|nd|rd|th))\b.{0,25}?\b(?:card|one|note|item|link|post)", re.I)
+
+
+def card_open(want, question):   # the user's own word (the model set "open" for "show me the last one"), as a command: not "open source"
+    return bool(re.search(r"^\W*(?:(?:can|could|would) you |please |now |and )*open\b|\bopen (?:it|that|this|them|the|its|up)\b", question, re.I))
+
+
+def card_at(want, question, entries, board, reader, last=None, asked=False):
+    """The card the question points at by its place, its words, or (for "the one below that") the card shown last:
+    (the entry to show, its link card's entry or None, place, frame title, under, frame id, its sticky note's entry)."""
+    import arrange
+    layouts = [e for e in entries if e['kind'] == 'frame layout']
+    if not layouts:
+        return None
+    place, lay = None, layouts[0]
+    if isinstance(want, dict):
+        try:
+            n = int(want.get('frame'))
+            if 1 <= n <= len(entries) and entries[n - 1]['kind'] == 'frame layout':
+                lay = entries[n - 1]
+            place = int(want.get('place'))
+        except (TypeError, ValueError):
+            place = None
+    m = (ORD_Q if asked else CARD_Q).search(question)   # asked: a question about a card ("what card is fourth"), not "show"
+    if place is None and m:   # it said "Here is the second card" and asked for no card: the words say which
+        w = m.group(1).lower()
+        place = ORDINALS.get(w) or (-1 if w == 'last' else int(re.match(r'\d+', w).group()))
+    frame = next((i for i in board.get('items') or [] if i['id'] == lay['item']), None)
+    cs = arrange.cards(board, frame) if frame else []
+    under = bool(UNDER.search(question)) or (isinstance(want, dict) and want.get('under') is True)
+    if cs and (under or POINT.search(question) or (asked and place is None)):   # named by its words ("the one below pricing ideas"): the words
+        # win over the model's guess of a place; only when pointing at it, so "what is the pricing ideas card about" is answered
+        asked = set(tokens(question))
+        def name(s):   # the note's words before its date ("Pricing ideas — Oct 18, 2026")
+            return set(tokens(' '.join(re.split(r'\s+—\s+', item_words(s[0], reader)[1])[0].split()[:8])))
+        best = max(((len(asked & name(s)) / max(1, len(name(s))), k) for k, s in enumerate(cs, 1)), default=(0, 0))
+        if best[0] >= .6:
+            place = best[1]
+    if place is None and last and last.get('frame') == lay['item'] and (
+            under or (card_open(want, question) and re.search(r'\b(it|that|this|that one|this one)\b', question, re.I))):
+        place = last.get('place')   # "the card below that", "open it": the card shown last
+        under = under or bool(last.get('under'))
+    if place is None:
+        return None
+    if not cs or not (place == -1 or 1 <= place <= len(cs)):
+        return None
+    if place == -1:   # "the last one": of the top row when the question says so, else of the frame
+        place = len(arrange.grid(frame, cs)[0]) if re.search(r'\b(top|first) row\b', question, re.I) else len(cs)
+    s = cs[place - 1]
+    entry = lambda i: {'board': board['id'], 'boardName': board.get('name', ''), 'item': i['id'], 'kind': item_words(i, reader)[0],
+                       'frame': lay['frame'], 'text': item_words(i, reader)[1]}
+    link = next((i for i in s if i.get('url') or i.get('type') in ('file', 'img')), None)
+    shown = s[1] if under and len(s) > 1 else s[0]
+    return entry(shown), (entry(link) if link else None), place, lay['frame'], under and len(s) > 1, frame['id'], entry(s[0])
+
+
+def link_under(board, item_id, reader):
+    """The openable card in the same stack as this item (a sticky note's link card), as an entry."""
+    for s in stacks([i for i in board.get('items') or [] if i.get('type') not in ('area', 'arrow')]):
+        if any(i['id'] == item_id for i in s):
+            link = next((i for i in s if i.get('url') or i.get('type') in ('file', 'img')), None)
+            if link and link['id'] != item_id:
+                return {'board': board['id'], 'boardName': board.get('name', ''), 'item': link['id'],
+                        'kind': item_words(link, reader)[0], 'frame': '', 'text': item_words(link, reader)[1]}
+    return None
+
+
+UNDO_Q = re.compile(r"\b(put (it|them|that|everything|the cards?) back|undo|revert|back (to )?(how|the way) it was)\b", re.I)
+SORT_Q = re.compile(r"\b(sort|group|organi[sz]e|restructure|rearrange|regroup|categori[sz]e|cluster)\w*\b.{0,60}\b(themes?|topics?|categor\w*|sections?|groups?)\b", re.I)
+STARTED = re.compile(r"\bI(?:'ve| have)? (?:just )?(?:started|kicked off|set up|launched|begun) (?:an?|the) (?:agent )?(?:task|team)", re.I)
+
+
+def answer(question, history, boards, scope, reader, briefs=None, layout=None, waiting=(), tasks=(), team_text='', seen=None):
     t0 = LAST_ASK[0] = time.time()
     interrupt_background()
     briefs = briefs or {}
@@ -613,6 +756,8 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
     if len(boards) == 1:
         entries.append({'board': boards[0]['id'], 'boardName': boards[0].get('name', ''), 'item': None, 'kind': 'board contents',
                         'frame': '', 'text': board_contents(boards[0])})
+    if len(boards) == 1 and scope != 'all' and not scope.startswith('space:'):
+        entries += frame_layouts(boards[0], question, seen, reader)
     if team_text and len(boards) == 1:
         entries.append({'board': boards[0]['id'], 'boardName': boards[0].get('name', ''), 'item': None, 'kind': 'board team',
                         'frame': '', 'text': team_text})
@@ -629,7 +774,14 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
         again = ask_model(question + ' (Say something new: do not repeat your last answer.)', history, entries, scope)
         if same_words(again[0], history[-1]['a']) < .7:
             reply = again
-    said, nums, show_nums, view, go, task, agent_answer, task_mode, follow_up, web_card, add_teammate, steer, open_num = reply
+    if not any(reply[-1].values()) and MOVE_Q.search(question) and any(e['kind'] == 'frame layout' for e in entries):
+        # asked to move a card and the reply has no move: once more, without the conversation, which it copies (an earlier
+        # "Done" turn with no move in it was read back word for word, retry and all)
+        again = ask_model(question + ' (This asks you to move a card: put it in "move_card" with the frame layout\'s item '
+                          'number and the from and to places.)', [], entries, scope)
+        if any(again[-1].values()):
+            reply = again
+    said, nums, show_nums, view, go, task, agent_answer, task_mode, follow_up, web_card, add_teammate, steer, open_num, edits = reply
 
     def pick(numbers):
         out = []
@@ -654,11 +806,42 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
         if best[0] >= SOURCE_MATCH:
             used = [entries[best[1]]]
     # move the board only when the user asked to see something; otherwise the page just outlines the sources as usual
+    single = len(boards) == 1 and scope != 'all' and not scope.startswith('space:')
+    last = next((h['did']['card'] for h in reversed(history) if (h.get('did') or {}).get('card')), None)
+    card = card_at(edits.get('card'), question, entries, boards[0], reader, last) if single else None
     asked_to_see = bool(SEE.search(question)) or bool(YES.search(question) and history and OFFER.search(history[-1]['a']))   # "yes" to "Want me to open it?"
     shown = [e for e in pick(show_nums) if e['item']] if asked_to_see else []   # board items only (the brief is not on the canvas)
     if not asked_to_see:
         view = None
-    if any(e['kind'] == 'board brief' for e in pick(show_nums)) and view is None:
+    if card:   # a card by its place: found in code (it showed the board brief for "the second card", a card it had no number for)
+        head, link, place, title, under, frame_id, note = card
+        shown, view = [head], None
+        used = [head] if under or not link else [note, link]   # just the card: other sources lit up frames too
+        opening = [link] if link and (card_open(edits.get('card'), question)) else []
+        said = ('Here is the card under the sticky note at place %d of the %s frame: "%s".' if under else
+                'Here is card %d of the %s frame: "%s".') % (place, title, ' '.join(head['text'].split()[:10]))
+        said += ' I opened its link in a new tab.' if opening else ''
+        checked_card = {'frame': frame_id, 'place': place, 'under': under}
+    elif single and (any(e['kind'] == 'frame layout' for e in used) or (
+            not any(e['item'] for e in used) and ORD_Q.search(question) and re.search(r'\b(card|note|one|link)\b', question, re.I))):
+        # an answer about a card by its place listed the frame's card list as its source, so the whole frame lit up
+        # ("what card is fourth in the 2026 frame"): outline the card itself, note and the card under it
+        found = card_at(None, question, entries, boards[0], reader, last, asked=True)
+        used = [e for e in used if e['kind'] != 'frame layout']
+        if found:
+            head, link, place, title, under, frame_id, note = found
+            used = [note] + ([link] if link and link['item'] != note['item'] else []) + used
+            name = ' '.join(re.split(r'\s+—\s+', note['text'])[0].split()[:4]).lower()
+            if name not in said.lower():   # the model named another card than the one at that place: say the one there
+                said = 'Card %d of the %s frame is "%s"%s.' % (place, title, ' '.join(note['text'].split()[:10]),
+                                                              (', with "%s" under it' % ' '.join(link['text'].split()[:6])) if link and link['item'] != note['item'] else '')
+            card = found   # the next "open it" or "the one below that" means this card
+            checked_card = {'frame': frame_id, 'place': place, 'under': under}
+    elif opening:   # "open it" on a sticky note: what opens is the link card stacked under it
+        link = link_under(boards[0], opening[0]['item'], reader) if single else None
+        if link:
+            opening = [link]
+    if any(e['kind'] == 'board brief' for e in pick(show_nums)) and view is None and not card:
         view = 'brief'
     for e in shown:
         if e not in used:
@@ -681,6 +864,25 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
         opened, view = {'space': ''}, None
     if layout and asked_to_see and not shown and not opened:   # the model can say "I have opened the Sales board" and leaves "open" empty
         opened = named_target(question, said, layout['targets'])
+    edit = None   # a move or sort the voice does itself; server.py does it and says what really happened
+    one = len(boards) == 1 and scope != 'all' and not scope.startswith('space:')
+    for kind in ('move_card', 'sort_frame'):
+        e = edits.get(kind)
+        if one and isinstance(e, dict):
+            f = pick([e.get('frame')])
+            if not (f and f[0]['kind'] == 'frame layout') and len([x for x in entries if x['kind'] == 'frame layout']) == 1:
+                f = [x for x in entries if x['kind'] == 'frame layout']   # one frame it can mean: that one
+            if f and f[0]['kind'] == 'frame layout':
+                edit = {'kind': kind, 'frame': f[0]['item'], 'from': e.get('from'), 'to': e.get('to')}
+                break
+            said = 'Which frame do you mean? Name it, or zoom to it on screen, and ask again.'
+    if one and not edit and (edits.get('undo_edit') is True or UNDO_Q.search(question)):
+        edit = {'kind': 'undo'}
+    layouts = [e for e in entries if e['kind'] == 'frame layout']
+    if one and not edit and SORT_Q.search(question) and layouts:   # it said "Done, grouped into themes" and asked for no sort
+        edit = {'kind': 'sort_frame', 'frame': layouts[0]['item']}
+    if not task and STARTED.search(said) and one:   # it said it started a task but gave none: start the one it was asked for
+        task = history[-1]['q'] if YES.search(question) and history else question
     said = no_roll_call(said, entries)
     said = no_rule_out(said, used, entries)
     for e in shown:   # went into a frame but the answer is about something else: say what the frame holds
@@ -701,12 +903,14 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
     names.discard(None)
     LAST_ASK[0] = time.time()
     reading = [briefs[b['id']] for b in boards if (briefs.get(b['id']) or {}).get('state') == 'reading']
-    return {'answer': said, 'checked': checked, 'ms': int((time.time() - t0) * 1000), 'model': (models.choice('voice') or (0, MODEL))[1],
+    return {'answer': said, 'checked': checked, 'ms': int((time.time() - t0) * 1000), 'model': (models.choice('voice') or (0, (models.local('voice') or (0, MODEL))[1]))[1],
             'unread': reader.unread(names),
             'show': [{'board': e['board'], 'item': e['item']} for e in shown],
             'open': opened,
             'task': str(task).strip()[:600] if task and len(boards) == 1 and scope != 'all' and not scope.startswith('space:') else None,
             'task_mode': 'one' if task_mode == 'one' else 'team',
+            'edit': edit,
+            'shown_card': checked_card if card else None,
             'agent_answer': which_answer(agent_answer, entries, waiting),
             'follow_up': which_task(follow_up, entries),
             'steer': which_task(steer, entries, running=True),
