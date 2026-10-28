@@ -50,7 +50,7 @@ def public():
     s = load()
     return {'jobs': {j: s.get('jobs', {}).get(j) or {'provider': 'local', 'model': ''} for j in JOBS},
             'keys': {p: ('…' + k[-4:]) if k else '' for p, k in ((p, s.get('keys', {}).get(p)) for p in PROVIDERS)},
-            'providers': {p: v['name'] for p, v in PROVIDERS.items()}}
+            'providers': {p: v['name'] for p, v in PROVIDERS.items()}, 'servers': s.get('servers') or []}
 
 
 def save(change):

@@ -354,7 +354,7 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError) as e:
                 return self.reply(200, {'models': [], 'error': str(e)[:200]})
         if parts == ['api', 'setup']:   # the welcome screen shows until a model answers
-            return self.reply(200, {'ready': bool(models.choice('voice') or talk.MODEL_URL),
+            return self.reply(200, {'ready': bool(models.choice('voice') or models.local('voice') or talk.MODEL_URL),
                                     'speech': (models.speech() or [None])[0] if not talk.TTS_URL else 'local'})
         if parts == ['api', 'voices']:
             try:
@@ -493,6 +493,8 @@ class Handler(BaseHTTPRequestHandler):
                 pass   # the video player stopped this range to ask for another
 
     def post(self, parts):
+        if parts == ['api', 'settings', 'servers']:   # add or remove one of your own model servers, from the Settings card
+            return self.reply(200, own_server(json.loads(self.read_body())))
         if len(parts) == 4 and parts[:3] == ['api', 'settings', 'test'] and parts[3] in models.JOBS:
             return self.reply(200, models.test(parts[3]) if models.choice(parts[3]) else local_test(parts[3]))
         if parts == ['api', 'uploads']:   # a dropped file arrives in pieces: start, PUT each piece in order, then done
@@ -693,6 +695,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {**result, 'turn': turn})
         if parts == ['api', 'setup']:
             req = json.loads(self.read_body())
+            if req.get('provider') == 'local':   # a model server on your own network, by its address
+                return self.reply(200, local_setup(str(req.get('url') or '')))
             return self.reply(200, models.setup(str(req.get('provider') or ''), str(req.get('key') or '')))
         if parts == ['api', 'hear']:   # one spoken question as WAV, when hearing runs on the OpenAI or xAI key
             if not models.speech():
@@ -945,6 +949,51 @@ def real_names(jobs):
         a = (OWN_SEEN.get((re.sub(r'/v1(/.*)?$', '', u.rstrip('/')), m)) or (None,))[0]
         return '%s (answered by %s)' % (m, a) if a and a != m else m
     return {j: [(name(m, u), u) for m, u in ms] for j, ms in jobs.items()}
+
+
+def own_server(req):
+    """{add: address} or {remove: address}. An address is added only when it serves models (an OpenAI-style /v1/models,
+    as vLLM, llama.cpp, Ollama and LM Studio do); "192.168.1.20:8000" or ".../v1/chat/completions" both work."""
+    url = str(req.get('add') or req.get('remove') or '').strip()
+    url = re.sub(r'/v1(/.*)?$', '', url.rstrip('/'))
+    if url and not re.match(r'^https?://', url):
+        url = 'http://' + url
+    have = models.load().get('servers') or []
+    if req.get('remove'):   # jobs that ran on one of its models go back to the startup setting
+        jobs = {j: {'provider': 'local', 'model': ''} for j, c in (models.load().get('jobs') or {}).items()
+                if c.get('provider') == 'local' and str(c.get('url') or '').startswith(url + '/')}
+        return {'ok': True, 'servers': models.save({'servers': [u for u in have if u != url], 'jobs': jobs})['servers']}
+    if not re.match(r'^https?://[\w.-]+(:\d+)?$', url):
+        return {'ok': False, 'error': 'That does not look like an address. Type it like http://192.168.1.20:8000'}
+    try:
+        with urllib.request.urlopen(url + '/v1/models', timeout=6) as f:
+            names = [m['id'] for m in json.load(f).get('data') or [] if m.get('id')]
+    except (OSError, ValueError) as e:
+        return {'ok': False, 'error': 'Nothing answered at %s (%s). Check the address and that the model server is running.'
+                % (url, str(getattr(e, 'reason', e))[:80])}
+    if not names:
+        return {'ok': False, 'error': '%s answered, but serves no models.' % url}
+    return {'ok': True, 'models': names, 'url': url,
+            'servers': models.save({'servers': have + ([url] if url not in have else [])})['servers']}
+
+
+def local_setup(url):
+    """The welcome screen's "Your own": add the server, run every job on its first model (vision only on a model that
+    reads pictures, by its name), and prove it answers; on failure the jobs are left as they were."""
+    r = own_server({'add': url})
+    if not r['ok']:
+        return r
+    m, where = r['models'][0], r['url'] + '/v1/chat/completions'
+    before = {j: dict(c) for j, c in (models.load().get('jobs') or {}).items()}
+    jobs = {j: {'provider': 'local', 'model': m, 'url': where} for j in ('voice', 'agents', 'builders')}
+    if re.search(r'vl|vision|llava|gemma-3|qwen2\.5-vl', m, re.I):
+        jobs['vision'] = dict(jobs['voice'])
+    models.save({'jobs': jobs})
+    t = local_test('voice')
+    if not t['ok']:
+        models.save({'jobs': {j: before.get(j) or {'provider': 'local', 'model': ''} for j in jobs}})
+        return {'ok': False, 'error': '%s lists %s, but it did not answer a question: %s' % (r['url'], m, t['error'])}
+    return {'ok': True, 'model': m, 'models': r['models'], 'speech': False}
 
 
 OWN_SEEN = {}   # (address, model name) -> (the model that really answers, when asked)

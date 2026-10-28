@@ -442,7 +442,9 @@
   .stg .oe-row+.oe-row{margin-top:6px}
   .stg #stgKeys{margin-top:6px}
   .stg .oe-row select{flex:none;width:150px}
-  .stg .oe-row select.stg-l{flex:1;min-width:0;width:auto}   /* your own models: the name gets the room */
+  .stg .oe-row select.stg-l{flex:1;min-width:0;width:auto}
+  .stg .stg-sv{flex:1;min-width:0;font-size:12.5px;align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stg #stgSrv .stg-res{margin-top:4px}   /* your own models: the name gets the room */
   .stg .oe-row [hidden]{display:none}
   .stg .oe-row input:disabled{background:#f6f7f9;color:var(--muted)}
   .stg .stg-msg{font-size:12.5px;color:var(--muted)}
@@ -611,7 +613,7 @@
   .ob-card h1{margin:14px 0 6px;font-size:22px;letter-spacing:-.01em}
   .ob-card h2{margin:0 0 6px;font-size:18px}
   .ob-lead{margin:0 0 18px;font-size:14px;line-height:1.5;color:var(--muted)}
-  .ob-pros{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:16px}
+  .ob-pros{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:16px}
   .ob-pros button{border:1px solid var(--border);background:#fff;border-radius:10px;padding:10px;text-align:left;font:inherit;cursor:pointer;min-width:0}
   .ob-pros button b{display:block;font-size:14px}
   .ob-pros button span{display:block;font-size:12px;color:var(--muted);line-height:1.35;margin-top:2px}
@@ -645,14 +647,15 @@
         <button data-p="xai" class="on"><b>xAI</b><span>Thinks, hears and talks</span></button>
         <button data-p="openai"><b>OpenAI</b><span>Thinks, hears and talks</span></button>
         <button data-p="anthropic"><b>Anthropic</b><span>Thinks, and talks with a free voice</span></button>
+        <button data-p="local"><b>Your own</b><span>A model server on your network</span></button>
       </div>
       <label for="obKey">Your <span id="obName">xAI</span> key</label>
       <input id="obKey" type="password" autocomplete="off" spellcheck="false">
       <p class="ob-hint" id="obWhere"></p>
       <p class="ob-err" id="obErr"></p>
       <button class="ob-go" id="obConnect">Connect</button>
-      <p class="ob-small">The key is saved only on the computer that runs Clewbert. Your questions, and the boards Clewbert reads to answer them, go to the provider you pick.</p>
-      <p class="ob-small">Running your own model? Start Clewbert with <code>CANVAS_MODEL_URL</code> set (see the README) and this screen goes away.</p>
+      <p class="ob-small" id="obKeyNote">The key is saved only on the computer that runs Clewbert. Your questions, and the boards Clewbert reads to answer them, go to the provider you pick.</p>
+      <p class="ob-small" id="obOwnNote">Running your own model? Pick <b>Your own</b> and type its address, or start Clewbert with <code>CANVAS_MODEL_URL</code> set (see the README).</p>
     </div>
     <div id="obStep2" hidden>
       <h1>You are connected</h1>
@@ -760,6 +763,8 @@
   <p class="stg-hint">Pick the model for each job. <b>Your own machines</b> keeps everything at home. With an outside provider, everything that job reads (board text, your questions, screenshots) is sent to that provider.</p>
   <label>Models</label>
   <div id="stgJobs"></div>
+  <label>Your own model servers <span>machines on your network that serve models</span></label>
+  <div id="stgSrv"></div>
   <label>Keys <span>kept on this server only, never shown again in full</span></label>
   <div id="stgKeys"></div>
   <div class="oe-foot"><span class="stg-msg" id="stgMsg"></span><button class="oe-cx" id="stgCancel">Close</button><button class="go" id="stgSave">Save</button></div>
@@ -2018,9 +2023,7 @@ const stgAn=n=>(/^[AEIOUx]/.test(n)?'an ':'a ')+n;   // an OpenAI, an Anthropic,
 async function stgOpen(){
   $('#stg').hidden=false;stgMsg('');
   try{STG.data=await api('settings');}catch(e){stgMsg('Settings did not load. Reload the page and try again.',true);return;}
-  STG.drop=new Set();STG.own=null;stgPaint();
-  try{const j=await api('settings/local');STG.own=j.models||[];Object.assign(STG.data,{startup:j.startup,local:j.local});}catch(e){STG.own=[];}   // names as the models that really answer
-  document.querySelectorAll('#stgJobs .stg-job').forEach(row=>{if(row.querySelector('.stg-p').value==='local')stgOwnFill(row);});
+  STG.drop=new Set();STG.own=null;stgPaint();stgOwnLoad();   // names as the models that really answer
 }
 function stgClose(){$('#stg').hidden=true;}
 function stgMsg(t,bad){const m=$('#stgMsg');m.textContent=t||'';m.classList.toggle('bad',!!bad);}
@@ -2041,6 +2044,26 @@ function stgPaint(){
     row.querySelector('.stg-test').onclick=()=>stgTest(row);
   });
   document.querySelectorAll('#stgKeys .stg-rm').forEach(b=>b.onclick=()=>{const p=b.closest('[data-prov]').dataset.prov;STG.drop.add(p);stgSave(`${d.providers[p]} key removed.`);});
+  stgSrvPaint();
+}
+/* Your own model servers: type an address, Add checks that it serves models and saves it; its models then show in
+   each job's list under Your own machines. Servers set when the app starts are always there and not listed here. */
+function stgSrvPaint(msg,bad){
+  const list=(STG.data.servers||[]).map(u=>`<div class="oe-row" data-url="${escapeAttr(u)}"><span class="stg-sv" title="${escapeAttr(u)}">${escapeHtml(u)}</span><button class="oe-cx stg-srm" title="Stop offering this server's models">Remove</button></div>`).join('');
+  $('#stgSrv').innerHTML=list+`<div class="oe-row"><input class="stg-sa" placeholder="Address, like http://192.168.1.20:8000" autocomplete="off" spellcheck="false"><button class="oe-cx stg-sadd">Add</button></div><div class="stg-res${bad?' bad':msg?' ok':''}">${escapeHtml(msg||'')}</div>`;
+  const add=async()=>{const v=$('#stgSrv .stg-sa').value.trim();if(!v)return;stgSrvPaint('Looking for models at '+v+'…');
+    let j;try{j=await api('settings/servers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({add:v})});}catch(e){stgSrvPaint('The server did not answer. Reload the page and try again.',true);return;}
+    if(!j.ok){stgSrvPaint(j.error,true);$('#stgSrv .stg-sa').value=v;return;}
+    STG.data.servers=j.servers;stgSrvPaint(`Added. Found ${j.models.length} model${j.models.length===1?'':'s'}: ${j.models.join(', ')}. Pick one under a job above.`);stgOwnLoad();};
+  $('#stgSrv .stg-sadd').onclick=add;$('#stgSrv .stg-sa').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();add();}};
+  document.querySelectorAll('#stgSrv .stg-srm').forEach(b=>b.onclick=async()=>{const u=b.closest('[data-url]').dataset.url;
+    try{await api('settings/servers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({remove:u})});STG.data=await api('settings');}catch(e){}
+    stgPaint();stgSrvPaint('Removed '+u+'. Any job that used one of its models is back on the startup setting.');stgOwnLoad();});
+}
+async function stgOwnLoad(){   // the models your machines serve, for each job's list (takes a few seconds: each is asked once)
+  STG.own=null;document.querySelectorAll('#stgJobs .stg-job').forEach(row=>{if(row.querySelector('.stg-p').value==='local')stgOwnFill(row);});
+  try{const j=await api('settings/local');STG.own=j.models||[];Object.assign(STG.data,{startup:j.startup,local:j.local});}catch(e){STG.own=[];}
+  document.querySelectorAll('#stgJobs .stg-job').forEach(row=>{if(row.querySelector('.stg-p').value==='local')stgOwnFill(row);});
 }
 /* Your own machines: a list of the models your boxes serve now (asked when the card opens, takes a few seconds), with
    "As set at startup" first. Picked here, the job uses it; the startup model stays the fallback for builders. */
@@ -3008,20 +3031,26 @@ window.addEventListener('hashchange',route);
 // Welcome: until a model answers, only the welcome screen shows; then the microphone, and straight into the tour
 const OB_PRO={xai:{name:'xAI',where:'<a href="https://console.x.ai" target="_blank" rel="noopener">console.x.ai</a>'},
   openai:{name:'OpenAI',where:'<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a>'},
-  anthropic:{name:'Anthropic',where:'<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>'}};
+  anthropic:{name:'Anthropic',where:'<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>'},
+  local:{name:'model server',where:''}};   // your own: an address, not a key
 let OB_P='xai';
 function obPick(p){OB_P=p;$('#obPros').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.p===p));
-  $('#obName').textContent=OB_PRO[p].name;$('#obKey').placeholder='Paste your '+OB_PRO[p].name+' key';
-  $('#obWhere').innerHTML='Make one at '+OB_PRO[p].where+'.';$('#obErr').textContent='';}
+  const own=p==='local';$('#obKey').type=own?'text':'password';
+  $('#obKey').previousElementSibling.innerHTML=own?'Your model server\'s address':'Your <span id="obName"></span> key';if(!own)$('#obName').textContent=OB_PRO[p].name;
+  $('#obKey').placeholder=own?'Like http://192.168.1.20:8000':'Paste your '+OB_PRO[p].name+' key';
+  $('#obKeyNote').textContent=own?'The address is saved only on the computer that runs Clewbert. Your questions, and the boards Clewbert reads to answer them, go only to that server.':'The key is saved only on the computer that runs Clewbert. Your questions, and the boards Clewbert reads to answer them, go to the provider you pick.';
+  $('#obOwnNote').hidden=own;
+  $('#obWhere').innerHTML=own?'Anything that serves models the OpenAI way works: vLLM, llama.cpp, Ollama (port 11434), LM Studio (port 1234). Nothing leaves your network.':'Make one at '+OB_PRO[p].where+'.';$('#obErr').textContent='';}
 $('#obPros').querySelectorAll('button').forEach(b=>b.onclick=()=>{obPick(b.dataset.p);$('#obKey').focus();});
 $('#obKey').addEventListener('keydown',e=>{if(e.key==='Enter')$('#obConnect').click();});
 $('#obConnect').onclick=async()=>{
-  const key=$('#obKey').value.trim();if(!key){$('#obErr').textContent='Paste your '+OB_PRO[OB_P].name+' key first.';return;}
-  const btn=$('#obConnect');btn.disabled=true;btn.textContent='Checking the key…';$('#obErr').textContent='';
-  try{const j=await api('setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:OB_P,key})});
+  const key=$('#obKey').value.trim(),own=OB_P==='local';if(!key){$('#obErr').textContent=own?'Type the address first.':'Paste your '+OB_PRO[OB_P].name+' key first.';return;}
+  const btn=$('#obConnect');btn.disabled=true;btn.textContent=own?'Looking for models…':'Checking the key…';$('#obErr').textContent='';
+  try{const j=await api('setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(own?{provider:'local',url:key}:{provider:OB_P,key})});
     if(!j.ok){$('#obErr').textContent=j.error||'That did not work. Try again.';return;}
     VC.speech=j.speech?OB_P:null;$('#obKey').value='';
     $('#obDone').textContent=j.speech?'Clewbert can think, hear and talk now. Turn on the microphone and it will show you around.'
+      :own?`Clewbert thinks with ${j.model} now${j.models.length>1?` (your server has ${j.models.length} models: change each job's in Settings)`:''}. It will download its own free voice once (about 480 MB), so what you say never leaves this computer either.`
       :'Clewbert can think now. Anthropic does not hear or speak, so Clewbert will download its own free voice once (about 480 MB). What you say never leaves this computer.';
     $('#obHereRow').hidden=!j.speech;$('#obHereWho').textContent=OB_PRO[OB_P].name;$('#obStart').textContent='Turn on the microphone and start';
     $('#obStep1').hidden=true;$('#obStep2').hidden=false;}

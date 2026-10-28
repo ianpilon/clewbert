@@ -16,7 +16,7 @@ frame on the board, and the agents fill it with notes, links, working demos and 
 - **Canvas:** sticky notes, text, arrows, frames, drawing, emoji, images, videos, PDFs and any dropped file. Copy and paste (also between boards), Option-drag to copy. Boards live in spaces.
 - **Talk to your boards:** questions are answered only from what is on the board, with the items it used highlighted. Works from one board, one space, or all boards.
 - **Agent teams:** each board has a team: a Lead and teammates with roles in plain words, in an org chart you can rearrange. A task goes to the Lead, who hands parts to teammates (each part is its own frame, joined by an arrow) and writes the final answer. Agents can search the web, read pages and code, use a real browser, and build demos you can open. They ask before anything that sends, buys, books, posts or signs up.
-- **Your models, your choice:** in Settings (the gear), pick the model for each job (voice, agents, builders, vision): a model server on your own machine, or OpenAI, xAI or Anthropic with your own key. Keys stay on your server.
+- **Your models, your choice:** in Settings (the gear), pick the model for each job (voice, agents, builders, vision): a model server on your own machine, or OpenAI, xAI or Anthropic with your own key. Keys stay on your server. To use your own model server, pick **Your own** on the welcome screen, or add its address under **Your own model servers** in Settings (anything that serves `/v1/models` the OpenAI way: Ollama, LM Studio, vLLM, llama.cpp); its models then show in each job's list.
 - **Miro import:** New board > Import from Miro.
 
 ## Run it
