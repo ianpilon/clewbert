@@ -46,8 +46,12 @@
   .sp.dragging{opacity:.45}
   .sp[draggable=true] .sp-name{cursor:pointer}
   .sp.drop{background:#fffbeb;outline:2px dashed #f59e0b;outline-offset:-2px}
+  .sp.sub .sp-name{padding-left:24px;font-size:13px}   /* a sub-space, indented under its parent */
   .sp-name{flex:1;min-width:0;text-align:left;border:none;background:none;padding:8px 10px;font-size:13.5px;font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sp.on .sp-name{font-weight:700}
+  .sp-fold{width:20px;height:20px;border:none;background:none;border-radius:5px;color:var(--muted);font-size:10px;line-height:1;padding:0;transition:transform .15s}
+  .sp-fold:hover{background:#e4e7eb;color:var(--ink)}
+  .sp-fold.shut{transform:rotate(-90deg)}
   .sp-n{font-size:11.5px;color:var(--muted-2);font-variant-numeric:tabular-nums}
   .sp-more{width:24px;height:24px;border:none;background:none;border-radius:6px;color:var(--muted);font-size:15px;line-height:1;padding:0;visibility:hidden}
   .sp:hover .sp-more,.sp-more:focus{visibility:visible}
@@ -871,6 +875,11 @@ function ago(t){const s=(Date.now()-t)/1000;
    boards in none, no hash shows all boards. Deleting a space never deletes boards; they become unsorted. */
 const HOME={space:null,spaces:[],boards:[]};
 const spaceOf=b=>HOME.spaces.some(x=>x.id===b.space)?b.space:null;
+/* A sub-space has "parent" = a top-level space (one level only). Nav order: each top-level space, then its sub-spaces. */
+const subsOf=id=>HOME.spaces.filter(x=>x.parent===id);
+const spaceTree=()=>HOME.spaces.filter(x=>!x.parent||!HOME.spaces.some(p=>p.id===x.parent)).flatMap(x=>[x,...subsOf(x.id)]);
+const inSpace=(b,id)=>{const s=spaceOf(b);return s===id||subsOf(id).some(c=>c.id===s);};   // a parent space rolls up its sub-spaces' boards
+const siblingsOf=x=>HOME.spaces.filter(y=>(y.parent||null)===(x.parent||null));
 const spaceName=id=>id==='unsorted'?'Unsorted':(HOME.spaces.find(x=>x.id===id)||{}).name||'';
 async function loadSpaces(){try{HOME.spaces=(await api('spaces')).spaces||[];}catch(e){}}   // in the user's order (drag to change)
 async function showHome(space){
@@ -897,12 +906,12 @@ function homePaint(){
   $('#homeTitle').textContent=title;document.title=(HOME.space?title+' · ':'')+'Clewbert';
   $('#micHome').title=HOME.space?'Talk to the boards in '+title:'Talk to your boards';
   renderSpaces();vcTitle();
-  const shown=boards.filter(b=>!HOME.space||(HOME.space==='unsorted'?!spaceOf(b):spaceOf(b)===HOME.space));
+  const shown=boards.filter(b=>!HOME.space||(HOME.space==='unsorted'?!spaceOf(b):inSpace(b,HOME.space)));
   grid.innerHTML='';
   if(!shown.length){grid.innerHTML=HOME.space?`<div class="home-empty">No boards in ${escapeHtml(title)} yet.<br>Click <b>New board</b>, or drag a board onto it from All boards.</div>`:'<div class="home-empty">No boards yet.<br>Click <b>New board</b> to start one.</div>';return;}
   shown.forEach(b=>{
     const card=document.createElement('div');card.className='bcard';card.draggable=true;
-    const n=b.count??b.items.length,sp=!HOME.space&&spaceOf(b)?' · '+escapeHtml(spaceName(spaceOf(b))):'';
+    const n=b.count??b.items.length,sp=spaceOf(b)&&spaceOf(b)!==HOME.space?' · '+escapeHtml(spaceName(spaceOf(b))):'';   // in a parent space: which sub-space it is in
     card.innerHTML=`<div class="cvprev"><div class="cvprev-inner"></div><span class="cvprev-badge"></span></div>
       <div class="bmeta"><span class="bname">${escapeHtml(b.name)}</span><span class="bsub">${n} item${n===1?'':'s'} · edited ${ago(b.updated)}${sp}</span></div>
       <button class="bmore" title="Move or delete">⋯</button>`;
@@ -918,11 +927,15 @@ function homePaint(){
   });
 }
 function renderSpaces(){
-  const nav=$('#spaceNav'),count=id=>HOME.boards.filter(b=>id==='unsorted'?!spaceOf(b):spaceOf(b)===id).length;
+  const nav=$('#spaceNav'),count=id=>HOME.boards.filter(b=>id==='unsorted'?!spaceOf(b):inSpace(b,id)).length;
   nav.innerHTML='<h3>Spaces</h3>';
-  const row=(id,name,n,more)=>{const el=document.createElement('div');el.className='sp'+((HOME.space||null)===id?' on':'');
-    el.innerHTML=`<button class="sp-name" title="${escapeAttr(name)}">${escapeHtml(name)}</button><span class="sp-n">${n}</span>${more?'<button class="sp-more" title="Rename or delete">⋯</button>':''}`;
+  let shut;try{shut=new Set(JSON.parse(localStorage.getItem('cc_spaces_shut')||'[]'));}catch(e){shut=new Set();}   // parents folded on this device
+  const row=(id,name,n,more,sub)=>{const el=document.createElement('div');el.className='sp'+(sub?' sub':'')+((HOME.space||null)===id?' on':'');el.dataset.id=id||'';
+    el.innerHTML=`<button class="sp-name" title="${escapeAttr(name)}">${escapeHtml(name)}</button>${more&&!sub&&subsOf(id).length?`<button class="sp-fold${shut.has(id)?' shut':''}" title="${shut.has(id)?'Show':'Hide'} its sub-spaces" aria-expanded="${!shut.has(id)}">▼</button>`:''}<span class="sp-n">${n}</span>${more?'<button class="sp-more" title="Rename or delete">⋯</button>':''}`;
     el.querySelector('.sp-name').onclick=()=>{location.hash=id?'s/'+id:'';};
+    const fold=el.querySelector('.sp-fold');
+    if(fold)fold.onclick=e=>{e.stopPropagation();shut.has(id)?shut.delete(id):shut.add(id);
+      try{localStorage.setItem('cc_spaces_shut',JSON.stringify([...shut]));}catch(err){}renderSpaces();};
     if(more)el.querySelector('.sp-more').onclick=e=>{e.stopPropagation();spaceMenu(id,el,e.currentTarget);};
     const real=more;   // a space the user made (not All boards / Unsorted): it can be dragged to a new place in the list
     if(real){el.draggable=true;
@@ -936,17 +949,17 @@ function renderSpaces(){
       el.addEventListener('dragleave',()=>el.classList.remove('drop','before','after'));
       el.addEventListener('drop',e=>{e.preventDefault();el.classList.remove('drop','before','after');
         const bid=e.dataTransfer.getData('text/x-board');if(bid){moveBoard(bid,id==='unsorted'?null:id);return;}
-        const sid=e.dataTransfer.getData('text/x-space');if(sid&&real&&sid!==id)reorderSpace(sid,id,half(e));});
+        const sid=e.dataTransfer.getData('text/x-space');if(sid&&real&&sid!==id)reorderSpace(sid,id,half(e));});   // reorderSpace keeps sub-spaces among their siblings
     }
     nav.appendChild(el);return el;};
   row(null,'All boards',HOME.boards.length,false);
   nav.insertAdjacentHTML('beforeend','<div class="sp-gap"></div>');
-  HOME.spaces.forEach(x=>row(x.id,x.name,count(x.id),true));
+  spaceTree().filter(x=>!x.parent||!shut.has(x.parent)).forEach(x=>row(x.id,x.name,count(x.id),true,!!x.parent));
   if(count('unsorted')&&HOME.spaces.length)row('unsorted','Unsorted',count('unsorted'),false);
   const add=document.createElement('button');add.className='sp-add';add.textContent='+ New space';add.onclick=()=>newSpace(add);nav.appendChild(add);
   // phone: the same choices in a menu at the top
   const sel=$('#spaceSelect');
-  sel.innerHTML=`<option value="">All boards (${HOME.boards.length})</option>`+HOME.spaces.map(x=>`<option value="${escapeAttr(x.id)}">${escapeHtml(x.name)} (${count(x.id)})</option>`).join('')
+  sel.innerHTML=`<option value="">All boards (${HOME.boards.length})</option>`+spaceTree().map(x=>`<option value="${escapeAttr(x.id)}">${x.parent?'\u00a0\u00a0\u00a0\u00a0':''}${escapeHtml(x.name)} (${count(x.id)})</option>`).join('')
     +(count('unsorted')&&HOME.spaces.length?`<option value="unsorted">Unsorted (${count('unsorted')})</option>`:'')+'<option value="+">+ New space…</option>';
   sel.value=HOME.space||'';
 }
@@ -957,10 +970,10 @@ function spaceInput(placeholder,value,done,anchor){
   inp.addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter')end(true);if(e.key==='Escape')end(false);});
   inp.addEventListener('blur',()=>end(true));
 }
-function newSpace(anchor){
-  spaceInput('Name the space',`` ,async name=>{
+function newSpace(anchor,parent){
+  spaceInput(parent?'Name the sub-space':'Name the space',`` ,async name=>{
     if(!name){renderSpaces();return;}
-    try{const x=await api('spaces',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});location.hash='s/'+x.id;if(HOME.space===x.id)showHome(x.id);}
+    try{const x=await api('spaces',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(parent?{name,parent}:{name})});location.hash='s/'+x.id;if(HOME.space===x.id)showHome(x.id);}
     catch(e){renderSpaces();alert('The space was not created. Reload the page and try again.');}
   },anchor);
 }
@@ -971,6 +984,7 @@ async function saveSpaceOrder(){
 }
 function reorderSpace(sid,targetId,where){
   const list=HOME.spaces,from=list.findIndex(x=>x.id===sid);if(from<0)return;
+  if((list[from].parent||null)!==((list.find(x=>x.id===targetId)||{}).parent||null))return;   // only among its siblings
   const [moved]=list.splice(from,1);let to=list.findIndex(x=>x.id===targetId);if(to<0){list.splice(from,0,moved);return;}
   list.splice(where==='after'?to+1:to,0,moved);saveSpaceOrder();
 }
@@ -990,7 +1004,7 @@ function menuClose(){$('#menu').hidden=true;}
 document.addEventListener('pointerdown',e=>{if(!$('#menu').hidden&&!e.target.closest('#menu')&&!e.target.closest('.bmore,.sp-more,.vc-more'))menuClose();});
 function boardMenu(b,anchor){
   const cur=spaceOf(b);
-  menuOpen(anchor,`<div class="mh">Move to</div>${HOME.spaces.map(x=>`<button data-to="${escapeAttr(x.id)}"${x.id===cur?' class="cur"':''}>${escapeHtml(x.name)}</button>`).join('')}
+  menuOpen(anchor,`<div class="mh">Move to</div>${spaceTree().map(x=>`<button data-to="${escapeAttr(x.id)}"${x.id===cur?' class="cur"':''}>${x.parent?'\u00a0\u00a0\u00a0\u00a0':''}${escapeHtml(x.name)}</button>`).join('')}
     <button data-to=""${cur?'':' class="cur"'}>Unsorted (no space)</button><hr><button class="danger" data-del="1">Delete board</button>`,m=>{
     m.querySelectorAll('[data-to]').forEach(x=>x.onclick=()=>{menuClose();const to=x.dataset.to||null;if(to!==cur)moveBoard(b.id,to);});
     m.querySelector('[data-del]').onclick=async()=>{
@@ -1001,15 +1015,18 @@ function boardMenu(b,anchor){
 }
 function spaceMenu(id,rowEl,anchor){
   const x=HOME.spaces.find(s=>s.id===id);if(!x)return;
-  const i=HOME.spaces.indexOf(x),last=HOME.spaces.length-1;
-  menuOpen(anchor,`<button data-a="rename">Rename</button>${i>0?'<button data-a="up">Move up</button>':''}${i<last?'<button data-a="down">Move down</button>':''}<hr><button class="danger" data-a="delete">Delete space</button>`,m=>{
-    m.querySelectorAll('[data-a=up],[data-a=down]').forEach(b=>b.onclick=()=>{menuClose();const j=b.dataset.a==='up'?i-1:i+1;HOME.spaces.splice(i,1);HOME.spaces.splice(j,0,x);saveSpaceOrder();});
+  const sibs=siblingsOf(x),i=sibs.indexOf(x),last=sibs.length-1;   // up/down moves it among its siblings
+  menuOpen(anchor,`<button data-a="rename">Rename</button>${x.parent?'':'<button data-a="sub">New sub-space</button>'}${i>0?'<button data-a="up">Move up</button>':''}${i<last?'<button data-a="down">Move down</button>':''}<hr><button class="danger" data-a="delete">Delete space</button>`,m=>{
+    m.querySelectorAll('[data-a=up],[data-a=down]').forEach(b=>b.onclick=()=>{menuClose();const other=sibs[b.dataset.a==='up'?i-1:i+1],a=HOME.spaces.indexOf(x),o=HOME.spaces.indexOf(other);HOME.spaces[a]=other;HOME.spaces[o]=x;saveSpaceOrder();});
+    const sub=m.querySelector('[data-a=sub]');
+    if(sub)sub.onclick=()=>{menuClose();const slot=document.createElement('div'),kids=subsOf(id);   // the name box goes under its parent's last sub-space
+      ((kids.length&&$('#spaceNav').querySelector(`.sp[data-id="${kids[kids.length-1].id}"]`))||rowEl).after(slot);newSpace(slot,id);};
     m.querySelector('[data-a=rename]').onclick=()=>{menuClose();spaceInput('Name the space',x.name,async name=>{
       if(name&&name!==x.name){try{await api('spaces/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});}catch(e){alert('Not renamed. Reload the page and try again.');}}
       showHome(HOME.space);},rowEl);};
     m.querySelector('[data-a=delete]').onclick=async()=>{
-      menuClose();const n=HOME.boards.filter(b=>spaceOf(b)===id).length;
-      if(!confirm(`Delete the space "${x.name}"?${n?` Its ${n} board${n===1?'':'s'} move to Unsorted. No board is deleted.`:''}`))return;
+      menuClose();const n=HOME.boards.filter(b=>spaceOf(b)===id).length,k=subsOf(id).length;
+      if(!confirm(`Delete the space "${x.name}"?${n?` Its ${n} board${n===1?'':'s'} move to Unsorted. No board is deleted.`:''}${k?` Its ${k} sub-space${k===1?'':'s'} move up to the top level.`:''}`))return;
       try{await api('spaces/'+id,{method:'DELETE'});}catch(e){alert('The space was not deleted. Reload the page and try again.');return;}
       if(HOME.space===id)location.hash='';else showHome(HOME.space);
     };
@@ -1325,7 +1342,9 @@ function cvFree(x,y,w,h,skip){
   }
   return {x,y};
 }
-function cvSettle(it){if(!cvBoard||!cvBoard.items.includes(it))return;const p=cvFree(it.x,it.y,it.w,it.h,new Set([it]));it.x=p.x;it.y=p.y;}   // it grew after loading
+function cvSettle(it){if(!cvBoard||!cvBoard.items.includes(it))return;   // it grew after loading: move it only if it now covers another card
+  if(!cvBoard.items.some(o=>o!==it&&cvSolid(o)&&it.x<o.x+o.w&&it.x+it.w>o.x&&it.y<o.y+o.h&&it.y+it.h>o.y))return;   // close is fine (a link sits 6 px under its note)
+  const p=cvFree(it.x,it.y,it.w,it.h,new Set([it]));it.x=p.x;it.y=p.y;}
 function cvAddItem(it,free){if(free){const p=cvFree(it.x,it.y,it.w,it.h);it.x=p.x;it.y=p.y;}it.id='c'+Date.now().toString(36)+(cvUidN++);it.z=++cvBoard.maxZ;cvBoard.items.push(it);
   $('#cvWorld').appendChild(cvItemEl(it));$('#cvEmpty').style.display='none';cvSharpen();cvSelect(it.id);cvSave();return it;}
 function cvIsDark(hex){const m=/^#?([0-9a-f]{6})$/i.exec(hex);if(!m)return false;const n=parseInt(m[1],16);return (.299*(n>>16)+.587*(n>>8&255)+.114*(n&255))<140;}

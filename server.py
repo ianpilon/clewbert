@@ -13,7 +13,8 @@ Binds 127.0.0.1 only; Cloudflare Access sits in front of it on the tunnel.
   DATA_DIR/talks/<id>.json    the voice conversation for a board (<board id>), a space (s<space id>),
                               the unsorted boards (unsorted) or all boards (all)
   DATA_DIR/briefs/<id>.json   the AI's brief of a whole board (see briefs.py)
-  DATA_DIR/spaces.json        the spaces (folders) boards are sorted into; a board's "space" names one, or none
+  DATA_DIR/spaces.json        the spaces (folders) boards are sorted into; a board's "space" names one, or none;
+                              a space with "parent" is a sub-space of that top-level space (one level only)
   DATA_DIR/runs/<id>.json     agent tasks: each one fills a frame on its board (see agents/runner.py)
 """
 import gzip, hashlib, html, json, mimetypes, os, queue, re, secrets, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
@@ -529,12 +530,17 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=run_import, args=(job, str(req.get('link')), space), daemon=True).start()
             return self.reply(202, {'job': job})
         if parts == ['api', 'spaces']:
-            name = str(json.loads(self.read_body() or b'{}').get('name') or '').strip()[:80]
+            req = json.loads(self.read_body() or b'{}')
+            name = str(req.get('name') or '').strip()[:80]
             if not name:
                 raise ValueError
             space = {'id': secrets.token_hex(6), 'name': name, 'created': now_ms()}
             with LOCK:
                 sp = read_spaces()
+                if req.get('parent'):   # a sub-space: one level only, so its parent must be a top-level space
+                    if not any(x['id'] == req['parent'] and not x.get('parent') for x in sp['spaces']):
+                        return self.reply(404, {'error': 'no such space'})
+                    space['parent'] = req['parent']
                 sp['spaces'].append(space)
                 write_json(SPACES, sp)
             return self.reply(201, space)
@@ -633,7 +639,8 @@ class Handler(BaseHTTPRequestHandler):
                 boards, scope = all_boards(), 'all'
             else:
                 sid = None if space == 'unsorted' else space
-                boards = [b for b in all_boards() if (b.get('space') if b.get('space') in spaces else None) == sid]
+                within = {sid} | {x['id'] for x in spaces.values() if sid and x.get('parent') == sid}   # a parent space includes its sub-spaces' boards
+                boards = [b for b in all_boards() if (b.get('space') if b.get('space') in spaces else None) in within]
                 scope = 'space:' + ('Unsorted' if sid is None else spaces[sid]['name'])
             try:
                 # the map of all spaces and boards goes with every question, so the layout itself can be talked about
@@ -840,6 +847,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not any(x['id'] == sid for x in sp['spaces']):
                     return self.reply(404, {'error': 'no such space'})
                 sp['spaces'] = [x for x in sp['spaces'] if x['id'] != sid]
+                for x in sp['spaces']:   # its sub-spaces move up to the top level
+                    if x.get('parent') == sid:
+                        del x['parent']
                 write_json(SPACES, sp)
                 for b in all_boards():
                     if b.get('space') == sid:

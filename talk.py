@@ -599,7 +599,9 @@ def layout_entry(spaces, boards, briefs, here, detail=True):
     """The map of the user's spaces and boards as one item. spaces = [{id, name}] in nav order. detail=False (inside one
     board) leaves out what each board is about. 'targets' (names -> where to go) and 'spaceOf' stay on the server."""
     ids = {sp['id'] for sp in spaces}
+    names = {sp['id']: sp['name'] for sp in spaces}
     groups = [(sp['name'], sp['id'], [b for b in boards if b.get('space') == sp['id']]) for sp in spaces]
+    inside = {sp['id']: ' (inside the space "%s")' % names[sp['parent']] for sp in spaces if sp.get('parent') in names}
     groups.append(('Unsorted', 'unsorted', [b for b in boards if b.get('space') not in ids]))
     lines = ['the user has %d spaces and %d boards. the user is now %s.' % (len(spaces), len(boards), here)]
     targets, space_of = {'all boards': {'space': ''}}, {}
@@ -607,7 +609,7 @@ def layout_entry(spaces, boards, briefs, here, detail=True):
         if sid == 'unsorted' and not bs:
             continue
         targets[name.lower()] = {'space': sid}
-        lines.append('%s "%s": %d board%s' % ('Boards not in any space,' if sid == 'unsorted' else 'Space', name, len(bs), '' if len(bs) == 1 else 's'))
+        lines.append('%s "%s"%s: %d board%s' % ('Boards not in any space,' if sid == 'unsorted' else 'Space', name, inside.get(sid, ''), len(bs), '' if len(bs) == 1 else 's'))
         for b in sorted(bs, key=lambda b: -(b.get('updated') or 0)):
             targets.setdefault(b.get('name', '').lower(), {'board': b['id']})
             space_of[b['id']] = '' if sid == 'unsorted' else name
