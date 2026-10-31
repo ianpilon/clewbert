@@ -4,6 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Clewbert</title>
+<link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials" />
+<link rel="icon" href="icons/bulb-192.png" />
+<meta name="theme-color" content="#ffffff" />
 <style>
   :root{
     --canvas:#f5f6f8;
@@ -28,13 +31,14 @@
 
   /* ---------- Board list (home) ---------- */
   .home-head{display:flex;align-items:center;gap:12px;padding:16px 24px;background:#fff;border-bottom:1px solid var(--border)}
-  .mark{width:28px;height:28px;border-radius:8px;background:var(--primary);color:#fff;display:grid;place-items:center;font-weight:700;font-size:14px}
+  .mark{width:28px;height:28px;background:url(icons/bulb-192.png) center/contain no-repeat;font-size:0}   /* the app icon: a sticky note with a light bulb */
   .home-link{display:flex;align-items:center;gap:12px;color:inherit;text-decoration:none;border-radius:8px}
   .home-head h1{margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em}
   .home-head .new{margin-left:auto;padding:8px 14px;border:none;border-radius:8px;background:var(--primary);color:#fff;font-weight:600;font-size:13px}
   .home-head .new:hover{background:#2b313f}
   .home-body{display:flex;align-items:flex-start;min-height:calc(100vh - 61px)}
-  .home-main{flex:1;min-width:0}
+  .home-main{flex:1;min-width:0;align-self:stretch;background:#fff;
+    background-image:radial-gradient(circle,#e3e3e3 .9px,transparent 1.1px);background-size:5px 5px}   /* the same dot grid as inside a board */
   .home-title{margin:22px 24px 0;font-size:18px;font-weight:700;letter-spacing:-.01em}
   .spaces{flex:0 0 232px;width:232px;position:sticky;top:0;height:calc(100vh - 61px);overflow:auto;background:#fff;border-right:1px solid var(--border);padding:16px 10px;display:flex;flex-direction:column;gap:2px}
   .spaces h3{margin:4px 10px 8px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-2)}
@@ -113,14 +117,17 @@
   .home-msg{padding:24px;color:var(--muted)}
 
   /* ---------- Board preview (scaled real items) ---------- */
-  .cvprev{position:relative;overflow:hidden;background-color:#f7f8fa;background-image:radial-gradient(#dfe3e8 1px,transparent 1px);background-size:14px 14px}
+  .cvprev{position:relative;overflow:hidden;background-color:#f7f8fa}
   .cvprev-inner{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none}
   .cvprev-empty{position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:var(--muted-2);font-style:italic;pointer-events:none}
   .cvprev-badge{position:absolute;right:8px;bottom:6px;font-size:10px;font-weight:700;color:var(--muted);background:rgba(255,255,255,.92);border:1px solid var(--border);border-radius:999px;padding:1px 7px;pointer-events:none}
   .cvprev-badge:empty{display:none}
+  .cvprev-shot{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
+  body.shot{background:#f7f8fa}body.shot>*:not(#shotBox){display:none!important}   /* ?shot=<id>: the server photographs one preview */
+  #shotBox{position:fixed;left:0;top:0;width:320px;height:160px}#shotBox .cvprev-badge{display:none}
 
   /* ---------- Board (canvas) ---------- */
-  .cv{position:fixed;inset:0;z-index:80;background:#eef0f3;display:none;flex-direction:column}
+  .cv{position:fixed;inset:0;z-index:80;background:#fff;display:none;flex-direction:column}
   .cv.open{display:flex}
   .cv-head{position:absolute;left:0;right:0;top:0;z-index:92;display:flex;align-items:center;gap:10px;padding:12px 16px;pointer-events:none}
   .cv-head>*{pointer-events:auto}
@@ -164,7 +171,7 @@
   .cv-save.error{color:var(--lost);font-weight:600}
   .cv-zoom{font-size:11.5px;color:var(--muted);min-width:42px;text-align:center;font-variant-numeric:tabular-nums}
   .cv-stage{flex:1;position:relative;overflow:hidden;cursor:default;touch-action:none;
-    background-image:radial-gradient(#d5d9df 1px,transparent 1px);background-size:22px 22px}
+    background-image:radial-gradient(circle,#e3e3e3 .9px,transparent 1.1px);background-size:5px 5px}   /* a fine, neutral dot grid on white */
   .cv-stage.space{cursor:grab}
   .cv-stage.t-pen{cursor:crosshair}
   .cv-stage.t-note,.cv-stage.t-text{cursor:cell}
@@ -176,6 +183,12 @@
   .cv-tb button:hover{background:#f1f3f6}
   .cv-tb button.on{background:#e8f0fe;color:#1d4ed8}
   .cv-tb button.tbmic.on{background:#10b981;color:#fff}
+  /* fold the tools away: only the voice and the arrow stay */
+  .cv-tb.folded>button:not(.tbmic):not(.tbfold){display:none}
+  .cv-tb button.tbfold{height:26px;color:var(--muted)}
+  .cv-tb button.tbfold svg{transition:transform .15s}
+  .cv-tb.folded button.tbfold svg{transform:rotate(180deg)}
+  @media (pointer:coarse){.cv-tb button.tbfold{height:36px}.cv-tb button.tbfold:hover{background:none}}   /* a tap leaves hover on: no grey after it */
   .cv-fly{position:absolute;left:66px;top:16px;z-index:6;background:#fff;border:1px solid var(--border);border-radius:11px;box-shadow:0 2px 12px rgba(16,20,28,.14);padding:8px}
   .cv-fly .row{display:flex;gap:6px;align-items:center}
   .cv-fly .sw{width:22px;height:22px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px var(--border-strong);padding:0}
@@ -195,13 +208,26 @@
   .cv-item.cv-ink .frame,.cv-item.cv-emoji .frame{background:none;border:none;box-shadow:none;overflow:visible;border-radius:0}
   .cv-ink svg,.cv-emoji svg{width:100%;height:100%;display:block;overflow:visible}
   .cv-ink .hit{pointer-events:stroke;cursor:grab}
-  .cv-ink .rm,.cv-ink .rsz,.cv-ink .lnkbtn{pointer-events:auto}
+  .cv-ink .cv-more,.cv-ink .rsz{pointer-events:auto}
   .cv-live{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none;z-index:2147483000}
   .cv-stage.panning{cursor:grabbing}
   .cv-marquee{position:absolute;z-index:5;border:1px solid #3b82f6;background:rgba(59,130,246,.08);pointer-events:none}
   .cv-group{position:absolute;z-index:2147483000;border:calc(1.5px / var(--zs,1)) dashed #3b82f6;pointer-events:none}
   .cv-group-rsz{position:absolute;right:calc(-8px / var(--zs,1));bottom:calc(-8px / var(--zs,1));width:calc(14px / var(--zs,1));height:calc(14px / var(--zs,1));background:#fff;border:calc(2px / var(--zs,1)) solid #3b82f6;border-radius:calc(3px / var(--zs,1));pointer-events:auto;cursor:nwse-resize}
-  .cv-world.multi .cv-item .rm,.cv-world.multi .cv-item .rsz,.cv-world.multi .cv-item .lnkbtn{display:none!important}
+  .cv-group-rsz::before{content:"";position:absolute;inset:calc(-6px / var(--zs,1))}   /* phones: a finger-sized target around the small square */
+  @media (pointer:coarse){.cv-group-rsz{width:calc(22px / var(--zs,1));height:calc(22px / var(--zs,1));right:calc(-11px / var(--zs,1));bottom:calc(-11px / var(--zs,1))}.cv-group-rsz::before{inset:calc(-11px / var(--zs,1))}}
+  .cv-world.multi .cv-item .cv-more,.cv-world.multi .cv-item .rsz{display:none!important}
+  /* one ⋯ button per item: crop, link, download, delete. The same size on screen at any zoom; finger-sized on phones */
+  .cv-item .cv-more,.cv-group .cv-more{position:absolute;--b:28px;top:calc(var(--b) / -2 / var(--zs,1));right:calc(var(--b) / -2 / var(--zs,1));width:calc(var(--b) / var(--zs,1));height:calc(var(--b) / var(--zs,1));border-radius:50%;border:calc(1px / var(--zs,1)) solid var(--border);background:#fff;color:var(--ink);display:none;place-items:center;box-shadow:var(--shadow);padding:0;cursor:pointer;z-index:5}
+  .cv-item .cv-more svg,.cv-group .cv-more svg{width:calc(var(--b) * .55 / var(--zs,1));height:calc(var(--b) * .55 / var(--zs,1))}
+  .cv-item:hover .cv-more,.cv-item.sel .cv-more{display:grid}
+  .cv-group .cv-more{display:grid;pointer-events:auto}
+  .cv-item .cv-more:hover,.cv-group .cv-more:hover{background:#eff5ff;border-color:#c5d9fb;color:#1d4ed8}
+  @media (pointer:coarse){.cv-item .cv-more,.cv-group .cv-more{--b:44px}.cv-item:hover:not(.sel) .cv-more{display:none}}
+  .menu.cv-itemmenu button{display:flex;align-items:center;gap:10px}
+  .menu.cv-itemmenu svg{flex:none;color:var(--muted)}
+  .menu.cv-itemmenu .danger svg{color:var(--lost)}
+  @media (pointer:coarse){.menu.cv-itemmenu button{padding:13px 12px;font-size:16px}}
   .cv-world{position:absolute;left:0;top:0;transform-origin:0 0}
   .cv-item{position:absolute;user-select:none;cursor:grab}
   .cv-item:active{cursor:grabbing}
@@ -278,22 +304,28 @@
   .cv-file .upbar i{display:block;height:100%;width:0;background:#2563eb}
   .cv-link .fetching{font-size:.81em;color:var(--muted-2);font-style:italic}
   /* handles and buttons keep the same size on screen at any zoom (--zs = the board's zoom), like Miro */
-  .cv-item .rm{position:absolute;top:calc(-9px / var(--zs,1));right:calc(-9px / var(--zs,1));width:calc(20px / var(--zs,1));height:calc(20px / var(--zs,1));border-radius:50%;border:calc(1px / var(--zs,1)) solid var(--border);background:#fff;color:var(--muted);font-size:calc(12px / var(--zs,1));line-height:1;display:none;box-shadow:var(--shadow);padding:0;cursor:pointer}
-  .cv-item:hover .rm,.cv-item.sel .rm{display:block}
-  .cv-item .rm:hover{color:#fff;background:var(--lost);border-color:var(--lost)}
-  .cv-item .lnkbtn{position:absolute;top:calc(-9px / var(--zs,1));right:calc(16px / var(--zs,1));width:calc(20px / var(--zs,1));height:calc(20px / var(--zs,1));border-radius:50%;border:calc(1px / var(--zs,1)) solid var(--border);background:#fff;color:var(--muted);display:none;box-shadow:var(--shadow);padding:0;cursor:pointer;place-items:center}
-  .cv-item:hover .lnkbtn,.cv-item.sel .lnkbtn{display:grid}
-  .cv-item .lnkbtn svg{width:calc(10px / var(--zs,1));height:calc(10px / var(--zs,1))}
-  .cv-item .lnkbtn:hover,.cv-item .lnkbtn.haslink{color:#1d4ed8;border-color:#c5d9fb;background:#eff5ff}
+  /* crop mode: the whole picture dimmed, the part kept bright inside a frame with L-shaped corners */
+  .cv-crop{position:absolute;z-index:999999;touch-action:none;cursor:move}
+  .cv-crop>img{position:absolute;inset:0;width:100%;height:100%;opacity:.35;pointer-events:none;display:block}
+  .cv-crop-box{position:absolute;outline:calc(1.5px / var(--zs,1)) solid #fff;box-shadow:0 0 0 calc(1px / var(--zs,1)) rgba(16,20,28,.35)}
+  .cv-crop-box .in{position:absolute;inset:0;overflow:hidden}
+  .cv-crop-box .in img{position:absolute;display:block;pointer-events:none;max-width:none}
+  .cv-crop-box .ch{position:absolute;--t:calc(4px / var(--zs,1));--l:calc(18px / var(--zs,1));--g:calc(-3px / var(--zs,1));border:0 solid #fff;filter:drop-shadow(0 0 calc(1px / var(--zs,1)) rgba(16,20,28,.6))}
+  .cv-crop-box .ch::before{content:"";position:absolute;inset:calc(-12px / var(--zs,1))}   /* a bigger target than the mark, for fingers */
+  .cv-crop-box .ch.tl,.cv-crop-box .ch.tr,.cv-crop-box .ch.bl,.cv-crop-box .ch.br{width:var(--l);height:var(--l)}
+  .cv-crop-box .ch.tl{left:var(--g);top:var(--g);border-top-width:var(--t);border-left-width:var(--t);cursor:nwse-resize}
+  .cv-crop-box .ch.tr{right:var(--g);top:var(--g);border-top-width:var(--t);border-right-width:var(--t);cursor:nesw-resize}
+  .cv-crop-box .ch.bl{left:var(--g);bottom:var(--g);border-bottom-width:var(--t);border-left-width:var(--t);cursor:nesw-resize}
+  .cv-crop-box .ch.br{right:var(--g);bottom:var(--g);border-bottom-width:var(--t);border-right-width:var(--t);cursor:nwse-resize}
+  .cv-crop-box .ch.t,.cv-crop-box .ch.b{left:50%;width:var(--l);margin-left:calc(-9px / var(--zs,1));height:0;border-top-width:var(--t);cursor:ns-resize}
+  .cv-crop-box .ch.t{top:var(--g)}.cv-crop-box .ch.b{bottom:calc(-1px / var(--zs,1))}
+  .cv-crop-box .ch.l,.cv-crop-box .ch.r{top:50%;height:var(--l);margin-top:calc(-9px / var(--zs,1));width:0;border-left-width:var(--t);cursor:ew-resize}
+  .cv-crop-box .ch.l{left:var(--g)}.cv-crop-box .ch.r{right:calc(-1px / var(--zs,1))}
+  .cv-crop-bar{position:absolute;z-index:95;display:flex;gap:6px;padding:5px;background:#fff;border:1px solid var(--border);border-radius:11px;box-shadow:0 2px 12px rgba(16,20,28,.14)}
+  .cv-crop-bar button{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 14px;font:inherit;font-size:14px;cursor:pointer}
+  .cv-crop-bar button.go{background:#1d4ed8;border-color:#1d4ed8;color:#fff;font-weight:600}
   .cv-urlchip{position:absolute;left:8px;bottom:8px;display:inline-flex;align-items:center;gap:5px;max-width:calc(100% - 16px);padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.95);border:1px solid var(--border);box-shadow:var(--shadow);font-size:11px;font-weight:600;color:#1d4ed8;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cv-urlchip:hover{background:#eff5ff;border-color:#c5d9fb}
-  .cv-dlchip{position:absolute;right:8px;bottom:8px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:999px;background:rgba(255,255,255,.95);border:1px solid var(--border);box-shadow:var(--shadow);color:#1d4ed8}
-  .cv-dlchip:hover{background:#eff5ff;border-color:#c5d9fb}
-  .cv-note .cv-dlchip{opacity:0;transition:opacity .12s}   /* notes and text: only on hover or when selected, so stickies stay clean */
-  .cv-note:hover .cv-dlchip,.cv-note.sel .cv-dlchip{opacity:1}
-  .cv-area .cv-dlchip{display:none;pointer-events:auto}   /* frames: when selected */
-  .cv-area.sel .cv-dlchip{display:inline-flex}
-  .haslink .cv-urlchip:has(~.cv-dlchip){max-width:calc(100% - 48px)}
   .cv-img.haslink{cursor:pointer}
   .cv-img.uploading::after{content:"Uploading…";position:absolute;left:8px;top:8px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.94);box-shadow:var(--shadow);font-size:11px;color:var(--muted)}
   .cv-linkpop{position:fixed;z-index:90;display:none;flex-direction:column;gap:8px;width:340px;max-width:calc(100vw - 16px);background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(16,20,28,.22);padding:12px}
@@ -322,9 +354,11 @@
   .cv-note.grow:hover .rsz.r,.cv-note.grow.sel .rsz.r{display:block}
   .cv-area{pointer-events:none}
   .cv-area .frame{border-radius:4px;box-shadow:none;border:1px solid rgba(16,20,28,.08)}
-  .cv-area .ftitle,.cv-area .rm,.cv-area .rsz{pointer-events:auto}
+  .cv-area .ftitle,.cv-area .cv-more,.cv-area .rsz{pointer-events:auto}
   .cv-area .ftitle{position:absolute;left:0;bottom:100%;margin-bottom:.3em;font-size:calc(12px / var(--zs,1));font-weight:600;color:var(--muted);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;cursor:grab;padding:.1em .35em;border-radius:.3em}
   .cv-area.sel .ftitle{background:#3b82f6;color:#fff}
+  .cv-area .ftitle.empty{opacity:0}   /* a blank shape: its title (the drag handle) shows only on hover or when selected */
+  .cv-area .ftitle.empty:hover,.cv-area.sel .ftitle.empty{opacity:1}
   .cv-area.tiny:not(.sel) .ftitle{display:none}
   /* agents: a task is a frame the agent fills (agents/runner.py) */
   .ag-fly{width:340px}
@@ -373,7 +407,7 @@
   .cv-arrow .hit{pointer-events:stroke;cursor:pointer}
   .cv-arrow .alabel{position:absolute;transform:translate(-50%,-50%);font-size:calc(12px / var(--zs,1));font-weight:650;background:#fff;padding:.15em .55em;border-radius:1em;border:1px solid currentColor;white-space:nowrap;pointer-events:auto;cursor:pointer}
   .cv-arrow.sel .alabel{background:#3b82f6;color:#fff!important;border-color:#3b82f6}
-  .cv-arrow .rm{pointer-events:auto}
+  .cv-arrow .cv-more{pointer-events:auto}
   .cv-agentmark .agbot{width:calc(22px / var(--zs,1));height:calc(22px / var(--zs,1));flex:0 0 auto;filter:drop-shadow(0 calc(1px / var(--zs,1)) calc(2px / var(--zs,1)) rgba(16,20,28,.25));animation:agbob 1.4s ease-in-out infinite}
   @keyframes agbob{50%{transform:translateY(calc(-2px / var(--zs,1)))}}
   .cv-agentmark b{font-size:calc(11px / var(--zs,1));background:#1d4ed8;color:#fff;padding:calc(1px / var(--zs,1)) calc(6px / var(--zs,1));border-radius:calc(8px / var(--zs,1));font-weight:600}
@@ -581,6 +615,103 @@
   .vc-type input:focus{border-color:var(--primary)}
   .vc-type button{padding:7px 12px;border:none;border-radius:8px;background:var(--primary);color:#fff;font-weight:600;font-size:12px}
 
+  /* Search bar: find a board, note or picture as you type; Enter asks for a written answer (the voice, without the voice) */
+  .sb{position:relative;flex:1 1 360px;max-width:560px;min-width:0;margin:0 auto}
+  .sb-box{display:flex;align-items:center;gap:8px;height:36px;padding:0 10px;background:#fff;border:1px solid var(--border);border-radius:10px;color:var(--muted)}
+  .sb-box:focus-within{border-color:var(--primary)}
+  .cv-head .sb-box{border-radius:12px;box-shadow:0 2px 12px rgba(16,20,28,.10)}
+  .sb-box input{flex:1;min-width:0;border:none;outline:none;background:none;font:inherit;font-size:13.5px;color:var(--ink)}
+  .sb-box kbd{font:inherit;font-size:11px;color:var(--muted-2);border:1px solid var(--border);border-radius:5px;padding:0 6px}
+  .sb-box:focus-within kbd{display:none}
+  .sb-p{position:absolute;left:0;right:0;top:42px;z-index:97;min-width:min(420px,calc(100vw - 32px));max-height:min(70vh,640px);overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 40px rgba(16,20,28,.18);padding:6px}
+  .sb-p h4{margin:8px 10px 4px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-2)}
+  .sb-r{display:block;width:100%;text-align:left;border:none;background:none;border-radius:8px;padding:7px 10px;color:var(--ink);font-size:13px}
+  .sb-r.on{background:#eef2f7}
+  .sb-r b{font-weight:600}
+  .sb-r .sb-sub{display:block;font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sb-r .sb-snip{display:block;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
+  .sb-r mark{background:#fef08a;color:inherit;border-radius:2px}
+  .sb-ask{display:flex;align-items:center;gap:8px}
+  .sb-ask .sb-q{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sb-ask i{font-style:normal;font-size:11px;color:var(--muted-2)}
+  .sb-none{padding:10px;color:var(--muted);font-size:12.5px;line-height:1.5}
+  .sb-ans{padding:8px 10px 4px}
+  .sb-ans .sb-aq{font-size:12px;color:var(--muted);margin-bottom:6px}
+  .sb-ans p{margin:0 0 8px;font-size:13.5px;line-height:1.55;white-space:pre-wrap}
+  .sb-ans .sb-back{border:none;background:none;padding:0;font-size:12px;font-weight:600;color:var(--muted)}
+  .sb-ans .sb-back:hover{color:var(--ink)}
+
+  /* ---------- Phone menu (☰ on the board list) ---------- */
+  .hb-btn{display:none;position:relative;width:38px;height:38px;place-items:center;border:none;background:none;color:var(--ink);padding:0;flex:0 0 auto;border-radius:8px}
+  .hb-btn .dot{position:absolute;top:5px;right:4px;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #fff}
+  .hb-title{display:none;flex:1;min-width:0;font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hb-bg{position:fixed;inset:0;z-index:110;background:rgba(16,20,28,.35)}
+  .hb{position:absolute;top:0;bottom:0;left:0;width:min(320px,86vw);background:#fff;overflow-y:auto;padding:12px 8px 32px;box-shadow:var(--shadow-lift);animation:hbin .18s ease}
+  @keyframes hbin{from{transform:translateX(-100%)}}
+  .hb-top{display:flex;align-items:center;gap:10px;padding:4px 8px 10px}
+  .hb-top b{flex:1;font-size:16px}
+  .hb-x{border:none;background:none;font-size:26px;line-height:1;color:var(--muted);padding:4px 8px}
+  .hb .hb-r{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:none;background:none;padding:12px;border-radius:8px;font-size:15px;color:var(--ink)}
+  .hb .hb-r.on{background:#f1f3f6;font-weight:600}
+  .hb .hb-r.sub{padding-left:36px}
+  .hb .hb-r svg{width:20px;height:20px;flex:0 0 auto;color:var(--muted)}
+  .hb .hb-r .n{margin-left:auto;padding-left:8px;color:var(--muted);font-size:13px;font-weight:400;white-space:nowrap}
+  .hb .hb-r .n.wait{color:#b45309;font-weight:600}
+  .hb .hb-r .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hb h4{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:14px 12px 4px}
+  .hb hr{border:none;border-top:1px solid var(--border);margin:8px 4px}
+  /* ---------- Agents screen (#agents): the installed phone app opens here ---------- */
+  #agv{position:fixed;inset:0;z-index:60;background:var(--canvas);display:flex;flex-direction:column}
+  .agv-head{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--border)}
+  .agv-head b{flex:1;min-width:0;font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .agv-back{color:var(--muted);text-decoration:none;font-size:14px;font-weight:600;padding:6px 2px;white-space:nowrap}
+  .agv-push{display:flex;align-items:center;gap:12px;padding:10px 16px;background:#eef2ff;border-bottom:1px solid #c7d2fe;font-size:13.5px;color:#312e81}
+  .agv-push button{margin-left:auto;flex:0 0 auto;border:none;border-radius:8px;background:var(--primary);color:#fff;font-weight:600;font-size:13px;padding:8px 12px}
+  .agv-body{flex:1;overflow-y:auto;padding:4px 16px 140px;width:100%;max-width:720px;margin:0 auto}
+  .agv-body h4{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:20px 2px 8px}
+  .agv-msg{color:var(--muted);font-size:14px;padding:24px 2px}
+  .agv-row{display:block;background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:8px;color:inherit;text-decoration:none;box-shadow:var(--shadow)}
+  .agv-row.waiting{border-color:#f59e0b;background:#fffbeb}
+  .agv-row .l{font-size:15px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .agv-row .s{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .agv-dot{display:inline-block;flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--muted-2)}
+  .agv-dot.waiting{background:#f59e0b}.agv-dot.working{background:#3b82f6;animation:agvpulse 1.4s ease-in-out infinite}.agv-dot.done{background:#10b981}.agv-dot.failed{background:var(--lost)}
+  @keyframes agvpulse{50%{opacity:.35}}
+  .agv-task{padding:16px 2px 10px}
+  .agv-task h2{margin:10px 0 6px;font-size:19px;line-height:1.35;font-weight:700;letter-spacing:-.01em}
+  .agv-meta{font-size:12.5px;color:var(--muted)}
+  .agv-pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .agv-sec{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin:0 0 10px}
+  .agv-sec>label{display:block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+  .agv-sec p{margin:0;font-size:15px;line-height:1.5;white-space:pre-wrap}
+  .agv-sec a{font-size:14px;font-weight:600;color:#1d4ed8;margin-right:12px}
+  .agv-ask{border-color:#f59e0b;background:#fffbeb}
+  .agv-sec textarea{display:block;width:100%;margin:10px 0 8px;border:1px solid var(--border-strong);border-radius:8px;padding:10px;font:inherit;font-size:16px;resize:vertical;background:#fff}
+  .agv-part{display:flex;gap:10px;align-items:baseline;padding:8px 0;font-size:13.5px}
+  .agv-part+.agv-part{border-top:1px solid var(--border)}
+  .agv-part p{font-size:13.5px;color:var(--muted);margin-top:2px}
+  .agv-acts{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}
+  .agv-acts button,.agv-sec form>button{border:1px solid var(--border-strong);background:#fff;color:var(--ink);border-radius:8px;padding:10px 14px;font-size:14px;font-weight:600}
+  .agv-acts button.pri,.agv-sec button.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+  .agv-acts button.stop{border-color:var(--lost);color:var(--lost)}
+  .agv-acts button:disabled,.agv-sec button:disabled{opacity:.5}
+  .agv-more .agv-acts{margin:0}
+  .agv-steps{margin:0;padding-left:18px;font-size:13.5px;line-height:1.45}
+  .agv-steps li+li{margin-top:6px}
+  .agv-steps time{display:block;font-size:11px;color:var(--muted-2)}
+  .agv-link{border:none;background:none;color:#1d4ed8;font-weight:600;font-size:13px;padding:8px 0 0}
+  .agv-foot{font-size:12.5px;color:var(--muted);margin:24px 2px 0}
+  .agv-foot .agv-link{padding:0;margin-left:4px}
+  .agv-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:120;background:var(--primary);color:#fff;border-radius:999px;padding:10px 16px;font-size:13.5px;box-shadow:var(--shadow-lift);max-width:calc(100vw - 32px)}
+  .mic.agv-btn{position:relative}
+  .mic.agv-btn svg{width:21px;height:21px}
+  .mic.agv-btn .dot{position:absolute;top:1px;right:1px;width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #fff}
+  .vc-spk{border:1px solid var(--border);background:#fff;color:var(--muted);border-radius:999px;width:28px;height:24px;display:inline-grid;place-items:center;padding:0;margin-left:4px;vertical-align:middle}
+  .vc-spk .slash{display:none}
+  .vc-spk.on{background:#b91c1c;border-color:#b91c1c;color:#fff}
+  .vc-spk.on .slash{display:inline}.vc-spk.on .waves{display:none}
+  .menu .vc-vol{display:flex;align-items:center;gap:8px;padding:4px 12px 8px}
+  .menu .vc-vol input{flex:1;min-width:120px}
   @media (max-width:760px){
     .home-head{padding:12px 16px}
     .grid{padding:12px 16px 16px;gap:14px}
@@ -588,7 +719,16 @@
     .home-title{display:none}
     .space-select{display:block;min-width:0;flex:1;max-width:220px;padding:7px 8px;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:13px;font-weight:600;background:#fff;color:var(--ink)}
     .home-head h1{display:none}
+    .home-head,.cv-head{flex-wrap:wrap}
+    .home-head .sb,.cv-head .sb{order:9;flex:1 1 100%;max-width:none}   /* phones: the search bar gets its own row */
+    .sb-box kbd{display:none}
+    #vcTitle{display:none}   /* phones: the talk panel's top row is the listening state, the level and the buttons */
+    .cv-tb{top:108px}   /* below the search row */
     .home-head .mic{margin-left:auto}
+    /* phones: the header is the menu, where you are, and the mic; the rest moves into the menu (hbOpen) */
+    .home-head .hb-btn{display:grid}
+    .home-head .hb-title{display:block}
+    .home-head .home-link,.home-head #spaceSelect,.home-head #agvHome,.home-head #stgHome,.home-head #newBoard{display:none}
     .cv-sep{display:none}
     .cv-head{padding:8px 10px;gap:6px}
     .cv-title{width:auto;flex:1;max-width:none;min-width:0}
@@ -606,6 +746,7 @@
     .vc.slim .vc-last{display:block;font-size:14px;line-height:1.4;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:2px 2px 6px;cursor:pointer}
     .vc.slim .vc-last:empty{display:none}
     .cv-menu .cv-mview{display:block}
+    .cv-menu{top:100%}   /* below the search bar, which has its own row here */
     #cvMenuBtn.waiting::after{display:block}
     .cv-zoom{display:none}
   }
@@ -613,7 +754,7 @@
   #ob{position:fixed;inset:0;z-index:300;background:var(--canvas);display:grid;place-items:center;padding:16px;overflow-y:auto}
   #ob[hidden]{display:none}
   .ob-card{width:480px;max-width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-lift);padding:28px}
-  .ob-mark{width:36px;height:36px;border-radius:9px;background:var(--primary);color:#fff;display:grid;place-items:center;font-weight:700;font-size:17px}
+  .ob-mark{width:40px;height:40px;background:url(icons/bulb-192.png) center/contain no-repeat;font-size:0}   /* the app icon */
   .ob-card h1{margin:14px 0 6px;font-size:22px;letter-spacing:-.01em}
   .ob-card h2{margin:0 0 6px;font-size:18px}
   .ob-lead{margin:0 0 18px;font-size:14px;line-height:1.5;color:var(--muted)}
@@ -636,6 +777,25 @@
   .ob-card label.ob-here input{width:auto;margin-top:3px;flex:none}
   .ob-card label.ob-here b{color:var(--ink)}
   @media (max-width:520px){.ob-pros{grid-template-columns:1fr}.ob-card{padding:20px}}
+  @media (pointer:coarse){   /* phones and tablets: every tap target at least 44 x 44 px (Apple, WCAG), menu rows 48 px (Android) */
+    .mic,.hb-btn,.pill-btn,.bmore,.cv-tb button{width:44px;height:44px}
+    .cv-tb button.tbfold{height:44px}
+    .bmore{right:4px;bottom:6px}
+    .hb-x{min-width:44px;min-height:44px}
+    .hb .hb-r{min-height:48px}
+    .menu button,.cv-menu button{min-height:48px}
+    .cv-zoompill button{min-width:44px;min-height:44px}
+    .cv-back,.cv-title{min-height:44px}
+    .sb-box{height:44px}
+    .vc-head{gap:4px}
+    .vc-more,.vc-x{width:44px;height:44px;color:var(--ink)}
+    .vc-more{font-size:24px}.vc-x{font-size:30px}   /* the glyphs as big as the mute and speaker circles */
+    .vc-mute,.vc-spk{position:relative;width:34px;height:34px;margin:0 5px}
+    .vc-mute::before,.vc-spk::before{content:"";position:absolute;inset:-6px}   /* drawn at 34 px, taps land on 44 px */
+    .vc-level{margin:0 4px}
+    .vc-type input,.vc-type button{min-height:44px}
+  }
+  @media (pointer:coarse) and (max-width:760px){.cv-tb{top:122px}}   /* phones: below the taller search row */
 </style>
 </head>
 <body>
@@ -674,8 +834,12 @@
 <!-- Board list -->
 <div id="home">
   <div class="home-head">
+    <button class="hb-btn" id="hbBtn" title="Menu" aria-label="Menu"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg><i class="dot" hidden></i></button>
+    <b class="hb-title" id="hbTitle">All boards</b>
     <a class="home-link" id="homeLink" href="#" title="Home: all boards"><span class="mark">C</span><h1>Clewbert</h1></a>
     <select class="space-select" id="spaceSelect" title="Spaces"></select>
+    <div class="sb" id="sb"><label class="sb-box"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="sbInput" placeholder="Search your boards, or ask a question" autocomplete="off" spellcheck="false" enterkeyhint="search"><kbd>/</kbd></label><div class="sb-p" id="sbP" hidden></div></div>
+    <button class="mic agv-btn" id="agvHome" title="Agents: every task on every board"></button>
     <button class="mic" id="stgHome" title="Settings: which model does each job, and your provider keys"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     <button class="mic" id="micHome" title="Talk to your boards"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></button>
     <button class="new" id="newBoard">New board ▾</button>
@@ -706,7 +870,7 @@
   <div class="cv-head">   <!-- floating pills over the board, no bar -->
     <div class="pill cv-crumb"><button class="cv-back" id="cvBack" title="Back to the boards">← All boards</button><span class="cv-sep">/</span><input class="cv-title" id="cvTitle" spellcheck="false" title="Board name: click to rename"><span class="cv-save" id="cvSaveState"></span><span class="cv-follow" id="cvLive" hidden></span></div>
     <div class="cv-right"><div class="pill cv-views" id="cvViews"><button data-v="canvas" class="on" title="The board">Canvas</button><button data-v="team" id="cvOrgBtn" title="This board's agent team as an org chart: who reports to whom, why, what each one is doing; edit anyone with ⋯">Agents</button><button data-v="tasks" id="cvTasksBtn" title="Every agent task on this board: waiting on you, working, done">Tasks<i class="dot" hidden></i></button></div><button class="pill pill-btn" id="cvMenuBtn" title="More">⋯</button></div>
-    <div class="pill cv-menu" id="cvMenu" hidden><button class="cv-mview" data-mv="canvas">Canvas</button><button class="cv-mview" data-mv="team">Agents</button><button class="cv-mview" data-mv="tasks" id="cvMTasks">Tasks</button><hr class="cv-mview"><button class="cv-brief" id="cvBriefBtn">Board brief</button><button id="cvHelpBtn">Shortcuts and tips</button><button id="cvStgBtn">Settings: models and keys</button></div>
+    <div class="pill cv-menu" id="cvMenu" hidden><button class="cv-mview" data-add="photo">Take a photo</button><button class="cv-mview" data-add="library">Upload from your photos</button><button class="cv-mview" data-add="link">Paste a link</button><button class="cv-mview" data-add="note">Sticky note</button><hr class="cv-mview"><button class="cv-mview" data-mv="canvas">Canvas</button><button class="cv-mview" data-mv="team">Agents</button><button class="cv-mview" data-mv="tasks" id="cvMTasks">Tasks</button><hr class="cv-mview"><button class="cv-brief" id="cvBriefBtn">Board brief</button><button id="cvHelpBtn">Shortcuts and tips</button><button id="cvStgBtn">Settings: models and keys</button></div>
     <div class="pill cv-help" id="cvHelp" hidden><b>Shortcuts and tips</b><ul>
       <li><kbd>⌘V</kbd> paste screenshots and links · drag in any file</li><li>Drag empty space to select · <kbd>Space</kbd>+drag, two-finger scroll or middle button to pan · <kbd>⌘</kbd>-scroll to zoom</li>
       <li>Tools: <kbd>V</kbd> select · <kbd>N</kbd> note · <kbd>T</kbd> text · <kbd>P</kbd> marker · <kbd>A</kbd> agent task</li><li>Double-click for a note, or a note to edit it · hold <kbd>⌥</kbd> while resizing to grow from the centre</li>
@@ -737,6 +901,7 @@
       <button data-tool="pen" title="Marker (P): draw on the board"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4l5 5L9 20H4v-5z"/><path d="M12.5 6.5l5 5"/></svg></button>
       <button class="tbagent" id="tbAgent" title="Agent task (A): select what it should work from, then say what to do"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="8" width="15" height="11" rx="3"/><path d="M12 8V4.5"/><circle cx="12" cy="3.6" r="1"/><circle cx="9.3" cy="13.2" r=".9" fill="currentColor"/><circle cx="14.7" cy="13.2" r=".9" fill="currentColor"/><path d="M2.5 12.5v2.5M21.5 12.5v2.5"/></svg></button>
       <button data-tool="emoji" title="Stickers: click one to add it, or drag it onto the board"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 14.5c1.8 2 5.2 2 7 0"/><circle cx="9.2" cy="10" r=".6" fill="currentColor"/><circle cx="14.8" cy="10" r=".6" fill="currentColor"/></svg></button>
+      <button class="tbfold" id="tbFold" title="Hide the tools (the voice stays)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg></button>
     </div>
     <div class="cv-fly" id="cvTextFly" hidden><div class="row" id="cvTextStyles"></div><div class="row" id="cvTextFonts" style="margin-top:7px"></div><div class="row" id="cvTextFills" style="margin-top:9px"></div></div>
     <div class="cv-fly" id="cvNoteFly" hidden><div class="row" id="cvNoteColors"></div></div>
@@ -774,10 +939,19 @@
   <div class="oe-foot"><span class="stg-msg" id="stgMsg"></span><button class="oe-cx" id="stgCancel">Close</button><button class="go" id="stgSave">Save</button></div>
 </div>
 <div class="menu" id="menu" hidden></div>   <!-- shared ⋯ menu: outside #home so it also opens on a board -->
+<div class="hb-bg" id="hb" hidden><nav class="hb" aria-label="Menu">
+  <div class="hb-top"><span class="mark">C</span><b>Clewbert</b><button class="hb-x" id="hbClose" aria-label="Close the menu">×</button></div>
+  <div id="hbBody"></div></nav></div>
+<div id="agv" hidden>
+  <div class="agv-head"><a class="agv-back" id="agvBack" href="#">‹ Boards</a><b id="agvTitle">Agents</b>
+    <button class="mic" id="micAgv" title="Talk to your boards"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></button></div>
+  <div class="agv-push" id="agvPush" hidden>Get a notification when an agent finishes or needs you.<button id="agvPushOn">Turn on</button></div>
+  <main class="agv-body" id="agvBody"></main>
+</div>
 <div class="vc" id="vc" hidden>
   <div class="vc-grab" id="vcGrab" title="Drag up for the conversation, down to see the board"><i></i></div>
   <div class="vc-head">
-    <b id="vcTitle">Talk to this board</b><span class="vc-state" id="vcState"></span><i class="vc-level" id="vcLevel" title="What the microphone hears"><b></b></i><button class="vc-mute" id="vcMute" title="Mute your microphone (M): nothing you say reaches the voice until you unmute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path class="slash" d="M3 3l18 18"/></svg></button>
+    <b id="vcTitle">Talk to this board</b><span class="vc-state" id="vcState"></span><i class="vc-level" id="vcLevel" title="What the microphone hears"><b></b></i><button class="vc-mute" id="vcMute" title="Mute your microphone (M): nothing you say reaches the voice until you unmute"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path class="slash" d="M3 3l18 18"/></svg></button><button class="vc-spk" id="vcSpk"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4z"/><path class="waves" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/><path class="slash" d="M16 9l5 6M21 9l-5 6"/></svg></button>
     <select id="vcVoice" hidden></select>
     <button class="vc-stop" id="vcStop" hidden title="Stop the answer">Stop</button>
     <button class="vc-more" id="vcMore" title="Voice and conversation options">⋯</button>
@@ -912,7 +1086,7 @@ function homePaint(){
   shown.forEach(b=>{
     const card=document.createElement('div');card.className='bcard';card.draggable=true;
     const n=b.count??b.items.length,sp=spaceOf(b)&&spaceOf(b)!==HOME.space?' · '+escapeHtml(spaceName(spaceOf(b))):'';   // in a parent space: which sub-space it is in
-    card.innerHTML=`<div class="cvprev"><div class="cvprev-inner"></div><span class="cvprev-badge"></span></div>
+    card.innerHTML=`<div class="cvprev">${n?`<img class="cvprev-shot" alt="" loading="lazy" decoding="async" src="api/boardshots/${b.id}.jpg?u=${b.updated}">`:''}<div class="cvprev-inner"></div><span class="cvprev-badge"></span></div>
       <div class="bmeta"><span class="bname">${escapeHtml(b.name)}</span><span class="bsub">${n} item${n===1?'':'s'} · edited ${ago(b.updated)}${sp}</span></div>
       <button class="bmore" title="Move or delete">⋯</button>`;
     card.onclick=()=>{location.hash=b.id;};
@@ -923,7 +1097,11 @@ function homePaint(){
     card.addEventListener('dragend',()=>card.classList.remove('dragging'));
     card.querySelector('.bmore').onclick=e=>{e.stopPropagation();boardMenu(b,e.currentTarget);};
     grid.appendChild(card);
-    const box=card.querySelector('.cvprev');box._items=b.items;box._count=b.count;box._bounds=b.bounds;cvPrevSeen.observe(box);
+    const box=card.querySelector('.cvprev');box._id=b.id;box._updated=b.updated;box._count=b.count;box._bounds=b.bounds;
+    // the server keeps a picture of each board (one small download your browser keeps); no picture yet: drawn here, live
+    const shot=box.querySelector('.cvprev-shot');
+    if(!shot)paintCanvasPreview([],box,0);
+    else{box.querySelector('.cvprev-badge').textContent=n+' item'+(n===1?'':'s');shot.onerror=()=>{shot.remove();cvPrevSeen.observe(box);};}
   });
 }
 function renderSpaces(){
@@ -962,6 +1140,7 @@ function renderSpaces(){
   sel.innerHTML=`<option value="">All boards (${HOME.boards.length})</option>`+spaceTree().map(x=>`<option value="${escapeAttr(x.id)}">${x.parent?'\u00a0\u00a0\u00a0\u00a0':''}${escapeHtml(x.name)} (${count(x.id)})</option>`).join('')
     +(count('unsorted')&&HOME.spaces.length?`<option value="unsorted">Unsorted (${count('unsorted')})</option>`:'')+'<option value="+">+ New space…</option>';
   sel.value=HOME.space||'';
+  $('#hbTitle').textContent=HOME.space?spaceName(HOME.space)||'Boards':'All boards';
 }
 function spaceInput(placeholder,value,done,anchor){
   const inp=document.createElement('input');inp.className='sp-input';inp.placeholder=placeholder;inp.value=value||'';inp.maxLength=80;
@@ -994,14 +1173,14 @@ async function moveBoard(bid,space){
   showHome(HOME.space);
 }
 function menuOpen(anchor,html,wire){
-  const m=$('#menu');m.innerHTML=html;m.hidden=false;
+  const m=$('#menu');m.innerHTML=html;m.hidden=false;m.className='menu';delete m.dataset.item;
+  wire(m);   // first: wiring can restyle the menu, which changes its size
   const r=anchor.getBoundingClientRect();
   m.style.left=Math.max(8,Math.min(r.right-m.offsetWidth,window.innerWidth-m.offsetWidth-8))+'px';
   m.style.top=(r.bottom+4+m.offsetHeight>window.innerHeight?Math.max(8,r.top-4-m.offsetHeight):r.bottom+4)+'px';
-  wire(m);
 }
 function menuClose(){$('#menu').hidden=true;}
-document.addEventListener('pointerdown',e=>{if(!$('#menu').hidden&&!e.target.closest('#menu')&&!e.target.closest('.bmore,.sp-more,.vc-more'))menuClose();});
+document.addEventListener('pointerdown',e=>{if(!$('#menu').hidden&&!e.target.closest('#menu')&&!e.target.closest('.bmore,.sp-more,.vc-more,.cv-more'))menuClose();});
 function boardMenu(b,anchor){
   const cur=spaceOf(b);
   menuOpen(anchor,`<div class="mh">Move to</div>${spaceTree().map(x=>`<button data-to="${escapeAttr(x.id)}"${x.id===cur?' class="cur"':''}>${x.parent?'\u00a0\u00a0\u00a0\u00a0':''}${escapeHtml(x.name)}</button>`).join('')}
@@ -1033,9 +1212,33 @@ function spaceMenu(id,rowEl,anchor){
   });
 }
 $('#spaceSelect').onchange=e=>{const v=e.target.value;
-  if(v==='+'){e.target.value=HOME.space||'';const name=(prompt('Name the new space')||'').trim();if(!name)return;
-    api('spaces',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(x=>{location.hash='s/'+x.id;}).catch(()=>alert('The space was not created.'));return;}
+  if(v==='+'){e.target.value=HOME.space||'';newSpacePrompt();return;}
   location.hash=v?'s/'+v:'';};
+function newSpacePrompt(){const name=(prompt('Name the new space')||'').trim();if(!name)return;
+  api('spaces',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(x=>{location.hash='s/'+x.id;}).catch(()=>alert('The space was not created.'));}
+/* Phone menu: the header keeps ☰, where you are and the mic; Agents, New board, Import, the spaces and Settings are here. */
+function hbOpen(){hbPaint();$('#hb').hidden=false;}
+function hbClose(){$('#hb').hidden=true;}
+function hbPaint(){
+  const boards=HOME.boards||[],count=id=>boards.filter(b=>id==='unsorted'?!spaceOf(b):inSpace(b,id)).length,on=HOME.space||null,n=NEWS.waiting.length;
+  const ic=d=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const sp=(id,name,sub)=>`<button class="hb-r${sub?' sub':''}${on===id?' on':''}" data-space="${escapeAttr(id||'')}"><span class="nm">${escapeHtml(name)}</span><span class="n">${count(id)}</span></button>`;
+  $('#hbBody').innerHTML=`<button class="hb-r" data-act="agents">${AG_BOT}<span class="nm">Agents</span>${n?`<span class="n wait">${n} waiting</span>`:''}</button>
+    <button class="hb-r" data-act="blank">${ic('<path d="M12 5v14M5 12h14"/>')}<span class="nm">New board</span></button>
+    <button class="hb-r" data-act="miro">${ic('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>')}<span class="nm">Import from Miro</span></button><hr><h4>Spaces</h4>
+    <button class="hb-r${on===null?' on':''}" data-space=""><span class="nm">All boards</span><span class="n">${boards.length}</span></button>
+    ${spaceTree().map(x=>sp(x.id,x.name,!!x.parent)).join('')}${count('unsorted')&&HOME.spaces.length?sp('unsorted','Unsorted'):''}
+    <button class="hb-r" data-act="space">${ic('<path d="M12 5v14M5 12h14"/>')}<span class="nm">New space</span></button><hr>
+    <button class="hb-r" data-act="settings">${ic('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>')}<span class="nm">Settings</span></button>`;
+}
+$('#hbBtn').onclick=hbOpen;$('#hbClose').onclick=hbClose;
+$('#hb').addEventListener('click',e=>{
+  if(e.target===$('#hb')){hbClose();return;}   // a tap outside the panel
+  const b=e.target.closest('.hb-r');if(!b)return;hbClose();
+  if(b.dataset.space!==undefined){location.hash=b.dataset.space?'s/'+b.dataset.space:'';return;}
+  ({agents:()=>{location.hash='agents';},blank:newBlankBoard,miro:impOpen,space:newSpacePrompt,settings:stgOpen})[b.dataset.act]();
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#hb').hidden)hbClose();});
 async function newBlankBoard(){
   const space=HOME.space&&HOME.space!=='unsorted'?HOME.space:null;
   try{const b=await api('boards',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Untitled board',space})});
@@ -1193,6 +1396,7 @@ async function liveRefresh(force){
   cvApplyRemote(nb);CV_CACHE.set(id,cvBoard);if(CV_HIST.board===id)CV_HIST.last=cvHistState();   // another device's change: a new starting point
 }
 function cvApplyRemote(nb){   // redraw only the items that changed: a full redraw makes every picture flash while it reloads
+  if(CV_CROP)cvCropEnd(false);   // another device changed the board: its pictures are new objects
   const w=$('#cvWorld'),old=new Map(cvBoard.items.map(i=>[i.id,i])),next=new Set((nb.items||[]).map(i=>i.id));
   w.querySelectorAll('.cv-item').forEach(el=>{if(!next.has(el.dataset.id))el.remove();});
   const look=i=>JSON.stringify({...i,x:0,y:0,w:0,h:0,z:0,_local:0});
@@ -1228,12 +1432,12 @@ let cvSharpenT=0;const cvSharp=new Set();   // full pictures already fetched: a 
 function cvSharpen(){   // on screen: the 400 px copy from 16 px wide, the full picture from 300 px
   clearTimeout(cvSharpenT);cvSharpenT=setTimeout(()=>{if(!cvBoard)return;
     const r=$('#cvStage').getBoundingClientRect(),s=cvView.s;
-    $('#cvWorld').querySelectorAll('img[data-full]').forEach(img=>{const el=img.closest('.cv-item'),x=parseFloat(el.style.left)*s+cvView.x,y=parseFloat(el.style.top)*s+cvView.y,w=parseFloat(el.style.width)*s,h=parseFloat(el.style.height)*s;
+    $('#cvWorld').querySelectorAll('img[data-full]').forEach(img=>{const el=img.closest('.cv-item'),x=parseFloat(el.style.left)*s+cvView.x,y=parseFloat(el.style.top)*s+cvView.y,w=parseFloat(el.style.width)*s*(parseFloat(img.style.width)||100)/100,h=parseFloat(el.style.height)*s;
       if(w<16||x>r.width||y>r.height||x+w<0||y+h<0)return;
       if(w>300){cvSharp.add(img.dataset.full);img.src=img.dataset.full;delete img.dataset.full;delete img.dataset.thumb;}
       else if(img.dataset.thumb){img.src=img.dataset.thumb;delete img.dataset.thumb;}});},250);
 }
-function cvApplyView(save=true){cvSharpen();$('#cvWorld').style.transform=`translate(${cvView.x}px,${cvView.y}px) scale(${cvView.s})`;$('#cvWorld').style.setProperty('--zs',cvView.s);document.querySelectorAll('#cvWorld .cv-area').forEach(el=>{const w=parseFloat(el.style.width)*cvView.s;el.classList.toggle('tiny',w<140);el.classList.toggle('small',w<520);});$('#cvZoomPct').textContent=(cvView.s<.1?(cvView.s*100).toFixed(1):Math.round(cvView.s*100))+'%';if(cvBoard&&save){cvBoard.view={x:cvView.x,y:cvView.y,s:cvView.s};cvSave();}}
+function cvApplyView(save=true){cvSharpen();$('#cvWorld').style.transform=`translate(${cvView.x}px,${cvView.y}px) scale(${cvView.s})`;$('#cvWorld').style.setProperty('--zs',cvView.s);if(CV_CROP)cvCropPaint();document.querySelectorAll('#cvWorld .cv-area').forEach(el=>{const w=parseFloat(el.style.width)*cvView.s;el.classList.toggle('tiny',w<140);el.classList.toggle('small',w<520);});$('#cvZoomPct').textContent=(cvView.s<.1?(cvView.s*100).toFixed(1):Math.round(cvView.s*100))+'%';if(cvBoard&&save){cvBoard.view={x:cvView.x,y:cvView.y,s:cvView.s};cvSave();}}
 // adding or deleting touches only those items: a full redraw rebuilds every picture, which flashes white while it reloads
 function cvDrop(ids){
   ids=new Set(ids);cvBoard.items=cvBoard.items.filter(i=>!ids.has(i.id));ids.forEach(id=>cvSel.delete(id));
@@ -1241,8 +1445,10 @@ function cvDrop(ids){
   $('#cvEmpty').style.display=cvBoard.items.length?'none':'grid';cvMarkSel();cvSave();
 }
 const CV_PINCH={pts:new Map(),on:false,used:false};
-let CV_TAPPED=0;   // when a double tap last opened the add menu   // fingers on the board; used = a pinch happened since the first touch
+let CV_CROP=null;   // the picture being cropped, while crop mode is on
+let CV_TOUCHED=0;   // when a finger last touched the board: a phone's double tap is not a double-click   // fingers on the board; used = a pinch happened since the first touch
 function cvRender(){
+  if(CV_CROP)cvCropEnd(false);
   const w=$('#cvWorld');w.innerHTML='';
   cvBoard.items.forEach(it=>w.appendChild(cvItemEl(it)));
   $('#cvEmpty').style.display=cvBoard.items.length?'none':'grid';
@@ -1261,8 +1467,9 @@ function cvMarkSel(){
 function cvGroupBox(){
   let g=$('#cvGroup');const its=cvBoard?cvBoard.items.filter(i=>cvSel.has(i.id)):[];
   if(its.length<2){if(g)g.remove();return;}
-  if(!g){g=document.createElement('div');g.id='cvGroup';g.className='cv-group';g.innerHTML='<span class="cv-group-rsz" title="Drag to scale everything selected"></span>';
-    $('#cvWorld').appendChild(g);g.querySelector('.cv-group-rsz').addEventListener('pointerdown',cvGroupScale);}
+  if(!g){g=document.createElement('div');g.id='cvGroup';g.className='cv-group';g.innerHTML='<span class="cv-group-rsz" title="Drag to scale everything selected"></span><button class="cv-more" title="Delete, download or deselect everything selected"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>';
+    $('#cvWorld').appendChild(g);g.querySelector('.cv-group-rsz').addEventListener('pointerdown',cvGroupScale);
+    const mb=g.querySelector('.cv-more');mb.addEventListener('pointerdown',e=>e.stopPropagation());mb.onclick=e=>{e.stopPropagation();cvGroupMenu(mb);};}
   const x0=Math.min(...its.map(i=>i.x)),y0=Math.min(...its.map(i=>i.y)),x1=Math.max(...its.map(i=>i.x+i.w)),y1=Math.max(...its.map(i=>i.y+i.h));
   g.style.cssText=`left:${x0}px;top:${y0}px;width:${x1-x0}px;height:${y1-y0}px`;
 }
@@ -1363,14 +1570,23 @@ function cvEdge(r,tx,ty){   // where the line from r's centre toward (tx,ty) lea
 function cvArrowDraw(it,el){
   const items=cvBoard?cvBoard.items:[],a=items.find(i=>i.id===it.from),b=items.find(i=>i.id===it.to);
   let p,q;
-  if(a&&b){p=cvEdge(a,b.x+b.w/2,b.y+b.h/2);q=cvEdge(b,a.x+a.w/2,a.y+a.h/2);
+  if(a&&b&&(it.shape==='elbow'||it.shape==='curve')){const r=b.x+b.w/2>=a.x+a.w/2;   // bent: leave and arrive at the sides
+    p={x:r?a.x+a.w:a.x,y:a.y+a.h/2};q={x:r?b.x:b.x+b.w,y:b.y+b.h/2};
+    Object.assign(it,{x:Math.min(p.x,q.x),y:Math.min(p.y,q.y),w:Math.max(1,Math.abs(q.x-p.x)),h:Math.max(1,Math.abs(q.y-p.y))});}
+  else if(a&&b){p=cvEdge(a,b.x+b.w/2,b.y+b.h/2);q=cvEdge(b,a.x+a.w/2,a.y+a.h/2);
     Object.assign(it,{x:Math.min(p.x,q.x),y:Math.min(p.y,q.y),w:Math.max(1,Math.abs(q.x-p.x)),h:Math.max(1,Math.abs(q.y-p.y))});}
   else{p={x:it.x,y:it.y};q={x:it.x+it.w,y:it.y+it.h};}   // a board preview, or an end was deleted: the last known line
   el.style.cssText=`left:${it.x}px;top:${it.y}px;width:${it.w}px;height:${it.h}px;z-index:${it.z||2}`;
   const x1=p.x-it.x,y1=p.y-it.y,x2=q.x-it.x,y2=q.y-it.y,len=Math.hypot(x2-x1,y2-y1)||1,ux=(x2-x1)/len,uy=(y2-y1)/len;
   const hs=Math.min(len/3,14/(cvView.s||1)),bx=x2-ux*hs,by=y2-uy*hs,c=escapeAttr(it.color||'#475569');
-  const old=el.querySelector('.rm');
-  el.innerHTML=`<svg width="1" height="1"><line x1="${x1}" y1="${y1}" x2="${bx}" y2="${by}" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke"/><polygon points="${x2},${y2} ${bx-uy*hs*.55},${by+ux*hs*.55} ${bx+uy*hs*.55},${by-ux*hs*.55}" fill="${c}"/><line class="hit" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" stroke-width="14" vector-effect="non-scaling-stroke"/></svg>${it.text?`<span class="alabel" style="left:${(x1+x2)/2}px;top:${(y1+y2)/2}px;color:${c}">${escapeHtml(it.text)}</span>`:''}`;
+  const old=el.querySelector('.cv-more');
+  // elbow (across, down, across) and curve: Miro's elbowed and curved connectors and its mind-map branches
+  const mx=(x1+x2)/2,dx=Math.sign(x2-x1)||1,hx=x2-dx*hs,bent=it.shape==='elbow'||it.shape==='curve';
+  const end=it.head===false?x2:hx,path=it.shape==='elbow'?`M${x1} ${y1} H${mx} V${y2} H${end}`:`M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${end} ${y2}`;
+  const head=it.head===false?'':bent?`<polygon points="${x2},${y2} ${hx},${y2-hs*.55} ${hx},${y2+hs*.55}" fill="${c}"/>`:`<polygon points="${x2},${y2} ${bx-uy*hs*.55},${by+ux*hs*.55} ${bx+uy*hs*.55},${by-ux*hs*.55}" fill="${c}"/>`;
+  const line=bent?`<path d="${path}" fill="none" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke"/>`:`<line x1="${x1}" y1="${y1}" x2="${it.head===false?x2:bx}" y2="${it.head===false?y2:by}" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  const hit=bent?`<path class="hit" d="${path}" fill="none" stroke="transparent" stroke-width="14" vector-effect="non-scaling-stroke"/>`:`<line class="hit" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" stroke-width="14" vector-effect="non-scaling-stroke"/>`;
+  el.innerHTML=`<svg width="1" height="1">${line}${head}${hit}</svg>${it.text?`<span class="alabel" style="left:${(x1+x2)/2}px;top:${(y1+y2)/2}px;color:${c}">${escapeHtml(it.text)}</span>`:''}`;
   if(old)el.appendChild(old);
 }
 let cvArrowRaf=0;
@@ -1390,6 +1606,8 @@ function cvItemEl(it){
       :`<div class="frame"><img ${th!==it.src?`data-thumb="${escapeAttr(th)}" data-full="${escapeAttr(it.src)}"`:`src="${escapeAttr(th)}"`} draggable="false"></div>`;
     if(it.uploading)el.classList.add('uploading');
     const im=el.querySelector('img');
+    if(it.crop){el.querySelector('.frame').style.position='relative';im.style.cssText=cvCropCss(it.crop);}
+    if(!it.preview)el.addEventListener('dblclick',e=>{e.stopPropagation();cvCropOpen(it);});   // like Miro: double-click a picture to crop it
     if(!it._local&&!it.src)im.removeAttribute('src');   // no address yet: an empty card, not a broken-picture icon
     im.addEventListener('error',()=>{   // a picture that does not load tries the next copy: this device's, the 400 px one, the full one
       const tried=(im.dataset.tried||'')+'|'+(im.getAttribute('src')||''),next=[cvThumb(it.src),it.src].find(u=>u&&!tried.includes('|'+u+'|')&&!tried.endsWith('|'+u));
@@ -1464,7 +1682,7 @@ function cvItemEl(it){
   }else if(it.type==='arrow'){ // a hand-off between two frames: drawn from where the frames are now
     el.classList.add('cv-arrow');cvArrowDraw(it,el);
   }else if(it.type==='area'){ // backdrop (a frame imported from Miro): moved by its title, clicks on it pan the board
-    el.innerHTML=`<div class="frame" style="background:${escapeAttr(it.color||'#f4f5f7')}"></div><span class="ftitle">${escapeHtml(it.text||'Area')}</span>${it.run?'<span class="fstatus"></span>':''}`;
+    el.innerHTML=`<div class="frame" style="background:${escapeAttr(it.color||'#f4f5f7')}"></div><span class="ftitle${it.text?'':' empty'}">${escapeHtml(it.text||'Frame')}</span>${it.run?'<span class="fstatus"></span>':''}`;
     if(it.run){el.classList.add('run');agStatus(el.querySelector('.fstatus'),it.run);}
   }else{ // note
     el.innerHTML=`<div class="frame" spellcheck="false"></div>`;
@@ -1486,20 +1704,10 @@ function cvItemEl(it){
     f.addEventListener('pointerdown',e=>{if(f.isContentEditable)e.stopPropagation();}); // typing in it → text selection, not drag
     if(it.ask)agAskForm(el,it);   // an agent's question: answer it right on the note
   }
-  const dl=cvDownload(it);
-  if(dl){
-    el.insertAdjacentHTML('beforeend',`<a class="cv-dlchip" href="${escapeAttr(dl.href||'#')}" download="${escapeAttr(dl.name)}" title="Download ${escapeAttr(dl.name)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></a>`);
-    const c=el.querySelector('.cv-dlchip');c.addEventListener('pointerdown',e=>e.stopPropagation());
-    if(dl.text)c.addEventListener('click',e=>{   // words, not a stored file: made into a .txt when asked for
-      e.preventDefault();const u=URL.createObjectURL(new Blob([dl.text()],{type:'text/plain;charset=utf-8'})),a=document.createElement('a');
-      a.href=u;a.download=dl.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);});
-  }
-  el.insertAdjacentHTML('beforeend',`${it.type==='img'?`<button class="lnkbtn${it.url?' haslink':''}" title="${it.url?'Edit link':'Add a link — clicking the card will open it'}"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></button>`:''}<button class="rm" title="Remove">×</button><span class="rsz" data-c="br"></span><span class="rsz tl" data-c="tl"></span><span class="rsz bl" data-c="bl"></span>${it.grow?'<span class="rsz r" data-c="r" title="Drag to set the width (the text wraps)"></span>':''}`);
-  const lb=el.querySelector('.lnkbtn');
-  if(lb){lb.addEventListener('pointerdown',e=>e.stopPropagation());lb.onclick=()=>cvLinkPopOpen(it,el);}
-
-  el.querySelector('.rm').addEventListener('pointerdown',e=>e.stopPropagation());
-  el.querySelector('.rm').onclick=()=>cvDrop([it.id]);
+  el.insertAdjacentHTML('beforeend',`<button class="cv-more" title="Crop, link, download, delete"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button><span class="rsz" data-c="br"></span><span class="rsz tl" data-c="tl"></span><span class="rsz bl" data-c="bl"></span>${it.grow?'<span class="rsz r" data-c="r" title="Drag to set the width (the text wraps)"></span>':''}`);
+  const mb=el.querySelector('.cv-more');
+  mb.addEventListener('pointerdown',e=>e.stopPropagation());
+  mb.onclick=e=>{e.stopPropagation();cvItemMenu(it,el,mb);};
 
   // drag to move (click without movement on a note focuses it for editing)
   el.addEventListener('pointerdown',e=>{
@@ -1556,6 +1764,117 @@ function cvItemEl(it){
   return el;
 }
 
+// the ⋯ menu on an item: what you can do to it, in one place
+const CV_MI={crop:'<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>',
+  link:'<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+  dl:'<path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/>',
+  none:'<rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 3"/><path d="M9 9l6 6M15 9l-6 6"/>',
+  del:'<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>'};
+function cvItemMenu(it,el,btn){
+  const m=$('#menu');if(!m.hidden&&m.dataset.item===it.id){menuClose();return;}   // tap ⋯ again: close
+  if(!cvSel.has(it.id))cvSelect(it.id);
+  const ico=k=>`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${CV_MI[k]}</svg>`;
+  const pic=it.type==='img',dl=cvDownload(it),what=pic?'picture':it.type==='note'?'note':it.type==='link'?'link card':it.type==='area'?'frame':'item';
+  menuOpen(btn,`${pic&&!it.uploading?`<button data-a="crop">${ico('crop')}Crop</button>`:''}
+    ${pic?`<button data-a="link">${ico('link')}${it.url?'Edit the link on this picture':'Add a link to this picture'}</button>`:''}
+    ${dl?`<button data-a="dl">${ico('dl')}Download this ${what}</button>`:''}
+    <button class="danger" data-a="del">${ico('del')}Delete this ${what}</button>`,mm=>{
+    mm.classList.add('cv-itemmenu');mm.dataset.item=it.id;
+    const on=(a,f)=>{const b=mm.querySelector(`[data-a="${a}"]`);if(b)b.onclick=e=>{e.stopPropagation();menuClose();f();};};
+    on('crop',()=>cvCropOpen(it));
+    on('link',()=>cvLinkPopOpen(it,el));
+    on('del',()=>cvDrop([it.id]));
+    on('dl',()=>cvSaveDownload(dl));
+  });
+}
+
+// the ⋯ on a group: what you can do to everything selected at once (phones have no Delete key)
+function cvGroupMenu(btn){
+  const m=$('#menu');if(!m.hidden&&m.dataset.item==='group'){menuClose();return;}
+  const its=cvBoard.items.filter(i=>cvSel.has(i.id)),dls=its.map(cvDownload).filter(Boolean);
+  const ico=k=>`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${CV_MI[k]}</svg>`;
+  menuOpen(btn,`${dls.length?`<button data-a="dl">${ico('dl')}Download ${dls.length<its.length?`${dls.length} of ${its.length} items`:`${its.length} items`}</button>`:''}
+    <button data-a="none">${ico('none')}Deselect</button>
+    <button class="danger" data-a="del">${ico('del')}Delete these ${its.length} items</button>`,mm=>{
+    mm.classList.add('cv-itemmenu');mm.dataset.item='group';
+    const on=(a,f)=>{const b=mm.querySelector(`[data-a="${a}"]`);if(b)b.onclick=e=>{e.stopPropagation();menuClose();f();};};
+    on('none',()=>cvSelect(null));
+    on('del',()=>{if(confirm(`Delete these ${its.length} items? This cannot be undone.`))cvDrop(its.map(i=>i.id));});
+    on('dl',()=>dls.forEach((d,n)=>setTimeout(()=>cvSaveDownload(d),n*400)));   // one at a time: browsers drop downloads that start together
+  });
+}
+function cvSaveDownload(dl){   // a stored file downloads under a readable name; words (a note) are made into a .txt
+  const u=dl.text?URL.createObjectURL(new Blob([dl.text()],{type:'text/plain;charset=utf-8'})):dl.href,a=document.createElement('a');
+  a.href=u;a.download=dl.name;document.body.appendChild(a);a.click();a.remove();if(dl.text)setTimeout(()=>URL.revokeObjectURL(u),1000);
+}
+
+// Crop a picture (Miro): the whole picture shows dimmed, the kept part bright in a frame; drag a corner or edge to crop,
+// drag the picture to slide it in the frame. The file is never changed: the board keeps crop = the kept part as fractions
+// of the whole picture, so a later crop can pull the edges back out.
+function cvCropCss(c){return `position:absolute;width:${100/c.w}%;height:${100/c.h}%;left:${-100*c.x/c.w}%;top:${-100*c.y/c.h}%;max-width:none`;}
+function cvCropOpen(it){
+  if(CV_CROP||it.uploading||!(it.src||it._local)||!cvBoard.items.includes(it))return;
+  const c=it.crop||{x:0,y:0,w:1,h:1},W=it.w/c.w,H=it.h/c.h,src=it._local||it.src;
+  const k={it,was:{x:it.x,y:it.y,w:it.w,h:it.h,crop:it.crop},X:it.x-c.x*W,Y:it.y-c.y*H,W,H,L:it.x,T:it.y,R:it.x+it.w,B:it.y+it.h};
+  const el=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`);if(el)el.style.visibility='hidden';
+  const o=document.createElement('div');o.className='cv-crop';
+  o.innerHTML=`<img src="${escapeAttr(src)}" draggable="false"><div class="cv-crop-box"><div class="in"><img src="${escapeAttr(src)}" draggable="false"></div>${['tl','t','tr','r','br','b','bl','l'].map(h=>`<span class="ch ${h}" data-h="${h}"></span>`).join('')}</div>`;
+  $('#cvWorld').appendChild(o);
+  const bar=document.createElement('div');bar.className='cv-crop-bar';bar.innerHTML='<button class="no">Cancel</button><button class="go">Done</button>';
+  $('#cvStage').appendChild(bar);
+  bar.addEventListener('pointerdown',e=>e.stopPropagation());
+  bar.querySelector('.no').onclick=()=>cvCropEnd(false);bar.querySelector('.go').onclick=()=>cvCropEnd(true);
+  Object.assign(k,{o,bar,el});CV_CROP=k;cvCropPaint();
+  o.addEventListener('pointerdown',e=>{
+    if(e.button!==0)return;e.stopPropagation();e.preventDefault();
+    const h=e.target.dataset.h||'',sx=e.clientX,sy=e.clientY,s0={X:k.X,Y:k.Y,L:k.L,T:k.T,R:k.R,B:k.B},MIN=20;
+    const mv=ev=>{if(CV_PINCH.used)return;const dx=(ev.clientX-sx)/cvView.s,dy=(ev.clientY-sy)/cvView.s,cl=(v,a,b)=>Math.max(a,Math.min(b,v));
+      if(!h){k.X=cl(s0.X+dx,k.R-k.W,k.L);k.Y=cl(s0.Y+dy,k.B-k.H,k.T);}   // slide the picture; the frame stays inside it
+      else{
+        if(h.includes('l'))k.L=cl(s0.L+dx,k.X,k.R-MIN);if(h.includes('r'))k.R=cl(s0.R+dx,k.L+MIN,k.X+k.W);
+        if(h.includes('t'))k.T=cl(s0.T+dy,k.Y,k.B-MIN);if(h.includes('b'))k.B=cl(s0.B+dy,k.T+MIN,k.Y+k.H);
+      }
+      cvCropPaint();};
+    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);};
+    window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);
+  });
+}
+function cvCropPaint(){
+  const k=CV_CROP;if(!k)return;
+  k.o.style.cssText=`left:${k.X}px;top:${k.Y}px;width:${k.W}px;height:${k.H}px`;
+  const b=k.o.querySelector('.cv-crop-box');
+  b.style.cssText=`left:${k.L-k.X}px;top:${k.T-k.Y}px;width:${k.R-k.L}px;height:${k.B-k.T}px`;
+  b.querySelector('.in img').style.cssText=`left:${k.X-k.L}px;top:${k.Y-k.T}px;width:${k.W}px;height:${k.H}px`;
+  // Cancel and Done under the frame, or above it when the frame reaches the bottom of the screen
+  const st=$('#cvStage').getBoundingClientRect(),r=b.getBoundingClientRect(),bw=k.bar.offsetWidth,bh=k.bar.offsetHeight;
+  const top=r.bottom-st.top+10+bh>st.height-8?Math.max(8,r.top-st.top-10-bh):r.bottom-st.top+10;
+  k.bar.style.left=Math.max(8,Math.min(st.width-bw-8,r.left-st.left+r.width/2-bw/2))+'px';k.bar.style.top=top+'px';
+}
+function cvCropEnd(keep){
+  const k=CV_CROP;if(!k)return;CV_CROP=null;
+  k.o.remove();k.bar.remove();
+  const it=k.it;
+  if(keep&&cvBoard&&cvBoard.items.includes(it)){
+    const c={x:(k.L-k.X)/k.W,y:(k.T-k.Y)/k.H,w:(k.R-k.L)/k.W,h:(k.B-k.T)/k.H},r4=v=>Math.round(v*1e4)/1e4;
+    Object.assign(it,{x:k.L,y:k.T,w:k.R-k.L,h:k.B-k.T});
+    if(c.x<.001&&c.y<.001&&c.w>.999&&c.h>.999)delete it.crop;else it.crop={x:r4(c.x),y:r4(c.y),w:r4(c.w),h:r4(c.h)};
+    const changed=JSON.stringify([it.x,it.y,it.w,it.h,it.crop])!==JSON.stringify([k.was.x,k.was.y,k.was.w,k.was.h,k.was.crop]);
+    if(k.el&&k.el.isConnected){const n=cvItemEl(it);k.el.replaceWith(n);}
+    if(changed){cvArrowsFollow();cvSave();}
+    cvSharpen();
+  }else if(k.el)k.el.style.visibility='';
+}
+document.addEventListener('keydown',e=>{if(!CV_CROP)return;   // in crop mode the keys belong to the crop
+  if(e.key==='Enter'||e.key==='Escape'){e.preventDefault();cvCropEnd(e.key==='Enter');}
+  e.stopImmediatePropagation();},true);
+document.addEventListener('pointerdown',e=>{   // a click anywhere else keeps the crop (Miro); on a phone only a tap does, so pinching and panning stay in crop mode
+  if(!CV_CROP||e.target.closest('.cv-crop,.cv-crop-bar'))return;
+  if(e.pointerType!=='touch'){cvCropEnd(true);return;}
+  const sx=e.clientX,sy=e.clientY,t0=Date.now(),up=ev=>{window.removeEventListener('pointerup',up);
+    if(!CV_PINCH.used&&Date.now()-t0<500&&Math.hypot(ev.clientX-sx,ev.clientY-sy)<10)cvCropEnd(true);};
+  window.addEventListener('pointerup',up);},true);
+window.addEventListener('hashchange',()=>{if(CV_CROP)cvCropEnd(true);});
+
 // Left tool bar. Sizes are divided by the zoom so a new note, text, sticker or line looks the same on screen at any zoom.
 let cvTool='select';
 const CV_TOOL_KEYS={v:'select',n:'note',t:'text',p:'pen'};
@@ -1576,6 +1895,15 @@ function cvPlaceFlys(){
     const b=$(`#cvTb [data-tool=${tool}]`);$(fly).style.top=Math.max($('#cvTb').offsetTop+b.offsetTop-5,vcBottom)+'px';}
 }
 new ResizeObserver(()=>cvPlaceFlys()).observe($('#vc'));
+// the arrow at the bottom of the tool bar folds it down to the voice button and back; each device remembers its choice
+function cvTbFold(f){
+  $('#cvTb').classList.toggle('folded',f);
+  $('#tbFold').title=f?'Show the tools':'Hide the tools (the voice stays)';
+  if(f){cvSetTool('select');if(!$('#agFly').hidden)agFlyClose();}   // nothing left switched on out of sight
+  try{localStorage.setItem('cc_tb_folded',f?'1':'');}catch(e){}
+}
+$('#tbFold').onclick=()=>cvTbFold(!$('#cvTb').classList.contains('folded'));
+try{if(localStorage.getItem('cc_tb_folded'))$('#cvTb').classList.add('folded'),$('#tbFold').title='Show the tools';}catch(e){}
 function cvSetTool(t){
   if(t==='emoji'){const f=$('#cvEmojiFly');const open=f.hidden;cvSetTool('select');f.hidden=!open;$('#cvTb [data-tool=emoji]').classList.toggle('on',open);return;}
   cvTool=t;$('#cvEmojiFly').hidden=true;
@@ -1677,9 +2005,18 @@ function cvUseTool(e){
   document.addEventListener('pointerdown',e=>{const f=$('#cvEmojiFly');if(!f.hidden&&!e.target.closest('#cvEmojiFly,#cvTb'))cvSetTool('select');});
 })();
 
-// Board previews are drawn only when their card scrolls into view
+// Board previews are drawn only when their card scrolls into view: the list itself carries no items (700 boards of
+// them was 5 MB), so the cards in view ask api/previews together, and keep what they got until the board changes
+const CV_PREVS=new Map(),CV_PREV_WAIT=new Map();let cvPrevT=0;
 const cvPrevSeen=new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;
-  cvPrevSeen.unobserve(e.target);paintCanvasPreview(e.target._items,e.target,e.target._count,e.target._bounds);}),{rootMargin:'300px'});
+  const box=e.target,have=CV_PREVS.get(box._id);cvPrevSeen.unobserve(box);
+  if(have&&have.updated===box._updated){paintCanvasPreview(have.items,box,box._count,box._bounds);return;}
+  CV_PREV_WAIT.set(box._id,box);clearTimeout(cvPrevT);cvPrevT=setTimeout(cvPrevFetch,30);}),{rootMargin:'300px'});
+async function cvPrevFetch(){
+  const boxes=[...CV_PREV_WAIT.values()].slice(0,40);boxes.forEach(b=>CV_PREV_WAIT.delete(b._id));
+  if(CV_PREV_WAIT.size)cvPrevT=setTimeout(cvPrevFetch,0);
+  let got;try{got=await api('previews?ids='+boxes.map(b=>b._id).join(','));}catch(e){setTimeout(()=>boxes.forEach(b=>cvPrevSeen.observe(b)),5000);return;}   // in view again 5 s later: asked again
+  boxes.forEach(b=>{const items=got[b._id]||[];CV_PREVS.set(b._id,{updated:b._updated,items});if(b.isConnected)paintCanvasPreview(items,b,b._count,b._bounds);});}
 // Mini preview of a board — its biggest items, scaled down, with small copies of the pictures (big boards held
 // thousands of items and hundreds of MB of full-size images, which made the board list slow to open).
 const CV_PREV_MAX=150;
@@ -1872,38 +2209,10 @@ async function cvUploadFile(file,p){
   document.addEventListener('keydown',e=>{if(e.code!=='Space'||!cvOpenNow())return;const ae=document.activeElement;if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA|SELECT|BUTTON/.test(ae.tagName)))return;e.preventDefault();if(!cvSpace){cvSpace=true;stage.classList.add('space');}});
   document.addEventListener('keyup',e=>{if(e.code==='Space'){cvSpace=false;stage.classList.remove('space');}});
   window.addEventListener('blur',()=>{cvSpace=false;stage.classList.remove('space');});
-  // phones and tablets: a double tap on empty board opens "add" choices there (like Miro): camera, photos, a link, a note
-  let lastTap=null;
-  stage.addEventListener('pointerdown',e=>{
-    if(e.pointerType!=='touch'||CV_PINCH.pts.size>1||cvTool!=='select'||e.target.closest('.cv-item,#cvTb,.cv-fly')){lastTap=null;return;}
-    const now=Date.now();
-    if(lastTap&&now-lastTap.t<350&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<30){lastTap=null;e.stopPropagation();cvTapMenu(e);return;}   // stop: the page's "tap outside closes menus" would close it at once
-    lastTap={t:now,x:e.clientX,y:e.clientY};
-  });
-  function cvTapMenu(e){
-    const p=cvPoint(e),cx=e.clientX,cy=e.clientY;CV_TAPPED=Date.now();
-    const pick=(accept,camera)=>{const f=document.createElement('input');f.type='file';f.accept=accept;if(camera)f.capture='environment';else f.multiple=true;
-      f.onchange=()=>{if(f.files&&f.files.length)cvAddFiles([...f.files],p);};f.click();};
-    menuOpen({getBoundingClientRect:()=>({left:cx,right:cx+110,top:cy,bottom:cy})},`<div class="mh">Add here</div>
-      <button data-a="photo">Take a photo</button><button data-a="library">Upload from your photos</button>
-      <button data-a="link">Paste a link</button><button data-a="note">Sticky note</button>`,m=>{
-      m.querySelector('[data-a="photo"]').onclick=()=>{menuClose();pick('image/*',true);};
-      m.querySelector('[data-a="library"]').onclick=()=>{menuClose();pick('image/*,video/*',false);};
-      m.querySelector('[data-a="note"]').onclick=()=>{menuClose();const it=cvAddItem({type:'note',text:'',x:p.x-105,y:p.y-60,w:210,h:120},true);
-        const el=stage.querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(el)cvEditNote(el);};
-      m.querySelector('[data-a="link"]').onclick=()=>{
-        m.innerHTML=`<div class="mh">Paste a link</div><div class="mlink"><input type="url" inputmode="url" autocomplete="off" placeholder="https://…"><button class="go">Add</button></div><div class="merr"></div>`;
-        const inp=m.querySelector('input'),add=()=>{const u=cvExtractUrl(inp.value.trim());
-          if(!u){m.querySelector('.merr').textContent='That does not look like a web address.';return;}
-          menuClose();cvNewLink(u,p.x-140,p.y-55);};
-        m.querySelector('.go').onclick=add;inp.addEventListener('keydown',ev=>{if(ev.key==='Enter')add();});inp.focus();
-        if(navigator.clipboard&&navigator.clipboard.readText)navigator.clipboard.readText().then(t=>{const u=cvExtractUrl(String(t||'').trim());if(u&&!inp.value)inp.value=u;}).catch(()=>{});
-      };
-    });
-  }
+  stage.addEventListener('pointerdown',e=>{if(e.pointerType==='touch')CV_TOUCHED=Date.now();});
   // double-click empty space → sticky note
   stage.addEventListener('dblclick',e=>{
-    if(e.target.closest('.cv-item')||Date.now()-CV_TAPPED<800)return;   // a phone's double tap opened the menu instead
+    if(e.target.closest('.cv-item')||Date.now()-CV_TOUCHED<800)return;   // phones add from the ⋯ menu instead
     const p=cvPoint(e);
     const it=cvAddItem({type:'note',text:'',x:p.x-100,y:p.y-60,w:210,h:120});
     const el=stage.querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(el)cvEditNote(el);
@@ -1977,7 +2286,7 @@ async function cvUploadFile(file,p){
   $('#cvLinkRemove').onclick=()=>{if(!cvLinkTarget)return;delete cvLinkTarget.url;cvLinkPopClose();cvRender();cvSave();};
   $('#cvLinkCancel').onclick=cvLinkPopClose;
   $('#cvLinkInput').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter')$('#cvLinkSave').click();if(e.key==='Escape')cvLinkPopClose();});
-  document.addEventListener('pointerdown',e=>{if(!cvLinkPopOpenNow())return;if(e.target.closest('#cvLinkPop')||e.target.closest('.lnkbtn'))return;cvLinkPopClose();});
+  document.addEventListener('pointerdown',e=>{if(!cvLinkPopOpenNow())return;if(e.target.closest('#cvLinkPop')||e.target.closest('#menu'))return;cvLinkPopClose();});
   // copy the selection with what it carries (cvWithContents); other apps get the text
   document.addEventListener('copy',e=>{
     if(!cvOpenNow()||!cvSel.size)return;
@@ -2169,8 +2478,17 @@ function vcTitle(){$('#vc').classList.toggle('right',!cvBoardId);   // on the li
 // each board has its own conversation on the server (the list has one for all boards); the card shows it all, scrollable
 async function vcLoad(){
   const scope=vcScope();if(VC.scope===scope)return;
-  VC.scope=scope;VC.turns=[];VC.pending=null;vcThread(true);
-  try{const j=await api('talk/'+scope);if(VC.scope===scope){VC.turns=j.turns||[];vcThread(true);}}catch(e){}
+  // the voice took you here ("open the Research board"): the conversation comes along, shown and sent as history (VC.carry);
+  // you went somewhere yourself: this place's own conversation, as before
+  const c=VC.carryNext;VC.carryNext=null;VC.carry=c&&c.to===scope?c.turns:[];
+  VC.scope=scope;VC.turns=VC.carry.slice();VC.pending=null;vcThread(true);
+  try{const j=await api('talk/'+scope);if(VC.scope===scope){
+    const own=(j.turns||[]).filter(t=>scope===cvBoardId||t.t>=VC.since),seen=new Set(VC.carry.map(t=>t.t+t.q));   // off a board: only what was said since the mic opened
+    VC.turns=[...own.filter(t=>!seen.has(t.t+t.q)),...VC.carry].sort((a,b)=>a.t-b.t);vcThread(true);}}catch(e){}
+}
+function vcCarryTo(j){   // before the voice opens another board or space: what this conversation was, since the mic opened
+  const o=j.open,to=j.show&&j.show.length?j.show[0].board:o?(o.board||(o.space?(o.space==='unsorted'?'unsorted':'s'+o.space):'all')):null;
+  if(to&&to!==VC.scope)VC.carryNext={to,turns:VC.turns.filter(t=>t.t>=VC.since).slice(-6)};
 }
 function vcAgo(t){const d=new Date(t),now=new Date();return d.toDateString()===now.toDateString()?d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):d.toLocaleDateString([],{month:'short',day:'numeric'})+', '+d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
 function vcThread(toBottom){
@@ -2190,6 +2508,17 @@ function vcThread(toBottom){
   if(toBottom||near)box.scrollTop=box.scrollHeight;
 }
 function vcVoice(){return $('#vcVoice').value;}
+/* Speak replies off: you keep talking, the answers only show as text (nothing is spoken, so nothing is made on the
+   voice server). The volume is the voice's own, apart from the phone's. Each device remembers both. */
+try{VC.speak=localStorage.getItem('cc_speak')!=='0';VC.vol=Math.min(1,Math.max(0,+(localStorage.getItem('cc_vol')??100)/100));}catch(e){VC.speak=true;VC.vol=1;}
+function vcOut(){const ac=vcAudio();if(!VC.out){VC.out=ac.createGain();VC.out.connect(ac.destination);}VC.out.gain.value=VC.vol;return VC.out;}
+function vcSpeakPaint(){const b=$('#vcSpk');b.classList.toggle('on',!VC.speak);
+  b.title=VC.speak?'Speak replies is on. Tap to read the answers instead: nothing is spoken':'Speak replies is off: answers show as text only. Tap to hear them again';}
+function vcSpeakToggle(){VC.speak=!VC.speak;try{localStorage.setItem('cc_speak',VC.speak?'1':'0');}catch(e){}
+  if(!VC.speak){vcStopSpeaking();if(VC.on&&VC.state==='speaking')vcSetState(VC.ws?'listening':'');}
+  vcSpeakPaint();}
+vcSpeakPaint();
+$('#vcSpk').onclick=()=>vcSpeakToggle();
 async function vcVoices(){
   if($('#vcVoice').options.length)return;
   try{const j=vcMode()==='browser'?{voices:VB_VOICES.map(([id,name])=>({id,name}))}:await api('voices');let saved='';try{saved=localStorage.getItem('cc_voice')||'';}catch(e){}
@@ -2197,9 +2526,11 @@ async function vcVoices(){
     const pick=list.find(v=>v.id===saved)||list.find(v=>v.id==='elizabeth_s')||list[0];if(pick)$('#vcVoice').value=pick.id;}
   catch(e){vcNote('The voice service is not answering, so answers will be text only.');}
 }
+// VC.since: off a board (all boards, a space, unsorted) every open of the mic is a fresh start: vcLoad shows, and the
+// server uses as history, only what was said since then. A board keeps its whole conversation.
 async function vcOpen(){
   if(VC.on){vcClose();return;}
-  VC.on=true;VC.muted=false;$('#vcMute').classList.remove('on');$('#vc').hidden=false;$('#vc').classList.toggle('tucked',!$('#agFly').hidden);if(vcMobile())vcSheet($('#agFly').hidden?'half':'slim');VC.scope=null;vcTitle();vcNote('');vcAudio();vcSetState('');vcVoices();newsAskPermission();NEWS.first=true;
+  VC.on=true;VC.since=Date.now();VC.carry=[];VC.carryNext=null;VC.muted=false;$('#vcMute').classList.remove('on');$('#vc').hidden=false;$('#vc').classList.toggle('tucked',!$('#agFly').hidden);if(vcMobile())vcSheet($('#agFly').hidden?'half':'slim');VC.scope=null;vcTitle();vcNote('');vcAudio();vcSetState('');vcVoices();newsAskPermission();NEWS.first=true;
   if(vcMode()==='browser'){   // Clewbert's own voice: downloaded the first time, from the browser's store after that
     const prog=$('#vcProg');prog.hidden=false;vcNote('');
     VB.progress=b=>{$('#vcProgN').textContent=Math.round(b/1e6)+' / 480 MB';$('#vcProgBar').style.width=Math.min(99,b/480e6*100)+'%';};VB.progress(0);
@@ -2237,8 +2568,10 @@ async function vcEars(){
   const ratio=ac.sampleRate/16000;VC.heardAt=Date.now();
   node.onaudioprocess=e=>{if(VC.muted){VC.heardAt=Date.now();return;}const x=e.inputBuffer.getChannelData(0);let pk=0;for(let i=0;i<x.length;i++){const v=Math.abs(x[i]);if(v>pk)pk=v;}
     vcLevel(pk);
-    // a live microphone is never exactly silent: flat zeros mean Chrome let go of it (another app, a device change)
-    if(pk>0)VC.heardAt=Date.now();else if(VC.on&&Date.now()-VC.heardAt>6000)vcMicRecover('silent');
+    // a live microphone is never exactly silent: flat zeros mean Chrome let go of it (another app, a device change).
+    // Not on a phone, and not while the voice speaks: echo cancelling there gives flat zeros on purpose, and opening the
+    // mic again cut the voice off (22 needless re-opens in one test, 11 of them mid-answer)
+    if(pk>0||VC.state==='speaking'||sbTouch())VC.heardAt=Date.now();else if(VC.on&&Date.now()-VC.heardAt>6000)vcMicRecover('silent');
     if(!VC.ws||VC.ws.readyState!==1)return;const n=Math.floor(x.length/ratio);const out=new Int16Array(n);
     for(let i=0;i<n;i++){const p=i*ratio,j=Math.floor(p),a=p-j;const v=x[j]+((x[j+1]??x[j])-x[j])*a;out[i]=Math.max(-32768,Math.min(32767,Math.round(v*32767)));}
     if(VC.ws.cloud)vcCloudChunk(out);else VC.ws.send(out.buffer);};
@@ -2419,9 +2752,10 @@ async function vcAsk(q){
   if(VC.scope!==scope)await vcLoad();
   $('#vcHeard').textContent='';vcNote('');vcSetState('thinking');
   VC.pending={q};vcThread(true);
-  const filler=setTimeout(()=>{if(seq===VC.askSeq&&VC.state==='thinking')vcSay(VC_FILLERS[Math.floor(Math.random()*VC_FILLERS.length)],seq,true);},1000);
+  // a filler only for a real wait: small talk answers in 1-4 s and was getting "Checking the board." first
+  const filler=setTimeout(()=>{if(seq===VC.askSeq&&VC.state==='thinking')vcSay(VC_FILLERS[Math.floor(Math.random()*VC_FILLERS.length)],seq,true);},4000);
   let j;
-  try{j=await api('ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,board,space,seen:vcSeen()})});}
+  try{j=await api('ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,board,space,seen:vcSeen(),since:board?undefined:VC.since||Date.now(),carry:(VC.carry||[]).slice(-3).map(t=>({q:t.q,a:t.a,t:t.t}))})});}
   catch(e){clearTimeout(filler);if(seq!==VC.askSeq||VC.scope!==scope)return;VC.pending={q,a:e.message&&e.message.startsWith('No model')?e.message:'The model did not answer. Try again in a moment.'};vcThread(true);VC.pending=null;vcSetState(VC.ws?'listening':'');return;}
   clearTimeout(filler);
   if(VC.scope===scope){VC.pending=null;VC.turns.push(j.turn);vcThread(true);}   // the server saved it either way
@@ -2432,6 +2766,7 @@ async function vcAsk(q){
   if(j.team&&cvBoardId===board){if(j.team.added)vcNote(`Added ${j.team.added} to this board's team.`);if(!$('#org').hidden)api('teams/'+cvBoardId).then(t=>{AG.team=t;orgPaint();orgAddList();});}
   if((j.started||j.answered||j.followed||j.steered)&&cvBoardId===board)agPoll().then(()=>{if(j.started)agReveal(j.started.frame);});   // an agent task started or got its answer
   if(j.edited&&cvBoardId===board){if(cvDirty.has(board))cvFlush();else liveRefresh(true);}   // the voice moved cards: show where they are now
+  vcCarryTo(j);
   if(j.started){}   // the view already went to the new task frame
   else if(j.show&&j.show.length)vcShow(j.show);   // the user asked to see something: go to just that, close up
   else if(j.open)vcGoTo(j.open);   // the user asked to go to a space or a whole board
@@ -2607,7 +2942,7 @@ function vcFocus(ids,close){
 }
 // speech is queued so a filler finishes before the answer starts; a new question or "stop" cuts everything
 function vcSay(text,seq,isFiller){
-  if(!vcVoice()){if(!isFiller)vcSetState(VC.ws?'listening':'');return;}
+  if(!vcVoice()||!VC.speak){if(!isFiller)vcSetState(VC.ws?'listening':'');return;}
   VC.chain=VC.chain.then(async()=>{
     if(seq!==VC.askSeq||!VC.on)return;
     if(!isFiller){vcSetState('speaking');VC.said=text;}
@@ -2640,7 +2975,7 @@ function vcPlayer(sr){
     push(u8){if(stopped)return;let b=u8;if(carry){const m=new Uint8Array(carry.length+u8.length);m.set(carry);m.set(u8,carry.length);b=m;carry=null;}
       const n=b.length>>1;if(b.length&1)carry=b.slice(n*2);if(!n)return;
       const i16=new Int16Array(b.slice(0,n*2).buffer),f=new Float32Array(n);for(let i=0;i<n;i++)f[i]=i16[i]/32768;
-      const buf=ac.createBuffer(1,n,sr);buf.copyToChannel(f,0);const src=ac.createBufferSource();src.buffer=buf;src.connect(ac.destination);
+      const buf=ac.createBuffer(1,n,sr);buf.copyToChannel(f,0);const src=ac.createBufferSource();src.buffer=buf;src.connect(vcOut());
       const t=Math.max(next,ac.currentTime+(next?0.02:0.15));src.start(t);next=t+buf.duration;live++;srcs.push(src);src.onended=()=>{live--;check();};},
     end(){ended=true;check();},
     stop(){stopped=true;srcs.forEach(x=>{try{x.stop();}catch(e){}});res();},
@@ -2649,15 +2984,16 @@ function vcPlayer(sr){
 $('#micHome').onclick=vcOpen;$('#micTb').onclick=vcOpen;$('#vcClose').onclick=vcClose;
 $('#vcStop').onclick=vcStopNow;
 $('#vcMute').onclick=()=>vcMuteToggle();
-// ⋯ on the voice card: pick the voice, clear the conversation
+// ⋯ on the voice card: volume, pick the voice, clear the conversation
 $('#vcMore').onclick=e=>{
   const sel=$('#vcVoice'),opts=[...sel.options];
   const can=VC.speech==='openai'||VC.speech==='xai';
-  menuOpen(e.currentTarget,`${opts.length?`<div class="mh">Voice</div>${opts.map(o=>`<button data-voice="${escapeAttr(o.value)}"${o.value===sel.value?' class="cur"':''}>${escapeHtml(o.textContent)}</button>`).join('')}<hr>`:''}
+  menuOpen(e.currentTarget,`<div class="mh">Voice volume</div><div class="vc-vol"><input type="range" min="0" max="100" step="5" value="${Math.round(VC.vol*100)}" aria-label="Voice volume"></div><hr>${opts.length?`<div class="mh">Voice</div>${opts.map(o=>`<button data-voice="${escapeAttr(o.value)}"${o.value===sel.value?' class="cur"':''}>${escapeHtml(o.textContent)}</button>`).join('')}<hr>`:''}
     ${can?`<button data-here="1">${vcHere()?'Use the '+(VC.speech==='xai'?'xAI':'OpenAI')+' voice':'Keep my voice on this computer'}</button><hr>`:''}
     <button class="danger" data-clear="1"${VC.turns.length?'':' disabled'}>Clear the conversation</button>`,m=>{
     m.querySelectorAll('[data-voice]').forEach(x=>x.onclick=()=>{menuClose();sel.value=x.dataset.voice;sel.onchange();});
     m.querySelector('[data-clear]').onclick=()=>{menuClose();vcClearTalk();};
+    m.querySelector('.vc-vol input').oninput=ev=>{VC.vol=ev.target.value/100;if(VC.out)VC.out.gain.value=VC.vol;try{localStorage.setItem('cc_vol',ev.target.value);}catch(err){}};
     const h=m.querySelector('[data-here]');if(h)h.onclick=()=>{menuClose();try{localStorage.setItem('cb_voice_here',vcHere()?'0':'1');}catch(e){}
       $('#vcVoice').innerHTML='';vcClose();vcOpen();};
   });
@@ -2755,7 +3091,7 @@ const NEWS={done:[],waiting:[],timer:null,first:true,seen:null};
 try{NEWS.seen=new Set(JSON.parse(localStorage.getItem('cc_news_seen')||'[]'));}catch(e){NEWS.seen=new Set();}
 async function newsPoll(){
   clearTimeout(NEWS.timer);
-  try{const j=await api('news');NEWS.done=j.done||[];NEWS.waiting=j.waiting||[];newsNotify();agAnnounce();}catch(e){}
+  try{const j=await api('news');NEWS.done=j.done||[];NEWS.waiting=j.waiting||[];newsNotify();agAnnounce();$('#agvHome .dot').hidden=$('#hbBtn .dot').hidden=!NEWS.waiting.length;}catch(e){}
   NEWS.timer=setTimeout(newsPoll,VC.on?5000:20000);
 }
 function newsShort(t,n=12){const w=String(t||'').trim().split(/\s+/);return w.slice(0,n).join(' ').replace(/[.,;:]$/,'')+(w.length>n?'…':'');}
@@ -2767,7 +3103,7 @@ function newsDoneLine(r){
   return `${newsWho(r)}${newsWhere(r)} finished "${newsShort(r.task)}".${sum?' '+newsShort(sum,45).replace(/([^.!?…])$/,'$1.'):''}`;}
 function newsTold(ids,questions=[]){if(ids.length||questions.length)api('news/told',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runs:ids,questions})}).catch(()=>{});}
 function agAnnounce(){
-  if(!VC.on||VC.state!=='listening'||!vcVoice())return;
+  if(!VC.on||VC.state!=='listening'||!vcVoice()||!VC.speak)return;   // replies off: the phone app's notifications say it instead
   const qs=NEWS.waiting.filter(q=>!q.told&&!AG.said.has(q.id+q.question)),ds=NEWS.done;   // told: read out before, even before a reload
   const ask=q=>`${q.member?'The '+q.member.name:'The agent'}${newsWhere(q)} is asking: ${q.question}`;
   if(NEWS.first){NEWS.first=false;   // the voice just opened: one summary of everything since you were last told
@@ -2785,12 +3121,12 @@ function agAnnounce(){
 }
 function vcChime(){   // two soft notes before the voice speaks up on its own
   try{const ac=vcAudio(),t=ac.currentTime;[660,880].forEach((f,i)=>{const o=ac.createOscillator(),g=ac.createGain(),t0=t+i*.13;o.frequency.value=f;
-    g.gain.setValueAtTime(0,t0);g.gain.linearRampToValueAtTime(.07,t0+.02);g.gain.exponentialRampToValueAtTime(.0001,t0+.28);o.connect(g);g.connect(ac.destination);o.start(t0);o.stop(t0+.3);});}catch(e){}}
+    g.gain.setValueAtTime(0,t0);g.gain.linearRampToValueAtTime(.07,t0+.02);g.gain.exponentialRampToValueAtTime(.0001,t0+.28);o.connect(g);g.connect(vcOut());o.start(t0);o.stop(t0+.3);});}catch(e){}}
 function newsNotify(){   // only news that arrives while the tab is in the background, each once
   const fresh=[...NEWS.done,...NEWS.waiting].filter(r=>!NEWS.seen.has(r.id+(r.question||r.ended)));
   fresh.forEach(r=>NEWS.seen.add(r.id+(r.question||r.ended)));
   try{localStorage.setItem('cc_news_seen',JSON.stringify([...NEWS.seen].slice(-400)));}catch(e){}
-  if(!fresh.length||!document.hidden||!('Notification' in window)||Notification.permission!=='granted')return;
+  if(!fresh.length||!document.hidden||PUSH.sub||!('Notification' in window)||Notification.permission!=='granted')return;   // push on: the service worker says it
   fresh.forEach(r=>{const n=new Notification(r.question?`${r.member?r.member.name:'An agent'} is waiting on you`:r.status==='done'?`${newsWho(r)} finished`:`${newsWho(r)} stopped`,
     {body:(r.question||newsShort(r.task,20))+(r.boardName?` · ${r.boardName}`:''),tag:r.id});
     n.onclick=()=>{window.focus();agGoTo(r.board,r.question?(r.note||r.frame):r.frame);n.close();};});
@@ -2872,6 +3208,24 @@ function cvSwitch(v){   // Canvas and Team are the views; Tasks opens or closes 
   if(v!=='team'&&!$('#org').hidden)orgClose();if(v==='team'&&$('#org').hidden)orgOpen();viewMark();}
 $('#cvViews').onclick=e=>{const b=e.target.closest('button[data-v]');if(b)cvSwitch(b.dataset.v);};
 $('#cvMenu').querySelectorAll('[data-mv]').forEach(b=>b.addEventListener('click',()=>{$('#cvMenu').hidden=true;cvSwitch(b.dataset.mv);}));
+// phones: the ⋯ menu adds a photo, a link or a note in the middle of what the screen shows
+function cvAddFromMenu(a){
+  const r=$('#cvStage').getBoundingClientRect(),p=cvPoint({clientX:r.left+r.width/2,clientY:r.top+r.height/2});
+  const pick=(accept,camera)=>{const f=document.createElement('input');f.type='file';f.accept=accept;if(camera)f.capture='environment';else f.multiple=true;
+    f.onchange=()=>{if(f.files&&f.files.length)cvAddFiles([...f.files],p);};f.click();};
+  if(a==='photo')pick('image/*',true);
+  else if(a==='library')pick('image/*,video/*',false);
+  else if(a==='note'){const it=cvAddItem({type:'note',text:'',x:p.x-105,y:p.y-60,w:210,h:120},true);
+    const el=$('#cvStage').querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(el)cvEditNote(el);}
+  else if(a==='link')menuOpen($('#cvMenuBtn'),`<div class="mh">Paste a link</div><div class="mlink"><input type="url" inputmode="url" autocomplete="off" placeholder="https://…"><button class="go">Add</button></div><div class="merr"></div>`,m=>{
+    const inp=m.querySelector('input'),add=()=>{const u=cvExtractUrl(inp.value.trim());
+      if(!u){m.querySelector('.merr').textContent='That does not look like a web address.';return;}
+      menuClose();cvNewLink(u,p.x-140,p.y-55);};
+    m.querySelector('.go').onclick=add;inp.addEventListener('keydown',ev=>{if(ev.key==='Enter')add();});inp.focus();
+    if(navigator.clipboard&&navigator.clipboard.readText)navigator.clipboard.readText().then(t=>{const u=cvExtractUrl(String(t||'').trim());if(u&&!inp.value)inp.value=u;}).catch(()=>{});
+  });
+}
+$('#cvMenu').querySelectorAll('[data-add]').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();$('#cvMenu').hidden=true;cvAddFromMenu(b.dataset.add);}));
 $('#cvMenuBtn').onclick=e=>{e.stopPropagation();$('#cvHelp').hidden=true;viewMark();$('#cvMenu').hidden=!$('#cvMenu').hidden;};
 $('#cvStgBtn').onclick=e=>{e.stopPropagation();$('#cvMenu').hidden=true;stgOpen();};
 $('#cvHelpBtn').onclick=e=>{e.stopPropagation();$('#cvMenu').hidden=true;$('#cvHelp').hidden=false;};
@@ -3044,9 +3398,220 @@ const orgZoom=k=>{const st=$('#orgStage').getBoundingClientRect(),s=Math.min(2.5
   ORG.x=mx-(mx-ORG.x)*s/ORG.s;ORG.y=my-(my-ORG.y)*s/ORG.s;ORG.s=s;orgApply();};
 $('#orgIn').onclick=()=>orgZoom(1.25);$('#orgOut').onclick=()=>orgZoom(.8);
 
-function route(){const id=location.hash.slice(1);if(id.startsWith('s/')){closeBoard();showHome(id.slice(2));}else if(id)openBoard(id);else{closeBoard();showHome(null);}}
+/* ---------------- Search bar ----------------
+   Typing shows what matches at once: boards by name, then items by their words (api/search, no model). Enter, or the
+   first row, asks the same question the voice would get (api/ask) and shows the written answer with where it came from.
+   The bar sits in the board list header, and moves into the board's header when a board is open. */
+const SB={seq:0,t:0,rows:[],at:0,res:null};
+const SB_KINDS={'sticky note':'Sticky note',text:'Text','frame title':'Frame',link:'Link',PDF:'PDF',screenshot:'Picture',file:'File',sticker:'Sticker','working demo':'Demo','web page on the board':'Web page',video:'Video',audio:'Audio','agent browser view':'Agent browser'};
+function sbPlace(){const b=$('#sb'),board=!!location.hash.slice(1)&&!location.hash.startsWith('#s/');
+  if(board&&b.parentNode!==$('.cv-head'))$('.cv-head').insertBefore(b,$('.cv-right'));
+  else if(!board&&b.parentNode!==$('.home-head'))$('#spaceSelect').after(b);
+  $('#sbInput').placeholder=board?'Search this board, or ask a question':location.hash.startsWith('#s/')?'Search your boards, or ask about this space':'Search your boards, or ask a question';
+  sbClose();$('#sbInput').value='';}
+function sbClose(){$('#sbP').hidden=true;SB.keep=false;SB.seq++;SB.res=null;}
+const sbTouch=()=>matchMedia('(pointer:coarse)').matches;   // a phone or tablet: Enter is the keyboard's Go key
+function sbMark(text,words){   // the typed words highlighted, the rest escaped
+  if(!words||!words.length)return escapeHtml(text);
+  const re=new RegExp('('+words.map(w=>w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')','ig');
+  return String(text).split(re).map((p,i)=>i%2?'<mark>'+escapeHtml(p)+'</mark>':escapeHtml(p)).join('');}
+function sbPaint(){
+  const p=$('#sbP'),q=$('#sbInput').value.trim(),r=SB.res;p.hidden=false;p.innerHTML='';SB.rows=[];
+  if(!q){p.hidden=true;return;}   // nothing typed: no panel
+  const row=(html,go,cls)=>{const b=document.createElement('button');b.className='sb-r'+(cls?' '+cls:'');b.innerHTML=html;
+    b.onmousedown=e=>e.preventDefault();b.onclick=go;b.onmousemove=()=>sbOn(SB.rows.indexOf(b));p.appendChild(b);SB.rows.push(b);};
+  const head=t=>{const h=document.createElement('h4');h.textContent=t;p.appendChild(h);};
+  const where=cvBoardId?'this board':HOME.space?'the boards in '+spaceName(HOME.space):'all your boards';
+  row(`<span class="sb-ask"><span class="sb-q">Ask: <b>${escapeHtml(q)}</b></span>${sbTouch()?'':'<i>Enter</i>'}</span><span class="sb-sub">A written answer from ${escapeHtml(where)}</span>`,()=>sbAsk(q),'ask');
+  if(r){
+    if(r.boards.length){head('Boards');r.boards.forEach(b=>row(`<b>${sbMark(b.name,r.words)}</b><span class="sb-sub">${escapeHtml(b.space?spaceName(b.space)||'Board':'Not in a space')}</span>`,()=>{sbClose();$('#sbInput').blur();location.hash=b.id;}));}
+    const here=r.items.filter(i=>i.board===cvBoardId),other=r.items.filter(i=>i.board!==cvBoardId);
+    const item=i=>row(`<span class="sb-snip">${sbMark(i.snippet,r.words)}</span><span class="sb-sub">${escapeHtml(SB_KINDS[i.kind]||i.kind)}${i.board===cvBoardId?'':' · '+escapeHtml(i.boardName)}${i.frame?' · '+escapeHtml(i.frame):''}</span>`,()=>{sbClose();$('#sbInput').blur();vcGo(i);});
+    if(here.length){head('On this board');here.forEach(item);}
+    if(other.length){head(cvBoardId?'On other boards':'On your boards');other.forEach(item);}
+    if(!r.boards.length&&!r.items.length){const d=document.createElement('div');d.className='sb-none';d.textContent=`No board, note or picture has these words. ${sbTouch()?'Tap Ask':'Press Enter'} to ask anyway: the answer can use the meaning, not only the words.`;p.appendChild(d);}
+  }
+  sbOn(0);}
+function sbOn(i){SB.at=Math.max(0,Math.min(SB.rows.length-1,i));SB.rows.forEach((b,k)=>b.classList.toggle('on',k===SB.at));}
+async function sbFind(){
+  const q=$('#sbInput').value.trim(),seq=++SB.seq;
+  if(!q){SB.res=null;sbPaint();return;}
+  try{const r=await api('search?q='+encodeURIComponent(q)+(cvBoardId?'&board='+cvBoardId:''));if(seq===SB.seq){SB.res=r;sbPaint();}}catch(e){}}
+async function sbAsk(q){
+  const seq=++SB.seq,board=cvBoardId||null,scope=vcScope(),space=board?null:HOME.space,p=$('#sbP');
+  p.hidden=false;p.innerHTML=`<div class="sb-ans"><div class="sb-aq">${escapeHtml(q)}</div><p>Thinking…</p></div>`;
+  let j;
+  try{j=await api('ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,board,space,seen:vcSeen(),since:board?undefined:Date.now()})});}
+  catch(e){if(seq===SB.seq)p.querySelector('p').textContent='The model did not answer. Try again in a moment.';return;}
+  if(VC.scope===scope&&j.turn){VC.turns.push(j.turn);vcThread(true);}   // the server keeps it in the same conversation as the voice
+  if(seq!==SB.seq)return;
+  p.innerHTML='';const box=document.createElement('div');box.className='sb-ans';
+  box.innerHTML=`<div class="sb-aq">${escapeHtml(q)}</div><p></p>`;box.querySelector('p').textContent=j.answer||'No answer.';
+  if(j.unread){const n=document.createElement('div');n.className='sb-aq';n.textContent=`Still reading ${j.unread} picture${j.unread===1?'':'s'}, so the answer may miss what is in them.`;box.appendChild(n);}
+  p.appendChild(box);SB.rows=[];
+  const src=(j.sources||[]).filter(s=>s.item);
+  if(src.length){const h=document.createElement('h4');h.textContent='From';p.appendChild(h);
+    src.forEach(s=>{const b=document.createElement('button');b.className='sb-r';b.onmousedown=e=>e.preventDefault();
+      b.innerHTML=`<span class="sb-snip">${escapeHtml(s.snippet||'')}</span><span class="sb-sub">${escapeHtml(SB_KINDS[s.kind]||s.kind)}${s.board===cvBoardId?'':' · '+escapeHtml(s.boardName)}</span>`;
+      b.onclick=()=>{$('#sbInput').blur();sbClose();vcGo(s);};b.onmousemove=()=>sbOn(SB.rows.indexOf(b));p.appendChild(b);SB.rows.push(b);});}
+  SB.at=-1;   // Enter now asks again, not the first source
+  const back=document.createElement('button');back.className='sb-back';back.textContent='← Back to the matches';back.onmousedown=e=>e.preventDefault();
+  back.onclick=()=>{SB.res=null;sbFind();$('#sbInput').focus();};box.appendChild(back);
+  if(j.show&&j.show.length)vcShow(j.show);else if(j.open)vcGoTo(j.open);else if(j.view&&board===cvBoardId)vcView(j.view);   // "show me…", "open the … board": done, like the voice
+}
+(function(){
+  const inp=$('#sbInput');
+  inp.addEventListener('input',()=>{clearTimeout(SB.t);SB.res=null;if(!inp.value.trim()){sbPaint();return;}SB.t=setTimeout(sbFind,150);});
+  inp.addEventListener('focus',()=>{SB.keep=false;if($('#sbP').hidden){if(inp.value.trim())sbFind();else sbPaint();}});
+  inp.addEventListener('blur',()=>setTimeout(()=>{if(document.activeElement!==inp&&!SB.keep)$('#sbP').hidden=true;},150));
+  document.addEventListener('pointerdown',e=>{if(SB.keep&&!e.target.closest('#sb')){SB.keep=false;$('#sbP').hidden=true;}});   // the matches stay up after Go until you tap elsewhere
+  inp.addEventListener('keydown',e=>{e.stopPropagation();   // typing here never reaches the board's shortcut keys
+    if(e.key==='Escape'){if(!$('#sbP').hidden&&inp.value){inp.value='';sbPaint();}else inp.blur();}
+    else if(e.key==='ArrowDown'){e.preventDefault();sbOn(SB.at+1);SB.rows[SB.at]&&SB.rows[SB.at].scrollIntoView({block:'nearest'});}
+    else if(e.key==='ArrowUp'){e.preventDefault();sbOn(SB.at-1);SB.rows[SB.at]&&SB.rows[SB.at].scrollIntoView({block:'nearest'});}
+    else if(e.key==='Enter'&&inp.value.trim()){e.preventDefault();clearTimeout(SB.t);
+      if(sbTouch()){SB.keep=true;if(!SB.res)sbFind();inp.blur();return;}   // phones: Go puts the keyboard away and leaves the matches; Ask is the first row, a tap away
+      if(SB.rows[SB.at]&&!$('#sbP').hidden)SB.rows[SB.at].click();else sbAsk(inp.value.trim());}});
+  $('#sbP').addEventListener('pointerdown',e=>e.stopPropagation());$('#sbP').addEventListener('wheel',e=>e.stopPropagation());
+  document.addEventListener('keydown',e=>{   // "/" or ⌘K: straight to the search bar
+    const ae=document.activeElement;if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA|SELECT/.test(ae.tagName)))return;
+    if(e.key==='/'&&!e.metaKey&&!e.ctrlKey&&!e.altKey||(e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();inp.focus();inp.select();}});
+})();
+
+function route(){sbPlace();const id=location.hash.slice(1);
+  if(id==='agents'||id.startsWith('agents/')){closeBoard();$('#cv').classList.remove('open');agvShow(id.slice(7));return;}
+  agvHide();
+  if(id.startsWith('s/')){closeBoard();showHome(id.slice(2));}else if(id)openBoard(id);else{closeBoard();showHome(null);}}
 $('#homeLink').onclick=e=>{e.preventDefault();if(location.hash)location.hash='';else route();};   // the logo always goes home: all boards
 window.addEventListener('hashchange',route);
+/* ---------------- Agents screen (#agents, #agents/<task id>) ----------------
+   The installed phone app opens here: every agent task on every board, what is waiting on you first. A task opens
+   to its question, result, team parts and steps, with Answer, Redirect, Follow up and Stop, as in the Tasks panel. */
+const AGV={runs:null,timer:0,open:null,steps:{},all:false,form:null};
+const agvRun=id=>(AGV.runs||[]).find(r=>r.id===id);
+const agvKids=id=>AGV.runs.filter(r=>r.parent===id);
+const agvActive=r=>['queued','working','waiting','team'].includes(r.status);
+const agvWaitingRuns=r=>[r,...agvKids(r.id).flatMap(agvWaitingRuns)].filter(x=>x.status==='waiting'&&x.question);
+const agvState=r=>agvWaitingRuns(r).length?'waiting':agvActive(r)?'working':r.status;
+const agvLabel=r=>agvState(r)==='waiting'?'Waiting on you':AG_LABEL[r.status]||r.status;
+function agvShow(rid){
+  $('#home').hidden=true;$('#agv').hidden=false;
+  if(AGV.open!==(rid||null)){AGV.open=rid||null;AGV.form=null;AGV.all=false;$('#agvBody').scrollTop=0;}
+  $('#agvBack').textContent=rid?'‹ Agents':'‹ Boards';$('#agvBack').href=rid?'#agents':'#';
+  agvPaint(true);agvPoll();
+}
+function agvHide(){$('#agv').hidden=true;clearTimeout(AGV.timer);}
+async function agvPoll(){
+  clearTimeout(AGV.timer);if($('#agv').hidden)return;
+  try{AGV.runs=(await api('tasks')).runs||[];}catch(e){if(!AGV.runs)$('#agvBody').innerHTML='<p class="agv-msg">Could not load the tasks. Trying again…</p>';}
+  if(AGV.runs){let r=agvRun(AGV.open);while(r&&r.parent&&agvRun(r.parent))r=agvRun(r.parent);   // a teammate's question opens its whole task
+    if(r&&r.id!==AGV.open){location.replace('#agents/'+r.id);return;}
+    if(r){const have=AGV.steps[r.id];if(!have||have.length!==r.steps)try{AGV.steps[r.id]=(await api('runs/'+r.id)).steps||[];}catch(e){}}
+    agvPaint();}
+  if(!$('#agv').hidden)AGV.timer=setTimeout(agvPoll,document.hidden?30000:4000);
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('#agv').hidden)agvPoll();});   // back in the app: fresh at once
+function agvPaint(force){
+  const box=$('#agvBody');
+  if($('#agv').hidden||!force&&[...box.querySelectorAll('textarea')].some(t=>t===document.activeElement||t.value.trim()))return;   // never redraw under your typing
+  if(!AGV.runs){box.innerHTML='<p class="agv-msg">Loading…</p>';return;}
+  if(AGV.open){box.innerHTML=agvDetail(agvRun(AGV.open));return;}
+  $('#agvTitle').textContent='Agents';
+  const tops=AGV.runs.filter(r=>!r.parent).sort((a,b)=>(b.ended||b.created)-(a.ended||a.created)),week=Date.now()-7*864e5;
+  const groups=[['Waiting on you',tops.filter(r=>agvState(r)==='waiting')],['Working',tops.filter(r=>agvState(r)==='working')],
+    ['Ended this week',tops.filter(r=>!agvActive(r)&&(r.ended||r.created)>week)]];
+  box.innerHTML=(groups.filter(g=>g[1].length).map(([h,rs])=>`<h4>${h} · ${rs.length}</h4>`+rs.map(agvRow).join('')).join('')
+    ||'<p class="agv-msg">No agent tasks this week. Open a board and give the team a job, or ask the voice.</p>')+pushFoot();
+}
+function agvRow(r){
+  const q=agvWaitingRuns(r)[0],st=agvState(r);
+  return `<a class="agv-row ${st}" href="#agents/${escapeAttr(r.id)}"><div class="l">${escapeHtml(q?q.question:r.task)}</div>
+    <div class="s"><i class="agv-dot ${st}"></i>${escapeHtml(q?(q.member?q.member.name:'The agent')+' is asking':agvLabel(r))} · ${escapeHtml(r.boardName)} · ${escapeHtml(vcAgo(r.ended||r.created))}</div></a>`;
+}
+function agvDetail(r){
+  if(!r){$('#agvTitle').textContent='Task';return '<p class="agv-msg">This task is gone. Its board may have been deleted.</p>';}
+  $('#agvTitle').textContent=r.boardName||'Task';
+  const kids=agvKids(r.id),st=AGV.steps[r.id],steps=st?st.slice().reverse():null,shown=steps&&(AGV.all?steps:steps.slice(0,8)),f=AGV.form;
+  const who=kids.length||(r.member&&r.member.id==='lead')?'The team':r.member?r.member.name:'One agent';
+  return `<div class="agv-task"><span class="agv-pill"><i class="agv-dot ${agvState(r)}"></i>${escapeHtml(agvLabel(r))}</span>
+    <h2>${escapeHtml(r.task)}</h2><div class="agv-meta">${escapeHtml(who)} · started ${escapeHtml(vcAgo(r.created))}${r.ended?' · ended '+escapeHtml(vcAgo(r.ended)):''}</div></div>
+    ${agvWaitingRuns(r).map(w=>`<div class="agv-sec agv-ask"><label>${escapeHtml(w.member?w.member.name:'The agent')} is asking</label><p>${escapeHtml(w.question)}</p>
+      <form data-answer="${escapeAttr(w.id)}"><textarea rows="2" placeholder="Your answer"></textarea><button class="pri">Send answer</button></form></div>`).join('')}
+    ${r.summary?`<div class="agv-sec"><label>Result</label><p>${escapeHtml(r.summary)}</p></div>`:''}
+    ${r.error?`<div class="agv-sec"><label>Stopped by an error</label><p>${escapeHtml(r.error)}</p></div>`:''}
+    ${(r.demos||[]).length?`<div class="agv-sec"><label>Demos</label>${r.demos.map((d,n)=>`<a href="${escapeAttr(d)}" target="_blank" rel="noopener">Open demo${r.demos.length>1?' '+(n+1):''} ↗</a>`).join(' ')}</div>`:''}
+    ${kids.length?`<div class="agv-sec"><label>Team parts · ${kids.length}</label>${kids.map(k=>`<div class="agv-part"><i class="agv-dot ${agvState(k)}"></i><div><b>${escapeHtml(k.member?k.member.name:'Teammate')}</b> · ${escapeHtml(agvLabel(k))}<p>${escapeHtml(k.task)}</p></div></div>`).join('')}</div>`:''}
+    <div class="agv-acts">${agvActive(r)?'<button data-act="steer">Redirect</button><button class="stop" data-act="stop">Stop</button>':'<button data-act="follow">Follow up</button>'}<button data-act="board">Open on the board</button></div>
+    ${f?`<form class="agv-sec agv-more" data-form="${f}"><label>${f==='steer'?'New direction for the team':'What should they do next?'}</label>
+      <textarea rows="3" placeholder="${f==='steer'?'For example: only firms in Ontario':'For example: now find a phone number for each one'}"></textarea>
+      <div class="agv-acts"><button class="pri">${f==='steer'?'Send direction':'Start follow-up'}</button><button type="button" data-act="cancel">Cancel</button></div></form>`:''}
+    <div class="agv-sec"><label>Steps${st?' · '+st.length:''}</label>${!shown?'<p class="agv-meta">Loading…</p>':!shown.length?'<p class="agv-meta">No steps yet.</p>'
+      :`<ol class="agv-steps">${shown.map(x=>`<li><time>${escapeHtml(vcAgo(x.t))}</time>${escapeHtml(x.text)}</li>`).join('')}</ol>${steps.length>8?`<button class="agv-link" data-act="all">${AGV.all?'Show the latest 8':'Show all '+steps.length}</button>`:''}`}</div>`;
+}
+function agvFlash(text){let t=$('#agvToast');if(!t){t=document.createElement('div');t.id='agvToast';t.className='agv-toast';document.body.appendChild(t);}
+  t.textContent=text;t.hidden=false;clearTimeout(t._t);t._t=setTimeout(()=>t.hidden=true,3500);}
+$('#agvBody').addEventListener('click',async e=>{
+  if(e.target.closest('#agvTest')){try{const j=await api('push/test',{method:'POST'});agvFlash(j.sent?'Test sent. It should show in a few seconds.':'No device is signed up yet. Turn notifications on first.');}catch(err){agvFlash('The test was not sent. Try again.');}return;}
+  const b=e.target.closest('[data-act]'),r=agvRun(AGV.open);if(!b||!r)return;
+  const a=b.dataset.act;
+  if(a==='all'){AGV.all=!AGV.all;agvPaint(true);return;}
+  if(a==='board'){agGoTo(r.board,r.frame);return;}
+  if(a==='cancel'){AGV.form=null;agvPaint(true);return;}
+  if(a==='steer'||a==='follow'){AGV.form=a;agvPaint(true);const t=$('#agvBody .agv-more textarea');t.focus();t.scrollIntoView({block:'center'});return;}
+  if(a==='stop'){b.disabled=true;try{await api('runs/'+r.id+'/stop',{method:'POST'});agvFlash('Stopped.');}catch(err){b.disabled=false;agvFlash('Not stopped. Try again.');return;}agvPoll();}
+});
+$('#agvBody').addEventListener('submit',async e=>{
+  e.preventDefault();const f=e.target,t=f.querySelector('textarea'),text=t.value.trim();if(!text)return;
+  const id=f.dataset.answer||AGV.open,what=f.dataset.answer?'answer':f.dataset.form,els=f.querySelectorAll('button,textarea');
+  els.forEach(x=>x.disabled=true);
+  try{const j=await api(`runs/${id}/${what}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});if(!j.ok)throw new Error('refused');}
+  catch(err){els.forEach(x=>x.disabled=false);agvFlash(what==='answer'?'Not sent: the question may have been answered already. Try again.':'Not sent. Try again.');return;}
+  t.value='';t.blur();AGV.form=null;agvFlash(what==='answer'?'Answer sent.':what==='steer'?'Sent to the team.':'Follow-up started.');agvPoll();
+});
+$('#agvHome').innerHTML=AG_BOT+'<i class="dot" hidden></i>';
+$('#agvHome').onclick=()=>{location.hash='agents';};
+$('#micAgv').onclick=vcOpen;
+
+/* Push: the installed app gets a notification when an agent finishes or needs you, even when it is closed
+   (sw.js shows it, push.py sends it). Tapping one opens that task here. */
+const PUSH={reg:null,sub:null};
+async function pushInit(){
+  if(!('serviceWorker' in navigator))return;
+  try{PUSH.reg=await navigator.serviceWorker.register('sw.js');}catch(e){return;}
+  navigator.serviceWorker.addEventListener('message',e=>{if(e.data&&e.data.go)location.href=e.data.go;});
+  if(!('PushManager' in window)||!('Notification' in window))return;
+  try{PUSH.sub=await PUSH.reg.pushManager.getSubscription();}catch(e){}
+  if(PUSH.sub&&Notification.permission==='granted')api('push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(PUSH.sub)}).catch(()=>{});   // the server may have forgotten this phone
+  pushBar();
+}
+function pushBar(){$('#agvPush').hidden=!PUSH.reg||!('PushManager' in window)||!!PUSH.sub||Notification.permission==='denied';agvPaint();}
+function pushFoot(){
+  if(PUSH.sub)return '<p class="agv-foot">Notifications are on for this device.<button class="agv-link" id="agvTest">Send a test</button></p>';
+  if(PUSH.reg&&'Notification' in window&&Notification.permission==='denied')return '<p class="agv-foot">Notifications are blocked for this app. Allow them in the phone\'s settings for Clewbert, then reopen the app.</p>';
+  return '';
+}
+function pushKey(s){const b=atob(s.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-s.length%4)%4));return Uint8Array.from(b,c=>c.charCodeAt(0));}
+$('#agvPushOn').onclick=async()=>{
+  try{if(await Notification.requestPermission()!=='granted'){pushBar();return;}
+    const {key}=await api('push/key');
+    PUSH.sub=await PUSH.reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:pushKey(key)});
+    await api('push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(PUSH.sub)});
+    agvFlash('Notifications are on.');}
+  catch(e){agvFlash(e.message&&e.message.startsWith('Notifications need')?e.message:'Notifications did not turn on. Try again.');}
+  pushBar();
+};
+
+// ?shot=<board id>: only that board's preview, the size of a card, for the server to photograph (server.py boardshot)
+const SHOT=new URLSearchParams(location.search).get('shot');
+async function shotPaint(){
+  document.body.classList.add('shot');
+  const box=document.createElement('div');box.className='cvprev';box.id='shotBox';
+  box.innerHTML='<div class="cvprev-inner"></div><span class="cvprev-badge"></span>';document.body.appendChild(box);
+  const [cards,got]=await Promise.all([api('boards?light=1'),api('previews?ids='+SHOT)]);
+  const b=cards.find(c=>c.id===SHOT)||{};
+  paintCanvasPreview(got[SHOT]||[],box,b.count,b.bounds);
+}
+
 // Welcome: until a model answers, only the welcome screen shows; then the microphone, and straight into the tour
 const OB_PRO={xai:{name:'xAI',where:'<a href="https://console.x.ai" target="_blank" rel="noopener">console.x.ai</a>'},
   openai:{name:'OpenAI',where:'<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a>'},
@@ -3088,10 +3653,12 @@ $('#obStart').onclick=async()=>{
   vcSay("Hi, I'm Clewbert. This is the Start here board. Ask me anything about it, or say: show me around.",VC.askSeq);
 };
 (async()=>{
+  if(SHOT){shotPaint();return;}   // the board picture page: no welcome screen
   let s=null;try{s=await api('setup');}catch(e){}
   if(s){VC.speech=s.speech;if(!s.ready){obPick('xai');$('#ob').hidden=false;$('#obKey').focus();return;}}
   route();
   newsPoll();
+  pushInit();
 })();
 </script>
 </body>

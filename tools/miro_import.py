@@ -15,7 +15,7 @@ Brought over: sticky notes (with colour), text, cards, frames and shapes (as are
 images, PDFs (first page shown, click opens the PDF), link embeds.
 Not brought over: connectors, videos, pen drawings, mind maps, tables, rotation, text styling.
 """
-import collections, concurrent.futures, hashlib, html, json, os, re, secrets, subprocess, sys, tempfile, time
+import collections, concurrent.futures, hashlib, html, json, os, re, secrets, shutil, struct, subprocess, sys, tempfile, time
 import urllib.error, urllib.parse, urllib.request
 
 SITE = os.environ.get('CANVAS_SITE', 'http://localhost:8135/')
@@ -42,16 +42,18 @@ STICKY = {'gray': '#f5f6f8', 'light_yellow': '#fff9b1', 'yellow': '#f5d128', 'or
 def get(url, auth=True, raw=False):
     req = urllib.request.Request(url, headers={'User-Agent': 'clewbert-import',
                                                **({'Authorization': 'Bearer ' + key()} if auth else {})})
-    for attempt in range(3):
+    for attempt in range(9):   # up to about 4 minutes: Miro's limits are per minute, and busy boards answer 5xx a while
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
                 data = r.read()
             return data if raw else json.loads(data)
         except urllib.error.HTTPError as e:
-            if e.code < 500 and e.code != 429 or attempt == 2:   # a refusal will not change on retry
+            if e.code < 500 and e.code != 429 or attempt == 8:   # a refusal will not change on retry
                 raise
+            wait = e.headers.get('Retry-After')   # Miro's rate limit: wait as told, or back off
+            time.sleep(min(60, float(wait)) if wait and wait.isdigit() else min(60, 2 ** attempt))
         except Exception:
-            if attempt == 2:
+            if attempt == 8:
                 raise
             time.sleep(2 * (attempt + 1))
 
@@ -103,6 +105,18 @@ class Store:
         src = os.path.join(tmp, secrets.token_hex(4) + '.' + ext)
         with open(src, 'wb') as f:
             f.write(data)
+        if ext == 'svg':   # drawn to a PNG (an SVG kept as is could carry script)
+            png = src + '.png'
+            r = subprocess.run([MAGICK, '-background', 'none', '-density', '600', src, '-resize', '%dx%d>' % (MAX_PX, MAX_PX), png],
+                               capture_output=True)
+            if r.returncode or not os.path.exists(png):   # ImageMagick gives up on text with no font; Quick Look draws it
+                out = tempfile.mkdtemp(dir=tmp)
+                subprocess.run(['qlmanage', '-t', '-s', str(MAX_PX), '-o', out, src], capture_output=True, timeout=60)
+                made = [os.path.join(out, f) for f in os.listdir(out) if f.endswith('.png')]
+                if not made:
+                    raise ImportError_('this SVG could not be drawn')
+                png = made[0]
+            src, ext = png, 'png'
         if ext == 'pdf':
             png = src + '.png'
             subprocess.run(['sips', '-s', 'format', 'png', src, '--out', png], capture_output=True, check=True)
@@ -139,6 +153,8 @@ def ext_of(data):
         return 'webp'
     if data[:6] in (b'GIF87a', b'GIF89a'):
         return 'gif'
+    if b'<svg' in data[:2048]:   # icons pasted into Miro are often SVG; sips cannot read it
+        return 'svg'
     return 'heic'
 
 
@@ -153,8 +169,76 @@ def board_id_from(link):
     raise ImportError_('That is not a Miro board link. Open the board in Miro and copy the address from the browser.')
 
 
-def import_board(link, out, space=None, progress=None):
-    """Copy the Miro board into OUT (a data folder). Returns the new board's id, name and counts."""
+def orientation(data):
+    """EXIF orientation of a JPEG (1 = upright), read straight from the bytes (sips does not report it)."""
+    if data[:2] != b'\xff\xd8':
+        return 1
+    i = 2
+    while i + 4 <= len(data) and data[i] == 0xff:
+        marker, size = data[i + 1], struct.unpack('>H', data[i + 2:i + 4])[0]
+        if marker == 0xe1 and data[i + 4:i + 10] == b'Exif\0\0':
+            t = data[i + 10:i + 2 + size]
+            e = '<' if t[:2] == b'II' else '>'
+            ifd = struct.unpack(e + 'I', t[4:8])[0]
+            for n in range(struct.unpack(e + 'H', t[ifd:ifd + 2])[0]):
+                tag, _, _, val = struct.unpack(e + 'HHI4s', t[ifd + 2 + 12 * n:ifd + 14 + 12 * n])
+                if tag == 0x112:
+                    return struct.unpack(e + 'H', val[:2])[0]
+            return 1
+        if marker == 0xda:
+            break
+        i += 2 + size
+    return 1
+
+
+MAGICK = next((p for p in ('/opt/homebrew/bin/magick', '/usr/local/bin/magick') if os.path.exists(p)), 'magick')
+FFMPEG = next((p for p in ('/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg') if os.path.exists(p)), 'ffmpeg')
+
+
+def cut(data, crop, tmp):
+    """The part of a picture at crop = [x, y, w, h] in its own pixels. Returns the picture whole when the cut
+    cannot be made exactly. ffmpeg, not sips: sips takes an offset of 0 as "none" and cuts from the middle."""
+    x, y, w, h = (int(round(float(v))) for v in crop[:4])
+    if orientation(data) not in (0, 1):   # turned: the crop is in upright pixels, ffmpeg cuts the stored ones: leave it whole
+        return data
+    ext = ext_of(data)
+    if ext not in ('jpg', 'png'):
+        return data
+    src = os.path.join(tmp, 'crop-%s.%s' % (secrets.token_hex(6), ext))
+    dst = src.replace('crop-', 'cut-').rsplit('.', 1)[0] + '.png'   # RGB to PNG: in JPEG colours ffmpeg rounds to even sizes
+    with open(src, 'wb') as f:
+        f.write(data)
+    r = subprocess.run([FFMPEG, '-v', 'error', '-y', '-i', src, '-vf', 'format=%s,crop=%d:%d:%d:%d' % ('rgb24' if ext == 'jpg' else 'rgba', w, h, x, y),
+                        '-frames:v', '1', dst], capture_output=True)
+    if r.returncode or not os.path.exists(dst) or sips_size(dst) != (w, h):
+        return data
+    with open(dst, 'rb') as f:
+        return f.read()
+
+
+def recut(board_id, crops, out):
+    """For a board already imported: the cut picture for each cropped Miro picture id -> its new src."""
+    store, tmp, done = Store(out), tempfile.mkdtemp(prefix='miro-recut-'), {}
+
+    def one(item):
+        mid, crop = item
+        try:
+            i = api('boards/%s/images/%s' % (urllib.parse.quote(board_id), urllib.parse.quote(mid)))
+            data = resource(i['data']['imageUrl'])
+            part = cut(data, crop, tmp)
+            if part is not data:
+                done[mid] = store.picture(part, ext_of(part), tmp)
+        except Exception:
+            pass   # left as it is
+    with concurrent.futures.ThreadPoolExecutor(6) as pool:   # mostly waiting on Miro's downloads
+        list(pool.map(one, crops.items()))
+    shutil.rmtree(tmp, ignore_errors=True)
+    return done
+
+
+def import_board(link, out, space=None, progress=None, crops=None):
+    """Copy the Miro board into OUT (a data folder). Returns the new board's id, name and counts.
+    CROPS maps a Miro picture id to [x, y, w, h] in that picture's own pixels (from tools/miro_crops.py)."""
     board_id = board_id_from(link)
     try:
         board = api('boards/' + urllib.parse.quote(board_id))
@@ -177,8 +261,9 @@ def import_board(link, out, space=None, progress=None):
         if i.get('parent') and p.get('relativeTo') == 'parent_top_left' and i['parent']['id'] in by_id:
             f = by_id[i['parent']['id']]
             fx, fy = centre(f)
-            x += fx - f['geometry']['width'] / 2
-            y += fy - f['geometry']['height'] / 2
+            g = f.get('geometry') or {}   # a presentation slide comes without a size: miro_complete.py puts these right
+            x += fx - (g.get('width') or 0) / 2
+            y += fy - (g.get('height') or 0) / 2
         return x, y
 
     store = Store(out)
@@ -192,7 +277,7 @@ def import_board(link, out, space=None, progress=None):
         t, d, st, g = i['type'], i.get('data') or {}, i.get('style') or {}, i.get('geometry') or {}
         w, h = g.get('width'), g.get('height')
         if t == 'text' and w and not h:   # Miro sizes text boxes to their content and gives no height
-            fs = float(st.get('fontSize') or 14)
+            fs = float(st.get('fontSize') or 0) or 14   # Miro says 0 for "fit"
             per_line = max(1, int(w / (fs * .55)))
             lines = sum(max(1, -(-len(line) // per_line)) for line in plain(d.get('content')).split('\n'))
             h = lines * fs * 1.45 + fs
@@ -200,7 +285,7 @@ def import_board(link, out, space=None, progress=None):
             skipped[t + ' (no size)'] += 1
             return None
         cx, cy = centre(i)
-        base = {'x': cx - w / 2, 'y': cy - h / 2, 'w': w, 'h': h}
+        base = {'x': cx - w / 2, 'y': cy - h / 2, 'w': w, 'h': h, 'miro': i['id']}   # miro: so crops can be fixed later
         if t == 'frame':
             return {'type': 'area', 'text': plain(d.get('title')), 'color': hex_color(st.get('fillColor'), '#f4f5f7'), **base}
         if t == 'shape' and not plain(d.get('content')):
@@ -218,6 +303,8 @@ def import_board(link, out, space=None, progress=None):
             return {'type': 'note', 'text': text, 'color': '#ffffff', **base}
         if t == 'image' and d.get('imageUrl'):
             data = resource(d['imageUrl'])
+            if i['id'] in (crops or {}):   # Miro hands out the whole picture; cut it to the crop found by miro_crops.py
+                data = cut(data, crops[i['id']], tmp)
             return {'type': 'img', 'src': store.picture(data, ext_of(data), tmp), **base}
         if t == 'document' and d.get('documentUrl'):
             data = resource(d['documentUrl'])
@@ -267,6 +354,7 @@ def import_board(link, out, space=None, progress=None):
         json.dump({'id': new_id, 'name': board.get('name') or 'Imported board', 'created': now, 'updated': now,
                    'items': converted, 'view': view, 'space': space}, f)
     os.replace(path + '.tmp', path)
+    shutil.rmtree(tmp, ignore_errors=True)   # the working copies of every picture: gigabytes over many boards
     return {'id': new_id, 'name': board.get('name') or 'Imported board',
             'brought': dict(collections.Counter(c['type'] for c in converted)), 'skipped': dict(skipped),
             'images': sorted({n for c in converted for n in (image_ref(c.get('src')), image_ref(c.get('url'))) if n})}

@@ -335,10 +335,11 @@ class Runner:
         return team
 
     # ---------- what the page sees ----------
-    def view(self, bid):
+    def view(self, bid=None):
+        """The tasks on one board, or on every board (bid None: the phone app's Agents screen)."""
         with self.lock:
-            runs = [r for r in self.runs.values() if r['board'] == bid]
-        return [{'id': r['id'], 'task': r['task'], 'status': r['status'], 'frame': r['frame'], 'focus': r.get('focus'),
+            runs = [r for r in self.runs.values() if bid is None or r['board'] == bid]
+        return [{'id': r['id'], 'board': r['board'], 'task': r['task'], 'status': r['status'], 'frame': r['frame'], 'focus': r.get('focus'),
                  'member': {k: (r.get('member') or {}).get(k) for k in ('id', 'name', 'color')} if r.get('member') else None,
                  'parent': r.get('parent'), 'created': r['created'], 'ended': r.get('ended'), 'summary': r.get('summary'),
                  'step': r['steps'][-1]['text'] if r['steps'] else '', 'steps': len(r['steps']),

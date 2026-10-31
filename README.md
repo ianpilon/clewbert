@@ -23,6 +23,8 @@ frame on the board, and the agents fill it with notes, links, working demos and 
 
 Needs macOS (pictures and PDFs are read with Apple's on-device text recognition) and the Python that comes with it. No packages to install.
 
+Optional: phone notifications from your agents (install Clewbert as an app on your phone from the browser menu) need one package, `pip3 install cryptography`. Everything else runs without it.
+
 ```
 swiftc -O tools/textof.swift -o bin/textof
 python3 server.py 8135 ~/clewbert-data

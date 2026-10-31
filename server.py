@@ -16,8 +16,9 @@ Binds 127.0.0.1 only; Cloudflare Access sits in front of it on the tunnel.
   DATA_DIR/spaces.json        the spaces (folders) boards are sorted into; a board's "space" names one, or none;
                               a space with "parent" is a sub-space of that top-level space (one level only)
   DATA_DIR/runs/<id>.json     agent tasks: each one fills a frame on its board (see agents/runner.py)
+  DATA_DIR/push/              the phones that get notifications, and what was already pushed (see push.py)
 """
-import gzip, hashlib, html, json, mimetypes, os, queue, re, secrets, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
+import base64, concurrent.futures, gzip, hashlib, html, json, mimetypes, os, queue, re, secrets, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import ssl
 if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.pem'):
@@ -25,6 +26,10 @@ if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.p
     ssl._create_default_https_context = lambda: ssl.create_default_context(cafile='/etc/ssl/cert.pem')
 import guide, models, talk
 import briefs
+try:
+    import push   # phone notifications; needs the cryptography package, everything else runs without it
+except ImportError:
+    push = None
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools'))
 import miro_import
 import arrange
@@ -56,13 +61,13 @@ LOCK = threading.Lock()
 IMPORTS = {}   # import job id -> {state, done, total, board, name, message}; kept in memory, the page polls it
 
 
-def run_import(job, link, space):
+def run_import(job, link, space, crops=None):
     j = IMPORTS[job]
 
     def progress(done, total):
         j.update(done=done, total=total)
     try:
-        r = miro_import.import_board(link, DATA, space=space, progress=progress)
+        r = miro_import.import_board(link, DATA, space=space, progress=progress, crops=crops)
         for name in r['images']:
             READER.add(name)   # read every picture and PDF so the board can be talked to
         BRIEFER.now(r['id'])   # then the whole board, for its brief
@@ -73,7 +78,212 @@ def run_import(job, link, space):
         j.update(state='error', message='The import stopped (%s). Try again in a moment.' % type(e).__name__)
 
 
+COMPLETE_BACKUPS = os.path.join(DATA, 'backups', 'before-complete')
+
+
+def complete_layers(items, added):
+    """New items above the imported frames and backdrops, under everything else; connectors and drawings on top.
+    Then whole-number layers again (CSS ignores 129.5)."""
+    floor = max([i.get('z', 0) for i in items if i.get('type') == 'area' and i not in added] + [0])
+    ceil = min([i.get('z', 0) for i in items if i.get('type') != 'area' and i not in added and i.get('z', 0) > floor] + [floor + 1])
+    top = max([i.get('z', 0) for i in items if i not in added] + [0])
+    low = [a for a in added if a['type'] not in ('arrow', 'ink')]
+    for n, a in enumerate(low):
+        a['z'] = floor + (ceil - floor) * (n + 1) / (len(low) + 1)
+    for n, a in enumerate([a for a in added if a['type'] in ('arrow', 'ink')], 1):
+        a['z'] = top + n
+    for n, i in enumerate(sorted(items, key=lambda i: i.get('z', 0)), 1):
+        i['z'] = n
+
+
+def complete_board(bid, req):
+    """Add what the Miro import missed and fix what it drew wrong (tools/miro_complete.py). Items carry `miro`, their
+    Miro source, and one already on the board is never added again. Pictures are fetched in the background (a job)."""
+    os.makedirs(COMPLETE_BACKUPS, exist_ok=True)
+    backup = os.path.join(COMPLETE_BACKUPS, bid + '.json')
+    if not os.path.exists(backup):
+        shutil.copy(board_path(bid), backup)
+    move, patch = req.get('move') or {}, req.get('patch') or {}
+    out = {}
+
+    def change(board):
+        items = board.get('items') or []
+        have = {i.get('miro') for i in items if i.get('miro')}
+        imported = [i for i in items if i.get('type') in ('img', 'note', 'area')]
+        has_ids = any(i.get('miro') for i in imported) or len(imported) < 5   # boards imported before items kept their Miro id get no
+        # missing-item adds (they would come twice); a board the import left (nearly) empty does
+        add = [a for a in req.get('add') or [] if isinstance(a, dict) and a.get('miro') not in have
+               and a.get('type') in ('note', 'area', 'link', 'ink', 'arrow', 'emoji') and (has_ids or not a.get('missing'))]
+        out['images'] = [m for m in req.get('images') or [] if isinstance(m, dict) and m.get('miro') not in have and has_ids]
+        blanked = moved = restyled = 0
+        if req.get('blank_shape_titles'):
+            for i in items:
+                if i.get('type') == 'area' and i.get('text') == 'Shape':
+                    i['text'] = ''
+                    blanked += 1
+        for i in items:   # what the import drew wrong (text size, see-through fill, alignment)
+            p = patch.get(i.get('miro') or '')
+            if isinstance(p, dict) and i.get('type') == 'arrow' and p.get('shape') in ('elbow', 'curve'):
+                i['shape'] = p['shape']
+                restyled += 1
+            elif isinstance(p, dict) and i.get('type') in ('note', 'area'):
+                for k in ('fs', 'color', 'align'):
+                    if k in p and not (i['type'] == 'area' and k != 'color'):
+                        i[k] = p[k]
+                restyled += 1
+            m = move.get(i.get('miro') or '')
+            if isinstance(m, list) and len(m) == 4 and (abs(i['x'] - m[0]) > 3 or abs(i['y'] - m[1]) > 3):
+                i['x'], i['y'], i['w'], i['h'] = (float(v) for v in m)
+                moved += 1
+        ids = {i['miro']: i['id'] for i in items if i.get('miro')}
+        ids.update({a['miro']: a['id'] for a in add})
+        added = []
+        for a in add:   # a connector joins the items it joins in Miro, or stays the line Miro drew
+            if a['type'] == 'arrow':
+                f, t = ids.get(a.pop('from_miro', None)), ids.get(a.pop('to_miro', None))
+                fb = a.pop('fallback', None)
+                if f and t and f != t:
+                    a['from'], a['to'] = f, t
+                elif fb:
+                    a = fb
+                else:
+                    continue
+            a.pop('missing', None)
+            added.append(a)
+        items.extend(added)
+        complete_layers(items, added)
+        board['items'] = items
+        out.update(added=len(added), moved=moved, restyled=restyled, blank_titles=blanked)
+        return out
+    edit_board(bid, change)
+    live_send(bid, {'kind': 'saved', 'updated': read_board(bid)['updated']}, '')   # open copies fetch it
+    images = out.pop('images')
+    if images:
+        job = secrets.token_hex(6)
+        IMPORTS[job] = {'state': 'running', 'done': 0, 'total': len(images)}
+        threading.Thread(target=run_complete_images, args=(job, bid, str(req.get('miro_board') or ''), images), daemon=True).start()
+        out['images_job'], out['images'] = job, len(images)
+    return out
+
+
+def run_complete_images(job, bid, miro_board, images):
+    """The pictures and stamps the import dropped (SVG icons, failed downloads), with their crops."""
+    j = IMPORTS[job]
+    store, tmp, got = miro_import.Store(DATA), tempfile.mkdtemp(prefix='miro-complete-'), []
+
+    def one(m):
+        try:
+            if m.get('url'):
+                if not re.match(r'^https://([a-z0-9-]+\.)*(mirostatic\.com|miro\.com)/', m['url']):
+                    return
+                data = miro_import.get(m['url'], auth=False, raw=True)
+            else:
+                i = miro_import.api('boards/%s/images/%s' % (urllib.parse.quote(miro_board), urllib.parse.quote(m['miro'])))
+                data = miro_import.resource(i['data']['imageUrl'])
+            if m.get('crop'):
+                data = miro_import.cut(data, m['crop'], tmp)
+            src = store.picture(data, miro_import.ext_of(data), tmp)
+            got.append({'type': 'img', 'src': src, 'x': float(m['x']), 'y': float(m['y']), 'w': float(m['w']), 'h': float(m['h']),
+                        'miro': m['miro'], 'id': 'c' + secrets.token_hex(5)})
+        except Exception:
+            pass
+        j['done'] = j.get('done', 0) + 1
+    try:
+        with concurrent.futures.ThreadPoolExecutor(6) as pool:
+            list(pool.map(one, images))
+        shutil.rmtree(tmp, ignore_errors=True)
+
+        def put(board):
+            items = board.get('items') or []
+            have = {i.get('miro') for i in items if i.get('miro')}
+            new = [g for g in got if g['miro'] not in have]
+            items.extend(new)
+            complete_layers(items, new)
+            board['items'] = items
+            return len(new)
+        n = edit_board(bid, put)
+        live_send(bid, {'kind': 'saved', 'updated': read_board(bid)['updated']}, '')
+        for g in got:
+            READER.add(g['src'].rsplit('/', 1)[1])
+        j.update(state='done', added=n)
+    except Exception as e:
+        j.update(state='error', message='The picture step stopped (%s).' % type(e).__name__)
+
+
+def run_complete_files(job, bid, miro_board, wanted):
+    """Miro documents as file cards (or PDF pictures, or video), embeds as link cards (tools/miro_files.py)."""
+    j = IMPORTS[job]
+    got = []
+
+    def one(m):
+        try:
+            box = {'x': float(m['x']), 'y': float(m['y']), 'w': float(m['w']), 'h': float(m['h']), 'miro': str(m['miro']),
+                   'id': 'c' + secrets.token_hex(5)}
+            if m.get('kind') == 'link':
+                got.append({'type': 'link', 'url': str(m['url']), **box,
+                            'unfurl': {'title': str(m.get('title') or ''), 'desc': str(m.get('desc') or ''), 'img': str(m.get('img') or ''), 'pub': ''}})
+                return
+            if not str(m.get('doc', '')).startswith('https://api.miro.com/'):
+                return
+            data = miro_import.resource(m['doc'])
+            part = os.path.join(UPLOADS, 'miro-' + secrets.token_hex(8))
+            with open(part, 'wb') as f:
+                f.write(data)
+            title = os.path.basename(str(m.get('title') or 'file'))[:200]
+            r = finish_upload(part, title)
+            if r['kind'] == 'pdf':
+                got.append({'type': 'img', 'src': r['src'], 'url': r['url'], 'label': title, **box})
+            elif r['kind'] in ('video', 'audio'):
+                got.append({'type': 'media', 'kind': r['kind'], 'src': r['src'], 'label': title, **box})
+            else:
+                got.append({'type': 'file', 'label': title, 'src': r['src'], 'size': r['size'], 'preview': r.get('preview') or '', **box})
+        except Exception:
+            pass
+        j['done'] = j.get('done', 0) + 1
+    try:
+        with concurrent.futures.ThreadPoolExecutor(4) as pool:
+            list(pool.map(one, wanted))
+
+        def put(board):
+            items = board.get('items') or []
+            have = {i.get('miro') for i in items if i.get('miro')}
+            new = [g for g in got if g['miro'] not in have]
+            items.extend(new)
+            complete_layers(items, new)
+            board['items'] = items
+            return len(new)
+        n = edit_board(bid, put)
+        live_send(bid, {'kind': 'saved', 'updated': read_board(bid)['updated']}, '')
+        j.update(state='done', added=n)
+    except Exception as e:
+        j.update(state='error', message='The file step stopped (%s).' % type(e).__name__)
+
+
+def run_recrop(job, bid, miro_board, crops):
+    """Fix the cropped pictures of a board imported before its crops were known (tools/miro_recrop.py)."""
+    j = IMPORTS[job]
+    try:
+        cut = miro_import.recut(miro_board, crops, DATA)
+
+        def swap(board):
+            n = 0
+            for i in board.get('items') or []:
+                if i.get('type') == 'img' and i.get('miro') in cut:
+                    i['src'] = cut[i['miro']]
+                    n += 1
+            return n
+        n = edit_board(bid, swap)
+        live_send(bid, {'kind': 'saved', 'updated': read_board(bid)['updated']}, '')   # open copies fetch the new pictures
+        for src in cut.values():
+            READER.add(src.rsplit('/', 1)[1])
+        j.update(state='done', fixed=n)
+    except Exception as e:
+        j.update(state='error', message='The crop fix stopped (%s).' % type(e).__name__)
+
+
 READER = talk.Reader(IMAGES, os.path.join(DATA, 'text'), os.path.join(HERE, 'bin', 'textof'))
+FINDER = talk.Finder(BOARDS, READER)
+threading.Thread(target=FINDER.fresh, daemon=True).start()   # the first search would wait ~8 s to read every board
 
 
 def board_path(bid):
@@ -331,6 +541,16 @@ class Handler(BaseHTTPRequestHandler):
         if parts in ([], ['index.html']):
             with open(os.path.join(HERE, 'index.html'), 'rb') as f:
                 return self.reply(200, f.read(), 'text/html; charset=utf-8', {'Cache-Control': 'no-cache'})
+        if parts in (['manifest.webmanifest'], ['sw.js']):   # what makes the phone install this as an app (see sw.js)
+            with open(os.path.join(HERE, parts[0]), 'rb') as f:
+                return self.reply(200, f.read(), 'application/manifest+json' if parts[0].endswith('manifest') else 'text/javascript',
+                                  {'Cache-Control': 'no-cache'})
+        if len(parts) == 2 and parts[0] == 'icons' and re.match(r'^[a-z0-9-]{1,40}\.png$', parts[1]):
+            try:
+                with open(os.path.join(HERE, 'icons', parts[1]), 'rb') as f:
+                    return self.reply(200, f.read(), 'image/png', {'Cache-Control': 'max-age=86400'})
+            except FileNotFoundError:
+                return self.reply(404, {'error': 'no such icon'})
         if len(parts) == 3 and parts[:2] == ['api', 'live'] and BOARD_ID.match(parts[2]):
             return self.live(parts[2])
         if parts == ['api', 'unfurl']:
@@ -339,6 +559,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, unfurl(url))
             except (OSError, ValueError, UnicodeError):
                 return self.reply(200, {})   # no preview: the page shows the plain link card
+        if parts == ['api', 'search']:   # the search bar, on every keystroke: matches only, no model
+            qs = urllib.parse.parse_qs(self.path.partition('?')[2])
+            here = (qs.get('board') or [''])[0]
+            return self.reply(200, FINDER.search((qs.get('q') or [''])[0][:200], here if BOARD_ID.match(here) else None))
         if parts == ['api', 'session']:   # the ears ask this who is calling, with the caller's cookie
             who = talk.access_user(self.headers.get('Cookie'))
             return self.reply(200, {'user': {'id': 'clewbert', 'name': who}}) if who else self.reply(401, {'error': 'not signed in'})
@@ -372,21 +596,34 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {'runs': RUNNER.view(parts[2]), 'items': items})
         if len(parts) == 3 and parts[:2] == ['api', 'runs'] and BOARD_ID.match(parts[2]):
             return self.reply(200, RUNNER.steps(parts[2]) or {'error': 'no such task'})
+        if parts == ['api', 'tasks']:   # the phone app's Agents screen: every task on every board
+            names = board_names()
+            return self.reply(200, {'runs': [dict(r, boardName=names[r['board']]) for r in RUNNER.view() if r['board'] in names]})
+        if parts == ['api', 'push', 'key']:
+            return self.reply(200, {'key': PUSH.public}) if PUSH else self.reply(503, NO_PUSH)
         if len(parts) == 3 and parts[:2] == ['api', 'teams'] and BOARD_ID.match(parts[2]):
             return self.reply(200, dict(RUNNER.team(parts[2]), starters=agents.STARTERS))
         if parts == ['api', 'news']:   # what the person has not been told yet, on every board (the voice and notifications)
-            names = {b['id']: b.get('name', '') for b in all_boards()}
-            news = RUNNER.news()
-            for k in ('done', 'waiting'):
-                news[k] = [dict(n, boardName=names[n['board']]) for n in news[k] if n['board'] in names]
-            return self.reply(200, news)
+            return self.reply(200, named_news())
         if len(parts) == 3 and parts[:2] == ['api', 'import'] and parts[2] in IMPORTS:
             return self.reply(200, IMPORTS[parts[2]])
         if parts == ['api', 'boards']:
+            if 'light=1' in self.path:   # the board list: each card without its items (they come from api/previews)
+                return self.reply(200, board_cards())
             out = all_boards()
             out.sort(key=lambda b: b.get('updated', 0), reverse=True)
-            if 'light=1' in self.path:   # the board list: what the cards draw, not every item of every board
-                out = [light(b) for b in out]
+            return self.reply(200, out)
+        if parts == ['api', 'previews']:   # the biggest items of the boards whose cards just scrolled into view
+            ids = (urllib.parse.parse_qs(self.path.partition('?')[2]).get('ids') or [''])[0].split(',')[:40]
+            out = {}
+            for bid in ids:
+                if BOARD_ID.match(bid):
+                    try:
+                        out[bid] = light(read_board(bid))['items']
+                    except (OSError, ValueError):
+                        pass
+            if ids == [BOARDSHOT_SEEN[0]] and ids[0] in out:
+                BOARDSHOT_SEEN[1] = True   # the board's picture is being taken, and the page got its items
             return self.reply(200, out)
         if self.talk_scope(parts):
             return self.reply(200, read_talk(self.talk_scope(parts)))
@@ -426,6 +663,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(200, f.read(), 'image/jpeg', {'Cache-Control': 'no-cache'})
             except FileNotFoundError:
                 return self.reply(404, {'error': 'no screenshot yet'})
+        if len(parts) == 3 and parts[:2] == ['api', 'boardshots'] and parts[2].endswith('.jpg') and BOARD_ID.match(parts[2][:-4]):
+            # a board's picture for its card; the page asks with ?u=<updated>, so a current one is kept by the browser
+            path = os.path.join(BOARDSHOTS, parts[2])
+            try:
+                with open(path, 'rb') as f:
+                    data = f.read()
+                fresh = os.stat(path).st_mtime >= os.stat(board_path(parts[2][:-4])).st_mtime
+            except OSError:
+                # the page draws the preview itself; never kept (Cloudflare otherwise has the browser keep a 404 for 4 h)
+                return self.reply(404, {'error': 'no picture yet'}, headers={'Cache-Control': 'no-store'})
+            return self.reply(200, data, 'image/jpeg', {'Cache-Control': 'private, max-age=31536000, immutable' if fresh else 'no-store'})
         if len(parts) == 3 and parts[:2] == ['api', 'thumbs'] and IMAGE_NAME.match(parts[2]) and not parts[2].endswith('.pdf'):
             src, thumb = os.path.join(IMAGES, parts[2]), os.path.join(THUMBS, parts[2] + '.jpg')
             if not os.path.exists(thumb):
@@ -494,6 +742,17 @@ class Handler(BaseHTTPRequestHandler):
                 pass   # the video player stopped this range to ask for another
 
     def post(self, parts):
+        if parts[:2] == ['api', 'push'] and not PUSH:
+            return self.reply(503, NO_PUSH)
+        if parts == ['api', 'push', 'subscribe']:   # this phone wants notifications
+            PUSH.subscribe(json.loads(self.read_body()))
+            return self.reply(201, {'ok': True})
+        if parts == ['api', 'push', 'unsubscribe']:
+            PUSH.unsubscribe(str(json.loads(self.read_body()).get('endpoint') or ''))
+            return self.reply(200, {'ok': True})
+        if parts == ['api', 'push', 'test']:   # the Agents screen's "Send a test": proves the whole path works
+            return self.reply(200, {'sent': PUSH.send({'title': 'Notifications are on', 'body': 'Agents will tell you here when they finish or need you.',
+                                                         'url': './#agents', 'tag': 'test'})})
         if parts == ['api', 'settings', 'servers']:   # add or remove one of your own model servers, from the Settings card
             return self.reply(200, own_server(json.loads(self.read_body())))
         if len(parts) == 4 and parts[:3] == ['api', 'settings', 'test'] and parts[3] in models.JOBS:
@@ -518,6 +777,94 @@ class Handler(BaseHTTPRequestHandler):
                     board['space'] = req['space']
                 write_json(board_path(board['id']), board)
             return self.reply(201, board)
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'files' and BOARD_ID.match(parts[2]):
+            if not os.path.exists(board_path(parts[2])):
+                return self.reply(404, {'error': 'no such board'})
+            req = json.loads(self.read_body() or b'{}')
+            wanted = [m for m in req.get('items') or [] if isinstance(m, dict) and m.get('miro')]
+            job = secrets.token_hex(6)
+            IMPORTS[job] = {'state': 'running', 'done': 0, 'total': len(wanted)}
+            threading.Thread(target=run_complete_files, args=(job, parts[2], str(req.get('miro_board') or ''), wanted), daemon=True).start()
+            return self.reply(202, {'job': job})
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'pictures' and BOARD_ID.match(parts[2]):
+            if not os.path.exists(board_path(parts[2])):   # tools/miro_mockups.py: pictures of what Miro draws, by Miro id
+                return self.reply(404, {'error': 'no such board'})
+            got, tmp = [], tempfile.mkdtemp(prefix='miro-pictures-')
+            for m in json.loads(self.read_body() or b'{}').get('items') or []:
+                try:
+                    data = base64.b64decode(m['png'])
+                    if miro_import.ext_of(data) != 'png':
+                        continue
+                    got.append({'type': 'img', 'src': miro_import.Store(DATA).picture(data, 'png', tmp), 'miro': str(m['miro']),
+                                'x': float(m['x']), 'y': float(m['y']), 'w': float(m['w']), 'h': float(m['h']), 'id': 'c' + secrets.token_hex(5)})
+                except (KeyError, ValueError, TypeError, subprocess.CalledProcessError):
+                    continue
+            shutil.rmtree(tmp, ignore_errors=True)
+
+            def put(board):
+                items = board.get('items') or []
+                have = {i.get('miro') for i in items if i.get('miro')}
+                new = [g for g in got if g['miro'] not in have]
+                items.extend(new)
+                complete_layers(items, new)
+                board['items'] = items
+                return len(new)
+            n = edit_board(parts[2], put)
+            live_send(parts[2], {'kind': 'saved', 'updated': read_board(parts[2])['updated']}, '')
+            return self.reply(200, {'added': n})
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'dedupe' and BOARD_ID.match(parts[2]):
+            if not os.path.exists(board_path(parts[2])):   # [new id, old id]: drop the copy, the old item takes its Miro id
+                return self.reply(404, {'error': 'no such board'})
+            pairs = [p for p in json.loads(self.read_body() or b'{}').get('pairs') or [] if isinstance(p, list) and len(p) == 2]
+
+            def dedupe(board):
+                items = board.get('items') or []
+                by = {i['id']: i for i in items}
+                gone = set()
+                for new, old in pairs:
+                    if new in by and old in by and by[new].get('miro') and not by[old].get('miro'):
+                        by[old]['miro'] = by[new]['miro']
+                        gone.add(new)
+                board['items'] = [i for i in items if i['id'] not in gone]
+                return len(gone)
+            n = edit_board(parts[2], dedupe)
+            live_send(parts[2], {'kind': 'saved', 'updated': read_board(parts[2])['updated']}, '')
+            return self.reply(200, {'removed': n})
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'adopt' and BOARD_ID.match(parts[2]):
+            if not os.path.exists(board_path(parts[2])):   # tools/miro_adopt.py: give old items their Miro id
+                return self.reply(404, {'error': 'no such board'})
+            pairs = (json.loads(self.read_body() or b'{}').get('map') or {})
+            os.makedirs(COMPLETE_BACKUPS, exist_ok=True)
+            backup = os.path.join(COMPLETE_BACKUPS, parts[2] + '.json')
+            if not os.path.exists(backup):
+                shutil.copy(board_path(parts[2]), backup)
+
+            def adopt(board):
+                have = {i.get('miro') for i in board.get('items') or [] if i.get('miro')}
+                n = 0
+                for i in board.get('items') or []:
+                    k = pairs.get(i.get('id'))
+                    if k and not i.get('miro') and k not in have:
+                        i['miro'] = str(k)
+                        have.add(k)
+                        n += 1
+                return n
+            return self.reply(200, {'adopted': edit_board(parts[2], adopt)})
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'complete' and BOARD_ID.match(parts[2]):
+            if not os.path.exists(board_path(parts[2])):
+                return self.reply(404, {'error': 'no such board'})
+            return self.reply(200, complete_board(parts[2], json.loads(self.read_body() or b'{}')))
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'recrop' and BOARD_ID.match(parts[2]):
+            req = json.loads(self.read_body() or b'{}')
+            if not os.path.exists(board_path(parts[2])):
+                return self.reply(404, {'error': 'no such board'})
+            crops = {str(k): v for k, v in (req.get('crops') or {}).items()
+                     if isinstance(v, list) and len(v) >= 4 and all(isinstance(n, (int, float)) and n >= 0 for n in v[:4])}
+            job = secrets.token_hex(6)
+            IMPORTS[job] = {'state': 'running'}
+            threading.Thread(target=run_recrop, args=(job, parts[2], miro_import.board_id_from(req.get('miro')), crops),
+                             daemon=True).start()
+            return self.reply(202, {'job': job})
         if parts == ['api', 'import']:   # New board > Import from Miro: start it, the page polls /api/import/<job>
             req = json.loads(self.read_body() or b'{}')
             try:
@@ -527,7 +874,9 @@ class Handler(BaseHTTPRequestHandler):
             space = req.get('space') if req.get('space') in {x['id'] for x in read_spaces()['spaces']} else None
             job = secrets.token_hex(6)
             IMPORTS[job] = {'state': 'running', 'done': 0, 'total': 0}
-            threading.Thread(target=run_import, args=(job, str(req.get('link')), space), daemon=True).start()
+            crops = {str(k): v for k, v in (req.get('crops') or {}).items()   # from tools/miro_crops.py: id -> [x, y, w, h]
+                     if isinstance(v, list) and len(v) >= 4 and all(isinstance(n, (int, float)) and n >= 0 for n in v[:4])}
+            threading.Thread(target=run_import, args=(job, str(req.get('link')), space, crops), daemon=True).start()
             return self.reply(202, {'job': job})
         if parts == ['api', 'spaces']:
             req = json.loads(self.read_body() or b'{}')
@@ -626,7 +975,14 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 talk_id = 'all'
             # follow-ups use the last turns of THIS conversation (board, space or all), kept on disk
-            history = [{'q': t['q'], 'a': t['a'], 'did': t.get('did')} for t in read_talk(talk_id)['turns'] if not t['a'].startswith(NOT_MOVED)][-3:] if BOARD_ID.match(talk_id) or talk_id in ('all', 'unsorted') else []
+            # since (off a board): the mic was opened then, or it is a search-bar question: older turns are not history
+            since = req.get('since') if isinstance(req.get('since'), (int, float)) else 0
+            history = [{'q': t['q'], 'a': t['a'], 'did': t.get('did'), 't': t.get('t', 0)} for t in read_talk(talk_id)['turns'] if not t['a'].startswith(NOT_MOVED) and t.get('t', 0) >= since] if BOARD_ID.match(talk_id) or talk_id in ('all', 'unsorted') else []
+            # carry: the voice brought the user here mid-conversation ("open the Research board"); what was said just before counts
+            carry = [{'q': str(c['q'])[:500], 'a': str(c['a'])[:2000], 'did': None, 't': c['t']} for c in (req.get('carry') or [])[:6]
+                     if isinstance(c, dict) and c.get('q') and c.get('a') and isinstance(c.get('t'), (int, float))]
+            have = {(h['t'], h['q']) for h in history}
+            history = sorted(history + [c for c in carry if (c['t'], c['q']) not in have], key=lambda h: h['t'])[-3:]
             if req.get('board'):
                 try:
                     boards = [read_board(str(req['board']))] if BOARD_ID.match(str(req['board'])) else []
@@ -650,13 +1006,14 @@ class Handler(BaseHTTPRequestHandler):
                 if req.get('board'):
                     sp = spaces.get(boards[0].get('space'))
                     here += ' (in the %s space)' % sp['name'] if sp else ' (not in any space)'
-                layout = talk.layout_entry(list(spaces.values()), everything, {b['id']: BRIEFER.load(b['id']) for b in everything}, here, detail=not req.get('board'))
+                layout = talk.layout_entry(list(spaces.values()), everything, {b['id']: BRIEFER.load(b['id']) for b in everything}, here, detail=not req.get('board'),
+                                           question=question, history=history)
                 names = {b['id']: b.get('name', '') for b in boards}
                 waiting = [w for w in RUNNER.news()['waiting'] if w['board'] in names]   # questions on the boards in scope
                 tasks = [{'board': t['board'], 'boardName': names.get(t['board'], ''), 'item': t['frame'], 'run': t['id'], 'frame': '',
                           'ended': t.get('ended'), 'text': RUNNER.progress(t)} for t in sorted(RUNNER.recent(set(names)), key=lambda t: t['created'])][-6:]
                 result = talk.answer(question, history, boards, scope, READER, {b['id']: BRIEFER.load(b['id']) for b in boards}, layout,
-                                     waiting, tasks, RUNNER.team_text(boards[0]['id']) if req.get('board') else '', req.get('seen'))
+                                     waiting, tasks, RUNNER.team_text(boards[0]['id']) if req.get('board') else '', req.get('seen'), FINDER)
                 edit = result.pop('edit', None)
                 shown_card = result.pop('shown_card', None)
                 did = {'card': shown_card} if shown_card else None   # "the card below that" next time means this card
@@ -901,6 +1258,46 @@ def add_teammate(bid, mate):
     new = starter or {'id': 'm' + secrets.token_hex(3), 'name': name.title(), 'color': '#475569', 'role': str(mate.get('role') or '')[:800]}
     team = RUNNER.set_team(bid, members + [new])
     return {'added': new['name'], 'members': [m['name'] for m in team['members']]}
+
+
+CARDS, CARDS_LOCK = {}, threading.Lock()   # board id -> (file time, card): the list reads only boards that changed
+
+
+def board_cards():
+    """Every board's card for the board list, newest first: light() without the items. With 700 boards, reading every
+    file (60 MB) on each visit took 0.65 s and sent 5 MB; this sends about 100 KB and reads only changed boards."""
+    with CARDS_LOCK:
+        now = {}
+        for fn in os.listdir(BOARDS):
+            if fn.endswith('.json'):
+                try:
+                    now[fn[:-5]] = os.stat(os.path.join(BOARDS, fn)).st_mtime
+                except OSError:
+                    pass
+        for bid in set(CARDS) - set(now):
+            del CARDS[bid]
+        for bid, mtime in now.items():
+            if bid not in CARDS or CARDS[bid][0] != mtime:
+                try:
+                    card = light(read_board(bid))
+                except (OSError, ValueError):
+                    continue
+                del card['items']
+                CARDS[bid] = (mtime, card)
+        return sorted((c for _, c in CARDS.values()), key=lambda b: b.get('updated') or 0, reverse=True)
+
+
+def board_names():
+    return {c['id']: c.get('name') or '' for c in board_cards()}
+
+
+def named_news():
+    """RUNNER.news() with each item's board name; items on deleted boards are left out."""
+    names = board_names()
+    news = RUNNER.news()
+    for k in ('done', 'waiting'):
+        news[k] = [dict(n, boardName=names[n['board']]) for n in news[k] if n['board'] in names]
+    return news
 
 
 def light(b, keep=150):
@@ -1160,6 +1557,71 @@ def seed_examples():
         write_json(SPACES, sp)
     open(mark, 'w').close()
 
+
+threading.Thread(target=board_cards, daemon=True).start()   # the board list is ready before the first visit
+
+
+# ---------- board pictures: the board list shows one small picture of each board ----------
+BOARDSHOTS = os.path.join(DATA, 'boardshots')
+CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+BOARDSHOT_FAILED = {}
+BOARDSHOT_SEEN = [None, False]   # the board being photographed, and whether its page got the items
+
+
+def boardshot(bid, mtime):
+    """Photographs one board's preview (index.html?shot=<id>, a 320x160 card at 2x, about 15 KB). The picture's file
+    time is the board file's time it showed, so a board saved while it was taken is taken again."""
+    png, jpg = os.path.join(BOARDSHOTS, bid + '.png'), os.path.join(BOARDSHOTS, bid + '.jpg')
+    tmp = jpg + '.' + secrets.token_hex(4) + '.jpg'
+    BOARDSHOT_SEEN[:] = [bid, False]
+    try:
+        subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+                        '--user-data-dir=' + os.path.expanduser('~/Library/Caches/clewbert-boardshots'),
+                        '--window-size=320,160', '--force-device-scale-factor=2', '--virtual-time-budget=15000',
+                        '--screenshot=' + png, 'http://127.0.0.1:%d/?shot=%s' % (PORT, bid)], capture_output=True, timeout=90)
+        subprocess.run(['sips', '-s', 'format', 'jpeg', '-s', 'formatOptions', '75', png, '--out', tmp], capture_output=True, timeout=60)
+        if not BOARDSHOT_SEEN[1]:
+            raise OSError('the page did not get the board')   # a blank picture is not kept
+        os.utime(tmp, (mtime, mtime))
+        os.replace(tmp, jpg)
+    except (OSError, subprocess.SubprocessError):
+        BOARDSHOT_FAILED[bid] = mtime   # not tried again until the board changes
+    finally:
+        for f in (png, tmp):
+            if os.path.exists(f):
+                os.remove(f)
+
+
+def boardshot_loop():
+    """Keeps every board's picture current: a board that changed and then sat still for 15 s is photographed again,
+    newest first (the first run makes all of them). The board list then downloads one small picture per card that the
+    browser keeps, instead of up to 150 items and their pictures per card (the first 12 cards were 45 MB)."""
+    os.makedirs(BOARDSHOTS, exist_ok=True)
+    time.sleep(10)   # the server is listening
+    while os.path.exists(CHROME):
+        todo = []
+        for fn in os.listdir(BOARDS):
+            if not fn.endswith('.json'):
+                continue
+            bid = fn[:-5]
+            try:
+                mtime = os.stat(os.path.join(BOARDS, fn)).st_mtime
+            except OSError:
+                continue
+            try:
+                shot = os.stat(os.path.join(BOARDSHOTS, bid + '.jpg')).st_mtime
+            except OSError:
+                shot = 0
+            if shot < mtime and time.time() - mtime > 15 and BOARDSHOT_FAILED.get(bid) != mtime:
+                todo.append((mtime, bid))
+        for mtime, bid in sorted(todo, reverse=True)[:20]:
+            boardshot(bid, mtime)
+        time.sleep(1 if todo else 20)
+
+
+threading.Thread(target=boardshot_loop, daemon=True).start()
+PUSH = push.Push(DATA, named_news) if push else None
+NO_PUSH = {'message': 'Notifications need one Python package on the computer that runs Clewbert: pip3 install cryptography, then restart Clewbert.'}
 
 if __name__ == '__main__':
     seed_examples()

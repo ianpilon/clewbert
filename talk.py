@@ -9,7 +9,7 @@
 - Voice in and voice out: with an OpenAI or xAI key, that provider hears and speaks (models.py). Or your own services:
   speech-to-text at /ears (a WebSocket next to the app) and a text-to-speech server at CANVAS_TTS_URL.
 """
-import base64, hashlib, http.client, json, math, os, queue, re, socket, subprocess, threading, time, urllib.parse, urllib.request
+import base64, difflib, hashlib, html, http.client, json, math, os, queue, re, socket, subprocess, sys, threading, time, urllib.parse, urllib.request
 import models
 
 MODEL_URL = os.environ.get('CANVAS_MODEL_URL', '')   # a chat/completions address on your own machine (Ollama, LM Studio, vLLM...), or pick a provider in Settings
@@ -204,13 +204,15 @@ KIND_WORDS = {'pdf': 'PDF', 'picture': 'screenshot', 'photo': 'screenshot', 'ima
 KIND_MAX = 8
 
 
-def passages(boards, reader):
-    """Every board item cut into short passages, each pointing back at its item."""
+def passages(boards, reader, keep=None):
+    """Every board item cut into short passages, each pointing back at its item. keep: only these (board, item) ids."""
     out = []
     for b in boards:
         items = b.get('items') or []
         areas = [i for i in items if i.get('type') == 'area']
         for it in items:
+            if keep is not None and (b['id'], it['id']) not in keep:
+                continue
             kind, words = item_words(it, reader)
             if not words.strip():
                 continue
@@ -222,25 +224,28 @@ def passages(boards, reader):
     return out
 
 
-def rank(question, history, chunks):
-    """BM25 over the passages; the last question in the conversation counts a little, for follow-ups."""
+def rank(question, history, chunks, total=None, avg=None):
+    """BM25 over the passages; the last question in the conversation counts a little, for follow-ups. total and avg:
+    how many passages there are in all and their mean length, when chunks holds only the ones with a question word
+    (so a word's rarity and a passage's length weigh as they did when every passage was ranked)."""
     q = tokens(question)
     q_prev = tokens(history[-1]['q']) if history else []
-    docs = [tokens(c['text'] + ' ' + c['frame'] + ' ' + c['kind']) for c in chunks]
-    n = len(docs) or 1
-    avg = sum(len(d) for d in docs) / n or 1
-    df = {}
-    for d in docs:
-        for w in set(d):
-            df[w] = df.get(w, 0) + 1
+    terms = set(q) | set(q_prev)
+    docs = []   # (length, {question word: times in the passage})
+    for c in chunks:
+        d = tokens(c['text'] + ' ' + c['frame'] + ' ' + c['kind'])
+        docs.append((len(d), {w: d.count(w) for w in terms if w in d}))
+    n = max(len(docs), total or 0) or 1
+    avg = avg or sum(l for l, _ in docs) / (len(docs) or 1) or 1
+    df = {w: sum(1 for _, f in docs if w in f) for w in terms}
 
-    def score(d, terms, weight):
-        s = 0.0
-        for w in set(terms):
-            f = d.count(w)
-            if f:
+    def score(doc, words, weight):
+        s, (l, f) = 0.0, doc
+        for w in set(words):
+            k = f.get(w)
+            if k:
                 idf = math.log(1 + (n - df[w] + .5) / (df[w] + .5))
-                s += weight * idf * f * 2.2 / (f + 1.2 * (.25 + .75 * len(d) / avg))
+                s += weight * idf * k * 2.2 / (k + 1.2 * (.25 + .75 * l / avg))
         return s
 
     scored = [(score(d, q, 1) + score(d, q_prev, .35), i) for i, d in enumerate(docs)]
@@ -249,9 +254,49 @@ def rank(question, history, chunks):
     return [chunks[i] for _, i in scored]
 
 
-def context(question, history, boards, reader):
+def text_name(it):
+    """The file in the text folder that holds an item's words read off it (a picture, PDF or dropped file), or None."""
+    if it.get('type') == 'file':
+        return str(it.get('src') or '').rsplit('/', 1)[-1] or None
+    return image_name(it.get('url')) if str(it.get('url') or '').endswith('.pdf') else image_name(it.get('src'))
+
+
+def candidates(question, history, boards, reader, finder):
+    """The (board, item) ids that hold any word of the question, for questions across many boards: the search bar's
+    index for the items' own words, grep over the text folder for words read off pictures and files. Re-reading and
+    ranking all 200,000 items of 700 boards took 21 s a question; items without a question word scored 0 anyway.
+    None when the question has no words to match on (then every item is read, as before)."""
+    terms = set(tokens(question)) | (set(tokens(history[-1]['q'])) if history else set())
+    if not terms:
+        return None
+    index, keep = finder.fresh(), set()
+    starts = re.compile(r'(?<![a-z0-9])(?:%s)' % '|'.join(map(re.escape, sorted(terms))))   # at the start of a word: "yo" is not in "you"
+    for b in boards:
+        for row in (index.get(b['id']) or {}).get('rows', ()):
+            if starts.search(row[4]):
+                keep.add((b['id'], row[0]))
+    try:
+        r = subprocess.run(['grep', '-rliE', '(^|[^a-z0-9])(%s)' % '|'.join(map(re.escape, sorted(terms))), reader.text], capture_output=True, text=True,
+                           timeout=20, env=dict(os.environ, LC_ALL='C'))   # plain bytes: several times faster than a UTF-8 -i
+        read = {os.path.basename(f)[:-4] for f in r.stdout.split('\n') if f.endswith('.txt')}
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for b in boards:
+        for it in b.get('items') or []:
+            if text_name(it) in read:
+                keep.add((b['id'], it['id']))
+    return keep
+
+
+def context(question, history, boards, reader, finder=None):
     """The numbered items sent with the question, plus a map back to (board, item)."""
-    chunks = passages(boards, reader)
+    keep = candidates(question, history, boards, reader, finder) if finder and len(boards) > 1 else None
+    chunks = passages(boards, reader, keep)
+    total = avg = None
+    if keep is not None:   # every passage in scope, as the search index counted them when it read each board
+        index = [finder.boards.get(b['id']) or {} for b in boards]
+        total = sum(x.get('npass', 0) for x in index)
+        avg = sum(x.get('ntok', 0) for x in index) / (total or 1)
     picked, words = [], 0
     # short notes and frame titles always go first when they fit: they carry the board's own wording
     short = [c for c in chunks if c['kind'] in ('sticky note', 'text', 'frame title') and c['part'] == 0]
@@ -262,7 +307,7 @@ def context(question, history, boards, reader):
         if c not in picked:
             picked.append(c)
             words += len(c['text'].split())
-    for c in rank(question, history, chunks):
+    for c in rank(question, history, chunks, total, avg):
         if words >= BUDGET_WORDS:
             break
         if c in picked:
@@ -301,8 +346,8 @@ straight on the board (a heading or a paragraph), not a sticky note. For "how ma
 numbers in the "board contents" item: the other items are only the ones that match the question. Between the two are the board's frames: a "frame gist" item says in a line
 what one frame holds, a "frame summary" item sums up a whole frame. Use them to say what is where on the board and for
 questions about one frame or part of the board; when the user asks to go into, dive into or show a frame, put that frame
-item's number in "show" (the board zooms to the frame) and tell him what it holds. To go deeper ("more on that"), use
-the other items in that frame and say something new, not what you already said. When he asks what frames or parts a
+item's number in "show" (the board zooms to the frame) and tell them what it holds. To go deeper ("more on that"), use
+the other items in that frame and say something new, not what you already said. When they ask what frames or parts a
 board has, never read them all out: say how many there are and name the three or four that matter most. Screenshot and PDF items are the words read out of the picture, so they can
 have broken lines or small reading mistakes.
 Your answer is spoken aloud: plain sentences, no lists, no markdown, at most four short sentences, and say numbers the
@@ -319,7 +364,9 @@ WHAT THIS APP CAN DO (you control it through "show" and "view"; never say you ca
 - "open": the name of a space or board, exactly as written in the map, to open it when the user asks to go to, open or be
   taken to a space or a whole board ("take me to the Research space"). "All boards" opens the list of all boards:
   use it when the user asks to go back out, go up, go home or go to the top or meta level. "Back to the space" means the
-  space the current board is in.
+  space the current board is in. A board's name is only its name: "Sam's Garden Plan" is that board, it does not
+  mean Sam owns something. When the user says a board's name, even loosely or misspelled, or asks for it ("I want
+  ..."), open it. "That board", "it" or "there" means the board or space your last answer named.
 - "task": inside a board, when the user asks for agent work ("have the team find...", "have an agent find...", "start a
   task to..."), put the task in their own words in "task" and say in one sentence that it started. The board's team (a
   Lead who hands parts to teammates) does it in the background and puts results in new frames on the board.
@@ -476,6 +523,8 @@ DEMO = re.compile(r"\b(demo|prototype|working (?:page|version|example)|see it (?
 YES = re.compile(r"^\W*(yes|yeah|yep|sure|ok(ay)?|please( do)?|do it|go ahead|go for it|open it|show me)\b", re.I)
 OFFER = re.compile(r"\b(open|show|take you)\b[^?]*\?\s*$", re.I)   # an answer that ends by offering to open or show something
 # the top level by the user's own names for it: opened even when the model only zoomed out instead
+THAT = re.compile(r"\b(that|this|the same) (board|space|one)\b|\b(open|show|bring up|pull up) (it|that|this)\b|\b(take me|go) there\b", re.I)   # the one just named
+WANT = re.compile(r"^\W*(?:i (?:want|need)|i'?d like|get me|bring me|give me)\s+(?:to (?:see|open|go to)\s+)?(?:the\s+)?(.+?)\W*$", re.I)   # "I want Sam's garden plan"
 TOP = re.compile(r"\b(meta|(top|home|main|start) (level|page|screen|view)|go home|all (my |the )?(boards|spaces)|back out|(leave|exit|close) (this|the) board)\b", re.I)
 NUM = re.compile(r'\d[\d,.:/]*\d|\d')
 
@@ -495,6 +544,9 @@ def brief_entries(boards, briefs, scope, question='', history=()):
     board, also one item per frame (from briefs.py's frame tree): the frames the question is about with their whole
     summary, the others with a short gist, so the voice can say what is where and zoom to a frame."""
     out = []
+    if len(boards) > 1:   # many boards: only the briefs of the ones the question is about
+        keep = relevant_boards(boards, briefs, question, history, MANY_BRIEFS)
+        boards = sorted((b for b in boards if b['id'] in keep), key=lambda b: keep.index(b['id']))
     for b in boards:
         br = (briefs.get(b['id']) or {}).get('brief')
         if not br:
@@ -534,16 +586,52 @@ def named_frame(question, entries):
     return pick
 
 
-def named_target(question, said, targets):
-    """The board or space the question names; for "open it", the one the answer says it opened. Boards before spaces."""
-    # the answer counts only where it says it opened or went to a board or space (an answer quoting a card whose title
-    # ended in a board's name opened that board): the words right after "opened", "taking you to"...
+def plain(s):
+    return ' '.join(re.sub(r"['’]s\b|[^\w\s]", ' ', s.lower()).split())   # "Sam’s" and "Sam's" read the same
+
+
+def name_at(name, text):
+    """Where a board or space name is said in the text, allowing small spelling slips ("Intellignece" is "Intelligence"
+    to the model and to the user), else -1. A slip counts only in names of 3+ letters per word over several letters."""
+    n, words = plain(name), plain(text).split()
+    if not n:
+        return -1
+    m = re.search(r'(?<!\w)' + re.escape(n) + r'(?!\w)', ' '.join(words))
+    if m:
+        return m.start()
+    size = len(n.split())
+    if len(n) < 8:
+        return -1
+    for i in range(len(words) - size + 1):
+        if difflib.SequenceMatcher(None, n, ' '.join(words[i:i + size])).ratio() >= .9:
+            return len(' '.join(words[:i]))
+    return -1
+
+
+def find_target(name, targets):
+    """The target the model wrote in "open", exactly or with a small spelling slip either side."""
+    name = str(name or '').strip().strip('"').lower()
+    if not name:
+        return None
+    if name in targets:
+        return targets[name]
+    close = [t for t in targets if t and len(plain(t)) >= 8 and difflib.SequenceMatcher(None, plain(t), plain(name)).ratio() >= .9]
+    return targets[close[0]] if len(close) == 1 else None
+
+
+def named_target(question, said, targets, first=False):
+    """The board or space the question names; for "open it", the one the answer says it opened. Boards before spaces.
+    first=True: the board or space said earliest in the text (a past answer that named one and then its space)."""
+    # the answer counts only where it says it opened or went to a board or space ("open source ... money" opened the
+    # Research board): the words right after "opened", "taking you to"...
     went = ' '.join(m.group(1) for m in re.finditer(r"\b(?:opened|opening|open|taking you to|took you to|going to|here is|here's)\b"
                                                    r"((?:\s+the)?\s+[^.!?,\"]{1,40}?\s+(?:board|space))\b", said, re.I))
     for text in (question, went):
-        low = text.lower()
-        hits = [n for n in targets if n and n != 'all boards' and re.search(r'(?<!\w)' + re.escape(n) + r'(?!\w)', low)]
+        hits = {n: name_at(n, text) for n in targets if n and n != 'all boards'}
+        hits = {n: at for n, at in hits.items() if at >= 0}
         if hits:
+            if first:
+                return targets[min(hits, key=lambda n: (hits[n], 'board' not in targets[n], -len(n)))]
             return targets[max(hits, key=lambda n: ('board' in targets[n], len(n)))]
     return None
 
@@ -584,6 +672,24 @@ def no_roll_call(said, entries):
         len(names), *[n for _, n in named[:4]])
 
 
+MAP_GISTS, MAP_RECENT, MANY_BRIEFS = 20, 10, 8   # from the board list: which boards come with what they are about
+
+
+def relevant_boards(boards, briefs, question, history=(), n=MAP_GISTS):
+    """The ids of the boards a question is about, best first: its words in a board's name (counted 3 times) or brief.
+    Sending every board's summary with every question was 300,000 characters and a minute of reading for the model."""
+    want = set(tokens(question))
+    if history:   # "tell me more" is about what the last question was about
+        want |= set(tokens(history[-1]['q']))
+    scored = []
+    for b in boards:
+        about = ((briefs.get(b['id']) or {}).get('brief') or {}).get('summary') or ''
+        score = 3 * len(want & set(tokens(b.get('name', '')))) + len(want & set(tokens(about)))
+        if score:
+            scored.append((score, b.get('updated') or 0, b['id']))
+    return [bid for _, _, bid in sorted(scored, reverse=True)[:n]]
+
+
 def board_gist(b, brief, words=35):
     """What a board is about, in a line: its brief's summary, else its frame titles, else its first notes."""
     text = ((brief or {}).get('brief') or {}).get('summary') or ''
@@ -595,29 +701,38 @@ def board_gist(b, brief, words=35):
     return ' '.join(w[:words]) + (' …' if len(w) > words else '')
 
 
-def layout_entry(spaces, boards, briefs, here, detail=True):
+def layout_entry(spaces, boards, briefs, here, detail=True, question='', history=()):
     """The map of the user's spaces and boards as one item. spaces = [{id, name}] in nav order. detail=False (inside one
-    board) leaves out what each board is about. 'targets' (names -> where to go) and 'spaceOf' stay on the server."""
+    board) leaves out what each board is about; with detail, only the boards the question is about and the most
+    recently edited ones say what they are about. 'targets' (names -> where to go) and 'spaceOf' stay on the server."""
+    gists = set(relevant_boards(boards, briefs, question, history)) | {b['id'] for b in sorted(boards, key=lambda b: -(b.get('updated') or 0))[:MAP_RECENT]} if detail else set()
     ids = {sp['id'] for sp in spaces}
     names = {sp['id']: sp['name'] for sp in spaces}
     groups = [(sp['name'], sp['id'], [b for b in boards if b.get('space') == sp['id']]) for sp in spaces]
     inside = {sp['id']: ' (inside the space "%s")' % names[sp['parent']] for sp in spaces if sp.get('parent') in names}
     groups.append(('Unsorted', 'unsorted', [b for b in boards if b.get('space') not in ids]))
     lines = ['the user has %d spaces and %d boards. the user is now %s.' % (len(spaces), len(boards), here)]
-    targets, space_of = {'all boards': {'space': ''}}, {}
+    targets, space_of, said_as = {'all boards': {'space': ''}}, {}, {}
     for name, sid, bs in groups:
         if sid == 'unsorted' and not bs:
             continue
         targets[name.lower()] = {'space': sid}
+        said_as[name.lower()] = name
         lines.append('%s "%s"%s: %d board%s' % ('Boards not in any space,' if sid == 'unsorted' else 'Space', name, inside.get(sid, ''), len(bs), '' if len(bs) == 1 else 's'))
+        rest = []   # boards with no "About": one short list per space, not a line each (699 lines were 52,000 characters)
         for b in sorted(bs, key=lambda b: -(b.get('updated') or 0)):
             targets.setdefault(b.get('name', '').lower(), {'board': b['id']})
+            said_as.setdefault(b.get('name', '').lower(), b.get('name', ''))
             space_of[b['id']] = '' if sid == 'unsorted' else name
-            line = '- board "%s": %d item%s, last edited %s' % (b.get('name', ''), len(b.get('items') or []), '' if len(b.get('items') or []) == 1 else 's', time.strftime('%Y-%m-%d', time.localtime((b.get('updated') or 0) / 1000)))
-            gist = board_gist(b, briefs.get(b['id'])) if detail else ''
-            lines.append(line + ('. About: ' + gist if gist else ''))
+            n, day = len(b.get('items') or []), time.strftime('%Y-%m-%d', time.localtime((b.get('updated') or 0) / 1000))
+            if b['id'] in gists:
+                lines.append('- board "%s": %d item%s, last edited %s. About: %s' % (b.get('name', ''), n, '' if n == 1 else 's', day, board_gist(b, briefs.get(b['id']))))
+            else:
+                rest.append('"%s"' % b.get('name', ''))
+        if rest:
+            lines.append('- %sboards: %s' % ('other ' if len(rest) < len(bs) else '', ', '.join(rest)))
     return {'board': None, 'boardName': '', 'item': None, 'kind': 'map of spaces and boards', 'frame': '',
-            'text': '\n'.join(lines), 'targets': targets, 'spaceOf': space_of}
+            'text': '\n'.join(lines), 'targets': targets, 'names': said_as, 'spaceOf': space_of}
 
 
 def which_answer(given, entries, waiting):
@@ -749,11 +864,64 @@ SORT_Q = re.compile(r"\b(sort|group|organi[sz]e|restructure|rearrange|regroup|ca
 STARTED = re.compile(r"\bI(?:'ve| have)? (?:just )?(?:started|kicked off|set up|launched|begun) (?:an?|the) (?:agent )?(?:task|team)", re.I)
 
 
-def answer(question, history, boards, scope, reader, briefs=None, layout=None, waiting=(), tasks=(), team_text='', seen=None):
+SMALL_TALK = """You are Clewbert, the voice of an app of Miro-style boards (spaces, boards, sticky notes,
+screenshots, PDFs) with AI agents that work on the boards. The user talks to you by voice.
+Decide if the user's message is SMALL TALK or needs their BOARDS or the app.
+- small talk: greetings, how are you, thanks, goodbyes, a joke, a compliment, chit-chat. Nothing to look up, nothing to do.
+- boards: anything else. A question about their boards, a topic, a person, an idea, their agents or tasks; asking to show,
+  open, find, move, start or do something; a follow-up such as "tell me more" or "why"; one word or a name (it may be a
+  search); yes, no or an answer when an agent is waiting on them. When you are not sure, it is boards.
+Reply with JSON only: {"intent": "chat", "reply": "..."} or {"intent": "boards"}.
+A chat reply: one or two short spoken sentences, warm and natural, plain words, no lists, no markdown. Never say you
+did, found, read or saw anything; you may offer to look through their boards or get their agents on something."""
+
+
+def small_talk(question, history=(), waiting=()):
+    """The reply to banter ("yo, how you doing?"), or None when the message needs the boards (the full answer)."""
+    msgs = [{'role': 'system', 'content': SMALL_TALK}]
+    for h in history[-2:]:
+        msgs += [{'role': 'user', 'content': h['q']}, {'role': 'assistant', 'content': json.dumps({'intent': 'boards'})}]
+    msgs.append({'role': 'user', 'content': question + (' (An agent is waiting on the user\'s answer right now.)' if waiting else '')})
+    out = chat(msgs, 150, timeout=20)
+    reply = ' '.join(str(out.get('reply') or '').split())
+    return reply if out.get('intent') == 'chat' and reply else None
+
+
+def answer(question, history, boards, scope, reader, briefs=None, layout=None, waiting=(), tasks=(), team_text='', seen=None, finder=None):
     t0 = LAST_ASK[0] = time.time()
     interrupt_background()
     briefs = briefs or {}
-    entries = brief_entries(boards, briefs, scope, question, history) + context(question, history, boards, reader)
+    # Banter gets a quick reply: a short model call decides "small talk or boards" while the boards are searched,
+    # so a real question loses no time. "Yo, how you doing?" went through the whole search and took 29 s.
+    said, found = {}, {}
+
+    def decide():
+        try:
+            said['reply'] = small_talk(question, history, waiting)
+        except Exception:
+            said['reply'] = None
+
+    def gather():
+        try:
+            found['entries'] = brief_entries(boards, briefs, scope, question, history) + context(question, history, boards, reader, finder)
+        except Exception as e:
+            found['error'] = e
+    side, search = threading.Thread(target=decide, daemon=True), threading.Thread(target=gather, daemon=True)
+    side.start()
+    search.start()
+    late = None
+    while side.is_alive():   # wait for the small-talk check, but never more than 2 s after the search is ready
+        side.join(.05)
+        if not search.is_alive():
+            late = late or time.time()
+            if time.time() - late > 2:
+                break
+    if not side.is_alive() and said.get('reply'):
+        return {'answer': said['reply'], 'sources': [], 'checked': None, 'ms': int((time.time() - t0) * 1000), 'chat': True}
+    search.join()
+    if 'error' in found:
+        raise found['error']
+    entries = found['entries']
     entries += [dict(t, kind='agent task') for t in tasks]   # {board, boardName, item (its frame), run, text}
     if len(boards) == 1:
         entries.append({'board': boards[0]['id'], 'boardName': boards[0].get('name', ''), 'item': None, 'kind': 'board contents',
@@ -812,6 +980,12 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
     last = next((h['did']['card'] for h in reversed(history) if (h.get('did') or {}).get('card')), None)
     card = card_at(edits.get('card'), question, entries, boards[0], reader, last) if single else None
     asked_to_see = bool(SEE.search(question)) or bool(YES.search(question) and history and OFFER.search(history[-1]['a']))   # "yes" to "Want me to open it?"
+    want = WANT.match(question)
+    wanted = None   # "I want <a board's name>": the whole rest of the question is a board or space name
+    if want and layout:
+        rest = re.sub(r'\s+(board|space)$', '', want.group(1).strip(), flags=re.I)
+        wanted = find_target(rest, layout['targets'])
+        asked_to_see = asked_to_see or bool(wanted)
     shown = [e for e in pick(show_nums) if e['item']] if asked_to_see else []   # board items only (the brief is not on the canvas)
     if not asked_to_see:
         view = None
@@ -861,11 +1035,21 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
                 "it will show up as a live demo card in their frame, and I'll tell you when it's ready.")
     if asked_to_see and not shown and not task and not follow_up and not web_card and not opening:   # "put their site on the board" is not the "Put things on the board" frame   # "dive into <frame>": zoom there even when the model left "show" empty
         shown = named_frame(question, entries)
-    opened = (layout['targets'].get(str(go or '').strip().strip('"').lower()) if layout and asked_to_see and not shown else None)
+    opened = (find_target(go, layout['targets']) if layout and asked_to_see and not shown else None)
     if layout and asked_to_see and not shown and not opened and TOP.search(question):
         opened, view = {'space': ''}, None
     if layout and asked_to_see and not shown and not opened:   # the model can say "I have opened the Sales board" and leaves "open" empty
         opened = named_target(question, said, layout['targets'])
+    went = None   # the code, not the model, picked where to go: say so instead of the model's words
+    if layout and asked_to_see and not shown and not opening and not card and history and THAT.search(question) and not TOP.search(question):
+        went = named_target(history[-1]['a'], '', layout['targets'], first=True)   # "open that board": the one the last answer named
+    if wanted and not shown:
+        went = wanted
+    if went and went != opened:
+        opened = went
+    if went:
+        name = next((layout['names'].get(n, n) for n, t in layout['targets'].items() if t == went), '')
+        said = 'Here is the %s %s.' % (name, 'board' if went.get('board') else 'space')
     edit = None   # a move or sort the voice does itself; server.py does it and says what really happened
     one = len(boards) == 1 and scope != 'all' and not scope.startswith('space:')
     for kind in ('move_card', 'sort_frame'):
@@ -923,6 +1107,95 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
             'reading': {'done': sum(r.get('done', 0) for r in reading), 'total': sum(r.get('total', 0) for r in reading)} if reading else None,
             'sources': [{'board': e['board'], 'boardName': e['boardName'], 'item': e['item'], 'kind': e['kind'],
                          'snippet': e['text'][:140]} for e in used if e['board'] and e['kind'] not in ('agent question', 'board team')]}
+
+
+class Finder:
+    """The search bar: every item's words on every board, kept in memory and read again only for a board that changed
+    (or whose pictures were read since), so a keystroke is a scan of memory, not a read of every board file."""
+    TEXT_MAX, READ_MAX = 1500, 500   # letters kept per item, and per picture or PDF (words read off it); the rest is left to the AI answer
+    NO_WORDS = 'A picture with no words in it.'
+
+    def __init__(self, boards_dir, reader):
+        self.dir, self.reader, self.boards, self.lock = boards_dir, reader, {}, threading.Lock()
+
+    def read(self, bid, mtime):
+        with open(os.path.join(self.dir, bid + '.json')) as f:
+            b = json.load(f)
+        items = b.get('items') or []
+        areas = [i for i in items if i.get('type') == 'area']
+        rows, waiting, npass, ntok = [], [], 0, 0
+        for it in items:
+            waiting += [n for n in (image_name(it.get('src')), image_name(it.get('url'))) if n and not os.path.exists(self.reader.path(n))]
+            kind, words = item_words(it, self.reader)
+            if words.strip():   # the passages context() would cut this item into: their number and length, for rank()
+                frame0, w = frame_of(it, areas) if kind != 'frame title' else '', words.split()
+                for start in range(0, len(w), CHUNK_WORDS):
+                    npass += 1
+                    ntok += len(tokens(' '.join(w[start:start + CHUNK_WORDS]) + ' ' + frame0 + ' ' + kind))
+            words = ' '.join(html.unescape(words).split())[:self.READ_MAX if kind in ('screenshot', 'PDF') else self.TEXT_MAX]
+            if not words or words == self.NO_WORDS:
+                continue
+            frame = sys.intern(frame_of(it, areas)) if kind != 'frame title' else ''
+            rows.append((it['id'], kind, frame, words, words.lower()))
+        return {'mtime': mtime, 'name': b.get('name') or 'Untitled board', 'space': b.get('space'), 'rows': rows, 'waiting': waiting,
+                'npass': npass, 'ntok': ntok}
+
+    def fresh(self):
+        with self.lock:
+            now = {}
+            for fn in os.listdir(self.dir):
+                if fn.endswith('.json'):
+                    try:
+                        now[fn[:-5]] = os.stat(os.path.join(self.dir, fn)).st_mtime
+                    except OSError:
+                        pass
+            for bid in set(self.boards) - set(now):
+                del self.boards[bid]
+            for bid, mtime in now.items():
+                b = self.boards.get(bid)
+                if b and b['mtime'] == mtime and not (b['waiting'] and any(os.path.exists(self.reader.path(n)) for n in b['waiting'])):
+                    continue
+                try:
+                    self.boards[bid] = self.read(bid, mtime)
+                except (OSError, ValueError):
+                    pass
+            return dict(self.boards)
+
+    def search(self, q, here=None):
+        """Boards whose name has every word, and items whose words do: a whole word beats the start of one, which beats
+        the middle of one; notes and frame titles (the user's own words) beat words read off pictures. `here` (the open
+        board) comes first and keeps more of its matches."""
+        words = [w for w in re.findall(r"[a-z0-9][a-z0-9'&.-]*", q.lower()) if w not in STOP][:8]
+        if not words:
+            return {'boards': [], 'items': []}
+        starts = [re.compile(r'\b' + re.escape(w)) for w in words]
+        wholes = [re.compile(r'\b' + re.escape(w) + r'\b') for w in words]
+        boards = self.fresh()
+        names, items = [], []
+        for bid, b in boards.items():
+            name = b['name'].lower()
+            if all(w in name for w in words):
+                names.append((-sum(3 if r.search(name) else 1 for r in wholes) - (2 if name.startswith(words[0]) else 0), len(name), bid))
+            for rid, kind, frame, text, low in b['rows']:
+                if not all(w in low for w in words):
+                    continue
+                s = sum(3 if wh.search(low) else 2 if st.search(low) else 1 for wh, st in zip(wholes, starts))
+                s *= 1.5 if kind in ('sticky note', 'text', 'frame title') else 1.2 if kind in ('link', 'file') else 1
+                items.append((-s - (100 if bid == here else 0), len(text), bid, rid, kind, frame, text))
+        names.sort()
+        items.sort(key=lambda x: x[:2])
+        out, per = [], {}
+        for _, _, bid, rid, kind, frame, text in items:
+            per[bid] = per.get(bid, 0) + 1
+            if per[bid] > (20 if bid == here else 3) or len(out) >= 40:
+                continue
+            low = text.lower()
+            at = min((low.find(w) for w in words if w in low), default=0)
+            start = max(0, at - 50)
+            snippet = ('…' if start else '') + text[start:start + 170] + ('…' if start + 170 < len(text) else '')
+            out.append({'board': bid, 'boardName': boards[bid]['name'], 'item': rid, 'kind': kind, 'frame': frame, 'snippet': snippet})
+        return {'boards': [{'id': bid, 'name': boards[bid]['name'], 'space': boards[bid]['space']} for _, _, bid in names[:8]],
+                'items': out, 'words': words}
 
 
 def voices():

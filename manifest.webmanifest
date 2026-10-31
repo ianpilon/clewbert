@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Clewbert",
+  "short_name": "Clewbert",
+  "description": "Your boards and the agents working on them.",
+  "start_url": "/#agents",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f6f8",
+  "theme_color": "#ffffff",
+  "icons": [
+    {"src": "/icons/bulb-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/icons/bulb-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/icons/bulb-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
