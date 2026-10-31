@@ -24,7 +24,7 @@ import ssl
 if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.pem'):
     # the python.org Python ships without certificates until "Install Certificates" is run: use the Mac's own list
     ssl._create_default_https_context = lambda: ssl.create_default_context(cafile='/etc/ssl/cert.pem')
-import guide, models, talk
+import guide, integrations, models, talk
 import briefs
 try:
     import push   # phone notifications; needs the cryptography package, everything else runs without it
@@ -38,6 +38,7 @@ from agents import runner as agents
 PORT = int(sys.argv[1])
 DATA = os.path.abspath(os.path.expanduser(sys.argv[2]))
 models.SETTINGS = os.path.join(DATA, 'settings.json')   # which model does which job, and outside keys (owner-only file)
+integrations.FILE = os.path.join(DATA, 'integrations.json')   # connected apps: Google sign-in and your own MCP servers (owner-only)
 HERE = os.path.dirname(os.path.abspath(__file__))
 BOARDS, IMAGES, TRASH, TALKS, FILES, UPLOADS, THUMBS = (os.path.join(DATA, d) for d in ('boards', 'images', 'trash', 'talks', 'files', 'uploads', 'thumbs'))
 for d in (BOARDS, IMAGES, TRASH, TALKS, FILES, UPLOADS, THUMBS):
@@ -464,6 +465,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != 'HEAD':
             self.wfile.write(body)
 
+    def callback_url(self):
+        """Where Google sends you back: this app's own address as you reached it (register it in Google Cloud)."""
+        host = self.headers.get('X-Forwarded-Host') or self.headers.get('Host') or 'localhost:%d' % PORT
+        host = re.sub(r'^127\.0\.0\.1(?=:|$)', 'localhost', host)   # Google takes http only for localhost
+        local = re.match(r'^(localhost|127\.0\.0\.1)(:\d+)?$', host)
+        scheme = self.headers.get('X-Forwarded-Proto') or ('http' if local else 'https')
+        return '%s://%s/api/integrations/google/callback' % (scheme, host)
+
+    def app_page(self, title, text):
+        """A small page in the browser tab after a sign-in, with the way back."""
+        body = ('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+                '<title>%s</title><body style="font:16px system-ui;max-width:520px;margin:15vh auto;padding:0 16px;'
+                'background:#0b1220;color:#e5e9f0"><h2>%s</h2><p>%s</p><p><a style="color:#7cc4ff" href="/">Back to the canvas</a></p>'
+                % (html.escape(title), html.escape(title), html.escape(text)))
+        return self.reply(200, body.encode(), 'text/html; charset=utf-8')
+
     def read_body(self):
         n = int(self.headers.get('Content-Length') or 0)
         if n > MAX_BODY:
@@ -570,6 +587,23 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, BRIEFER.view(parts[2]))
         if parts == ['api', 'settings']:
             return self.reply(200, dict(models.public(), local=local_models(), startup=local_models(False)))
+        if parts == ['api', 'integrations']:
+            bid = (urllib.parse.parse_qs(self.path.partition('?')[2]).get('board') or [''])[0]
+            return self.reply(200, integrations.public(bid if BOARD_ID.match(bid) else None))
+        if parts == ['api', 'integrations', 'google', 'start']:   # Connect Google: off to Google's own sign-in page
+            try:
+                return self.reply(302, b'', 'text/plain', {'Location': integrations.google_start(self.callback_url())})
+            except ValueError as e:
+                return self.app_page('Google is not set up yet', str(e))
+        if parts == ['api', 'integrations', 'google', 'callback']:   # ...and back here once you allowed it
+            qs = urllib.parse.parse_qs(self.path.partition('?')[2])
+            if qs.get('error'):
+                return self.app_page('Google was not connected', 'Google said: %s.' % qs['error'][0][:100])
+            try:
+                email = integrations.google_finish((qs.get('code') or [''])[0], (qs.get('state') or [''])[0])
+            except (ValueError, OSError) as e:
+                return self.app_page('Google was not connected', str(e))
+            return self.app_page('Google is connected', 'Agents can now use Gmail, Drive and Calendar for %s.' % (email or 'your account'))
         if parts == ['api', 'settings', 'local']:   # the models your own machines serve now, to pick from
             found = own_models()
             return self.reply(200, {'models': found, 'startup': real_names(local_models(False)), 'local': real_names(local_models())})
@@ -753,6 +787,13 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ['api', 'push', 'test']:   # the Agents screen's "Send a test": proves the whole path works
             return self.reply(200, {'sent': PUSH.send({'title': 'Notifications are on', 'body': 'Agents will tell you here when they finish or need you.',
                                                          'url': './#agents', 'tag': 'test'})})
+        if parts == ['api', 'integrations']:   # a change from the Settings card's Connected apps
+            try:
+                return self.reply(200, integrations.change(json.loads(self.read_body())))
+            except ValueError:
+                return self.reply(400, {'error': 'That address does not look right. It starts with https:// or http://.'})
+        if len(parts) == 4 and parts[:3] == ['api', 'integrations', 'test'] and re.match(r'^[0-9a-f]{8}$', parts[3]):
+            return self.reply(200, integrations.test_server(parts[3]))
         if parts == ['api', 'settings', 'servers']:   # add or remove one of your own model servers, from the Settings card
             return self.reply(200, own_server(json.loads(self.read_body())))
         if len(parts) == 4 and parts[:3] == ['api', 'settings', 'test'] and parts[3] in models.JOBS:

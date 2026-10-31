@@ -11,7 +11,7 @@ frame, joined to the Lead's frame by an arrow. The Lead waits (status "team") un
 ended, then reads their results and either hands out a next round or writes the final answer in its own frame.
 """
 import base64, json, os, queue, re, secrets, threading, time, urllib.request
-import models, talk
+import integrations, models, talk
 from . import web
 
 MODEL_URL = os.environ.get('AGENT_MODEL_URL', '')   # a chat/completions address with tool calls on your own machine, or pick a provider in Settings
@@ -256,6 +256,7 @@ class Runner:
         self.store, self.reader, self.brief, self.changed = store, reader, brief, changed
         self.lock = threading.Lock()
         self.runs = {}
+        self.apps = {}   # run id -> its connected-app tools this step (see integrations.py)
         self.q = queue.Queue()
         for fn in sorted(os.listdir(self.dir)):
             if fn.endswith('.json'):
@@ -621,6 +622,12 @@ class Runner:
                 r['status'] = 'done'
                 break
             offered = LEAD_TOOLS if r.get('lead') else TOOLS + (BROWSER_TOOLS if BROWSER_URL else [])
+            apps = [] if r.get('lead') else integrations.tools(r['board'])   # connected apps (Settings), unless off on this board
+            self.apps[r['id']] = {x[1]: x for x in apps}   # (functions: kept beside the run, not in its saved file)
+            if apps and r.get('apps_told') != sorted(self.apps[r['id']]):   # tell it once, and again when the apps change
+                r['apps_told'] = sorted(self.apps[r['id']])
+                r['messages'].append({'role': 'user', 'content': integrations.summary(apps)})
+            offered = offered + [x[0] for x in apps]
             msg = self.call(r['messages'], offered, r.get('model'))
             names = {t['function']['name'] for t in offered}
             calls = msg.get('tool_calls') or []
@@ -884,6 +891,8 @@ class Runner:
                 1 for x in r['steps'][r.get('step_base', 0):] if x['text'].startswith(('Searched the board', 'Read a'))) >= 5:
             # a manager that keeps looking instead of delegating (a Lead once searched the board 14 times first)
             return 'Not done: you have looked enough. Hand the work out now with assign; your reports will dig deeper.'
+        if name in self.apps.get(r['id'], {}):
+            return self.use_app(r, self.apps[r['id']][name], a)
         if name == 'make_demo':
             return self.make_demo(r, str(a.get('title') or 'Demo')[:80], str(a.get('html') or ''))
         if name == 'try_demo':
@@ -988,6 +997,18 @@ class Runner:
         self.step(r, 'Handed out %d part%s: %s' % (len(r['round']), '' if len(r['round']) == 1 else 's',
                                                     ', '.join(str(p['teammate']) for p in parts[:6])))
         return None
+
+    def use_app(self, r, app, a):
+        """A connected app's tool: reading runs; sending, creating, changing or deleting waits for the person's yes."""
+        _, name, needs_yes, fn, label = app
+        shown = ', '.join('%s=%s' % (k, str(v)[:60]) for k, v in a.items() if k != 'confirm')[:200]
+        if needs_yes and not (a.get('confirm') and r.pop('approved', False)):
+            r['approved'] = False
+            return ('Not done: %s on %s changes something outside the board. Ask the person first with ask_user, saying exactly '
+                    'what will be done (who it goes to, what it says). Only if they say yes, make the same call again with confirm '
+                    'true.' % (name, label))
+        self.step(r, 'Used %s: %s%s' % (name, shown, ' (you said yes)' if needs_yes else ''))
+        return str(fn(a))[:integrations.TOOL_CHARS]
 
     def use_browser(self, r, name, a):
         cmd = name[len('browser_'):]

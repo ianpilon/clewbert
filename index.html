@@ -485,6 +485,16 @@
   .stg #stgSrv .stg-res{margin-top:4px}   /* your own models: the name gets the room */
   .stg .oe-row [hidden]{display:none}
   .stg .oe-row input:disabled{background:#f6f7f9;color:var(--muted)}
+  .stg .stg-app{border:1px solid var(--border);border-radius:10px;padding:9px 10px;margin-top:6px}
+  .stg .stg-app code{font-size:11.5px;word-break:break-all;user-select:all}
+  .stg .stg-guide{font-size:12.5px;line-height:1.5;margin:4px 0 8px}
+  .stg .stg-guide summary{cursor:pointer;font-weight:600;color:var(--ink)}
+  .stg .stg-guide ol{margin:6px 0 4px;padding-left:20px}
+  .stg .stg-guide li{margin-bottom:6px}
+  .stg .stg-guide p{margin:4px 0;color:var(--muted)}
+  .stg .stg-guide .oe-row{margin:4px 0;align-items:center}
+  .stg .stg-guide .stg-back{flex:1;min-width:0;padding:5px 6px;border:1px solid var(--border);border-radius:6px}
+  .stg .stg-on{display:flex;gap:8px;align-items:center;font-size:13px;margin-top:6px}
   .stg .stg-msg{font-size:12.5px;color:var(--muted)}
   .stg .stg-msg.bad{color:#b91c1c}
   .org-edit .oe-head{display:flex;gap:8px;align-items:center;margin-bottom:6px}
@@ -934,6 +944,8 @@
   <div id="stgJobs"></div>
   <label>Your own model servers <span>machines on your network that serve models</span></label>
   <div id="stgSrv"></div>
+  <label>Connected apps <span>what the agents can use; sending or changing anything always asks you first</span></label>
+  <div id="stgApps"></div>
   <label>Keys <span>kept on this server only, never shown again in full</span></label>
   <div id="stgKeys"></div>
   <div class="oe-foot"><span class="stg-msg" id="stgMsg"></span><button class="oe-cx" id="stgCancel">Close</button><button class="go" id="stgSave">Save</button></div>
@@ -2352,6 +2364,66 @@ async function stgOpen(){
   $('#stg').hidden=false;stgMsg('');
   try{STG.data=await api('settings');}catch(e){stgMsg('Settings did not load. Reload the page and try again.',true);return;}
   STG.drop=new Set();STG.own=null;stgPaint();stgOwnLoad();   // names as the models that really answer
+  stgAppsLoad();
+}
+/* ---------------- Connected apps: Google straight to Google (your own sign-in app), and your own MCP servers ----------------
+   The server keeps every secret (integrations.json, owner-only) and only says whether one is set. */
+const STG_POST=b=>({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+async function stgAppsLoad(msg,bad){
+  try{STG.apps=await api('integrations'+(cvBoardId?'?board='+cvBoardId:''));}catch(e){$('#stgApps').innerHTML='<div class="stg-res bad">Connected apps did not load. Reload the page and try again.</div>';return;}
+  stgAppsPaint(msg,bad);
+}
+function stgAppsPaint(msg,bad){
+  const a=STG.apps,g=a.google,origin=location.origin.replace('//127.0.0.1','//localhost'),back=origin+'/api/integrations/google/callback';
+  const okAddr=location.protocol==='https:'||/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+  const google=g.connected
+    ?`<div class="oe-row"><span class="stg-sv"><b>Google</b>: connected as ${escapeHtml(g.email||'your account')}. Gmail, Drive and Calendar.</span><button class="oe-cx" id="stgGOff" title="Forget the Google sign-in on this server">Disconnect</button></div>`
+    :`<div class="stg-jn"><b>Google</b>Gmail, Drive and Calendar. Clewbert talks to Google directly, through a sign-in app you make once in your own Google Cloud account. Nothing goes through anyone else.</div>
+      ${stgGoogleGuide(back,okAddr)}
+      <div class="oe-row"><input id="stgGId" placeholder="Client ID" value="${escapeAttr(g.client_id||'')}" autocomplete="off" spellcheck="false"></div>
+      <div class="oe-row"><input id="stgGSec" type="password" autocomplete="new-password" spellcheck="false" placeholder="${g.has_secret?'Client secret saved':'Client secret'}"><button class="go" id="stgGGo">Connect Google</button></div>`;
+  const servers=a.servers.map(x=>`<div class="oe-row" data-sid="${x.id}"><span class="stg-sv" title="${escapeAttr(x.url)}"><b>${escapeHtml(x.name)}</b> ${escapeHtml(x.url)}${x.has_key?' · key saved':''}</span><button class="oe-cx stg-ats">Test</button><button class="oe-cx stg-arm">Remove</button></div>`).join('');
+  const board=a.board?`<label class="stg-on"><input type="checkbox" id="stgAOn"${a.board.on?' checked':''}> Agents on this board can use connected apps</label>`:'';
+  $('#stgApps').innerHTML=`<div class="stg-app">${google}</div>
+    <div class="stg-app"><div class="stg-jn"><b>Your own tool servers</b>MCP servers, by address. Add a key only if the server asks for one.</div>${servers}
+      <div class="oe-row"><input id="stgAName" placeholder="Name, like GitHub" style="flex:none;width:130px" autocomplete="off" spellcheck="false"><input id="stgAUrl" placeholder="Address, like http://192.168.1.20:3000/mcp" autocomplete="off" spellcheck="false"></div>
+      <div class="oe-row"><input id="stgAKey" type="password" placeholder="Key (optional)" autocomplete="new-password" spellcheck="false"><button class="oe-cx" id="stgAAdd">Add</button></div></div>
+    ${board}<div class="stg-res${bad?' bad':msg?' ok':''}">${escapeHtml(msg||'')}</div>`;
+  const send=async(b,done)=>{try{STG.apps=await api('integrations',STG_POST(b));stgAppsPaint(done);return true;}
+    catch(e){stgAppsPaint(e.status===400?'That address does not look right. It starts with https:// or http://.':'Not saved. Reload the page and try again.',true);return false;}};
+  const guide=$('#stgApps .stg-guide');if(guide)guide.ontoggle=()=>{STG.guideOpen=guide.open;};
+  const cp=$('#stgGCopy');if(cp)cp.onclick=async()=>{try{await navigator.clipboard.writeText(back);cp.textContent='Copied';}catch(e){cp.textContent='Select it and copy';}};
+  if(g.connected)$('#stgGOff').onclick=()=>send({google_disconnect:true},'Google disconnected. Agents no longer see your Gmail, Drive or Calendar.');
+  else $('#stgGGo').onclick=async()=>{const id=$('#stgGId').value.trim(),sec=$('#stgGSec').value.trim();
+    if(!id||(!sec&&!g.has_secret)){stgAppsPaint('Paste the client ID and the client secret first.',true);return;}
+    if(await send({google:{client_id:id,client_secret:sec}},'Opening Google…'))location.href='api/integrations/google/start';};
+  $('#stgAAdd').onclick=async()=>{const url=$('#stgAUrl').value.trim();if(!url)return;
+    const before=new Set(STG.apps.servers.map(x=>x.id));
+    if(!await send({add_server:{name:$('#stgAName').value.trim(),url,key:$('#stgAKey').value.trim()}},'Added. Checking it…'))return;
+    const x=STG.apps.servers.find(x=>!before.has(x.id));if(x)stgAppTest(x.id);};
+  document.querySelectorAll('#stgApps .stg-ats').forEach(b=>b.onclick=()=>stgAppTest(b.closest('[data-sid]').dataset.sid));
+  document.querySelectorAll('#stgApps .stg-arm').forEach(b=>b.onclick=()=>send({remove_server:b.closest('[data-sid]').dataset.sid},'Removed.'));
+  if(a.board)$('#stgAOn').onchange=e=>send({board:{id:a.board.id,on:e.target.checked}},e.target.checked?'Agents on this board can use connected apps.':'Connected apps are off on this board.');
+}
+/* The Google setup, step by step: each step opens the right Google Cloud page in a new tab. About 10 minutes, once. */
+function stgGoogleGuide(back,okAddr){
+  const L=(u,t)=>`<a href="${u}" target="_blank" rel="noopener">${t}</a>`;
+  if(!okAddr)return `<div class="stg-res bad">Google only sends you back to an https address or to localhost. Open Clewbert at <b>http://localhost:${escapeHtml(location.port||'80')}</b> on this computer to connect Google, or put Clewbert behind https.</div>`;
+  return `<details class="stg-guide"${STG.guideOpen?' open':''}><summary>How to set this up (about 10 minutes, once)</summary><ol>
+    <li>${L('https://console.cloud.google.com/projectcreate','Create a Google Cloud project')}. Name it Clewbert, press Create, and make sure it is the project picked at the top of the page.</li>
+    <li>${L('https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,drive.googleapis.com,calendar-json.googleapis.com','Turn on Gmail, Drive and Calendar')}. Press Next, then Enable. These are free.</li>
+    <li>${L('https://console.cloud.google.com/auth/overview','Set up the sign-in screen')}. Press Get started. App name: Clewbert. Support email: yours. Audience: <b>External</b>. Contact email: yours. Agree to Google's policy, then Create.</li>
+    <li>${L('https://console.cloud.google.com/auth/audience','Add yourself as a test user')}. Under Test users press Add users, type the Gmail address you will connect, press Save. Reload the page and check your address is in the list: if it is not, Google will block the sign-in.</li>
+    <li>${L('https://console.cloud.google.com/auth/clients/create','Create the client')}. Application type: Web application. Under Authorised redirect URIs press Add URI and paste this address:
+      <div class="oe-row"><code class="stg-back">${escapeHtml(back)}</code><button class="oe-cx" id="stgGCopy">Copy</button></div>Then press Create.</li>
+    <li>Google shows a client ID and a client secret. <b>The secret is shown only once</b>: copy both into the boxes below and press Connect Google. Google warns that the app is not verified. It is your own app: choose Continue, then allow access.</li>
+  </ol><p>While your app is in Google's Testing mode, Google signs you out after 7 days. When that happens, Settings shows Connect Google again: press it.</p></details>`;
+}
+async function stgAppTest(sid){
+  const x=STG.apps.servers.find(x=>x.id===sid);stgAppsPaint('Asking '+(x?x.name:'the server')+' for its tools…');
+  try{const j=await api('integrations/test/'+sid,{method:'POST'});
+    stgAppsPaint(j.ok?`${x.name} works: ${j.tools.length} tool${j.tools.length===1?'':'s'}${j.tools.length?' ('+j.tools.slice(0,8).join(', ')+(j.tools.length>8?'…':'')+')':''}.`:`${x.name} did not answer: ${j.error}`,!j.ok);}
+  catch(e){stgAppsPaint('The test did not run. Reload the page and try again.',true);}
 }
 function stgClose(){$('#stg').hidden=true;}
 function stgMsg(t,bad){const m=$('#stgMsg');m.textContent=t||'';m.classList.toggle('bad',!!bad);}
