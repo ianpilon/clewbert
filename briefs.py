@@ -15,7 +15,7 @@ board items it came from. Kept in DATA_DIR/briefs/<board id>.json.
 - Numbers in the notes and the brief must appear in what they came from; sentences or points that fail are dropped.
 """
 import hashlib, http.client, json, math, os, re, threading, time, traceback
-import talk
+import skills, talk
 
 PART_WORDS = 2500
 CALL_WORDS = 12000   # notes sent in one combining call (a board with 47,000 words of notes broke a 65,000-token model window)
@@ -125,7 +125,7 @@ def read_part(board_name, part):
             ids.append(p['item'])
         lines.append('[%d] %s: %s' % (ids.index(p['item']) + 1, p['kind'], p['text']))
     where = ('the frame "%s"' % part['frame']) if part['frame'] else 'the items outside any frame'
-    out = talk.chat([{'role': 'system', 'content': PART_SYSTEM},
+    out = talk.chat([{'role': 'system', 'content': PART_SYSTEM + skills.text('board-brief-writer')},
                      {'role': 'user', 'content': 'Board: "%s". This part is %s.\n\nITEMS:\n%s' % (board_name, where, '\n\n'.join(lines))}],
                     350, timeout=180, background=True)
     source_text = ' '.join(p['text'] for p in part['pieces'])
@@ -146,7 +146,7 @@ def summarize(board_name, where, notes):
     """One call: several notes as one set of notes on all of them (numbers not in the notes are dropped)."""
     yield_to_questions()
     lines = ['[%d] %s' % (n, x) for n, x in enumerate(notes, 1)]
-    out = talk.chat([{'role': 'system', 'content': FRAME_SYSTEM},
+    out = talk.chat([{'role': 'system', 'content': FRAME_SYSTEM + skills.text('board-brief-writer')},
                      {'role': 'user', 'content': 'Board: "%s". These notes are on %s.\n\nNOTES:\n%s' % (board_name, where, '\n\n'.join(lines))}],
                     500, timeout=300, background=True)
     if '_text' in out:
@@ -229,7 +229,7 @@ def combine(board_name, parts, tree=None):
     if not lines:
         return None
     yield_to_questions()
-    out = talk.chat([{'role': 'system', 'content': BRIEF_SYSTEM},
+    out = talk.chat([{'role': 'system', 'content': BRIEF_SYSTEM + skills.text('board-brief-writer')},
                      {'role': 'user', 'content': 'Board: "%s"\n\nNOTES ON EACH PART:\n%s' % (board_name, '\n\n'.join(lines))}],
                     2500, timeout=300, background=True)
     if '_text' in out:   # still not JSON after repair: never show the raw reply, try again later

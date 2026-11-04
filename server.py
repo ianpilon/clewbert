@@ -18,7 +18,8 @@ Binds 127.0.0.1 only; Cloudflare Access sits in front of it on the tunnel.
   DATA_DIR/runs/<id>.json     agent tasks: each one fills a frame on its board (see agents/runner.py)
   DATA_DIR/push/              the phones that get notifications, and what was already pushed (see push.py)
 """
-import base64, concurrent.futures, gzip, hashlib, html, json, mimetypes, os, queue, re, secrets, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
+import array, base64, concurrent.futures, gzip, hashlib, html, json, math, mimetypes, os, queue, re, secrets, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request, zipfile
+import xml.etree.ElementTree as ET
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import ssl
 if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.pem'):
@@ -30,6 +31,8 @@ try:
     import push   # phone notifications; needs the cryptography package, everything else runs without it
 except ImportError:
     push = None
+import router
+import skills as skillbook   # the Upskill store (a profile's skill counts are called skills)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools'))
 import miro_import
 import arrange
@@ -361,6 +364,56 @@ def read_spaces():
         return {'spaces': []}
 
 
+RULES_FILE = os.path.join(DATA, 'rules_board')
+skillbook.DATA = DATA   # every agent's added skills (Upskill), DATA/skills.json
+FIRST_RULES = [   # what the user has already told us, in their words where we have them; the user edits the board like any other
+    'No middlemen: no Composio, no Pipedream, no hosted services in between, unless the user says so for this job.',
+    'Ask the user before sending, posting, buying or anything that leaves the board.',
+    'Every board is treated the same; no board is special.',
+    'Never say done without proof on the board: a source for every fact, a commit for every code change.',
+    'Never invent facts, names, numbers or links. If you did not find it, say so.',
+    'Plain words and short sentences. Spell out acronyms.',
+]
+RULE_Q = re.compile(r"^\s*(?:please\s+)?(?:add\s+(?:this\s+)?(?:to\s+)?(?:my|the)\s+(?:standing\s+)?rules|add\s+a\s+(?:standing\s+)?rule(?:\s+for\s+(?:every|all)\s+teams?)?|"
+                    r"remember\s+for\s+(?:every|all)\s+teams?)\s*[:,-]?\s*(.{6,})$|^\s*from\s+now\s+on,?\s+((?:every\s+team|all\s+teams|teams|agents)\s+.{6,})$", re.I)
+
+
+def rules_board():
+    """The one board of standing rules every agent team reads (made on first use, one sticky note per rule)."""
+    try:
+        with open(RULES_FILE) as f:
+            bid = f.read().strip()
+        if os.path.exists(board_path(bid)):
+            return bid
+    except OSError:
+        pass
+    t = now_ms()
+    bid = secrets.token_hex(6)
+    items = [{'id': 'rule' + secrets.token_hex(4), 'type': 'note', 'text': text, 'x': 40 + (k % 3) * 320, 'y': 140 + (k // 3) * 200,
+              'w': 290, 'h': 170, 'z': k + 1} for k, text in enumerate(FIRST_RULES)]
+    items.insert(0, {'id': 'ruletitle', 'type': 'text', 'text': 'Standing rules for every agent team. One rule per note: add, change or delete '
+                     'notes here, and every team reads them before it starts.', 'x': 40, 'y': 40, 'w': 940, 'h': 60, 'z': 0})
+    with LOCK:
+        write_json(board_path(bid), {'id': bid, 'name': 'Standing rules for agent teams', 'created': t, 'updated': t,
+                                     'items': items, 'view': None, 'space': None})
+        with open(RULES_FILE, 'w') as f:
+            f.write(bid)
+    return bid
+
+
+def add_rule(text):
+    bid = rules_board()
+
+    def put(board):
+        notes = [i for i in board.get('items') or [] if i.get('type') == 'note']
+        k = len(notes)
+        board['items'] = (board.get('items') or []) + [{'id': 'rule' + secrets.token_hex(4), 'type': 'note', 'text': text,
+                                                        'x': 40 + (k % 3) * 320, 'y': 140 + (k // 3) * 200, 'w': 290, 'h': 170, 'z': k + 1}]
+        board['updated'] = now_ms()
+    edit_board(bid, put)
+    return bid
+
+
 def all_boards():
     out = []
     for fn in os.listdir(BOARDS):
@@ -393,9 +446,54 @@ def file_words(path, ext):
         if ext in TEXTUTIL:
             r = subprocess.run(['textutil', '-convert', 'txt', '-stdout', path], capture_output=True, timeout=120)
             return r.stdout.decode('utf-8', 'replace') if r.returncode == 0 else ''
-    except (OSError, subprocess.TimeoutExpired):
+        if ext in ('xlsx', 'xlsm'):
+            return sheet_words(path)
+    except (OSError, subprocess.TimeoutExpired, zipfile.BadZipFile, ET.ParseError, KeyError):
         pass
     return ''
+
+
+def sheet_words(path, cap=2_000_000):
+    """A spreadsheet as text: each sheet by name, one row per line, cells split by tabs (a team once compared the user's
+    research with a spreadsheet it could not read, and worked from a screenshot instead)."""
+    ns = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+    rel = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id'
+    col = lambda ref: sum((ord(ch) - 64) * 26 ** k for k, ch in enumerate(reversed(re.sub(r'\d', '', ref)))) - 1
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        shared = [''.join(t.text or '' for t in si.iter('{%s}t' % ns['m']))
+                  for si in ET.fromstring(z.read('xl/sharedStrings.xml')).findall('m:si', ns)] if 'xl/sharedStrings.xml' in names else []
+        rels = {r.get('Id'): r.get('Target') for r in ET.fromstring(z.read('xl/_rels/workbook.xml.rels'))}
+        out, size = [], 0
+        for sh in ET.fromstring(z.read('xl/workbook.xml')).iter('{%s}sheet' % ns['m']):
+            target = rels.get(sh.get(rel), '').lstrip('/')
+            target = target if target.startswith('xl/') else 'xl/' + target
+            if target not in names:
+                continue
+            out.append('Sheet: %s' % sh.get('name'))
+            for row in ET.fromstring(z.read(target)).iter('{%s}row' % ns['m']):
+                cells = {}
+                for c in row.findall('m:c', ns):
+                    v, kind = c.find('m:v', ns), c.get('t')
+                    if kind == 'inlineStr':
+                        text = ''.join(t.text or '' for t in c.iter('{%s}t' % ns['m']))
+                    elif v is None or v.text is None:
+                        continue
+                    elif kind == 's':
+                        text = shared[int(v.text)] if int(v.text) < len(shared) else ''
+                    elif kind == 'b':
+                        text = 'TRUE' if v.text == '1' else 'FALSE'
+                    else:
+                        text = v.text
+                    cells[col(c.get('r') or 'A')] = ' '.join(text.split())
+                if cells:
+                    line = '\t'.join(cells.get(k, '') for k in range(max(cells) + 1))
+                    out.append(line)
+                    size += len(line)
+                    if size > cap:
+                        return '\n'.join(out)
+            out.append('')
+    return '\n'.join(out).strip()
 
 
 def finish_upload(part, filename):
@@ -568,6 +666,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(200, f.read(), 'image/png', {'Cache-Control': 'max-age=86400'})
             except FileNotFoundError:
                 return self.reply(404, {'error': 'no such icon'})
+        if len(parts) == 2 and parts[0] == 'fonts' and re.match(r'^[a-z0-9-]{1,40}\.woff2$', parts[1]):   # the sticky notes' hand font
+            try:
+                with open(os.path.join(HERE, 'fonts', parts[1]), 'rb') as f:
+                    return self.reply(200, f.read(), 'font/woff2', {'Cache-Control': 'max-age=604800'})
+            except FileNotFoundError:
+                return self.reply(404, {'error': 'no such font'})
         if len(parts) == 3 and parts[:2] == ['api', 'live'] and BOARD_ID.match(parts[2]):
             return self.live(parts[2])
         if parts == ['api', 'unfurl']:
@@ -630,6 +734,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {'runs': RUNNER.view(parts[2]), 'items': items})
         if len(parts) == 3 and parts[:2] == ['api', 'runs'] and BOARD_ID.match(parts[2]):
             return self.reply(200, RUNNER.steps(parts[2]) or {'error': 'no such task'})
+        if parts == ['api', 'library']:   # the Agents screen's library: every agent and what it can do
+            return self.reply(200, agent_library())
+        if len(parts) == 3 and parts[:2] == ['api', 'library'] and re.match(r'^[a-z][a-z0-9-]{0,40}$', parts[2]):   # one agent's profile page
+            p = agent_profile(parts[2])
+            return self.reply(200, p) if p else self.reply(404, {'error': 'no such agent'})
         if parts == ['api', 'tasks']:   # the phone app's Agents screen: every task on every board
             names = board_names()
             return self.reply(200, {'runs': [dict(r, boardName=names[r['board']]) for r in RUNNER.view() if r['board'] in names]})
@@ -697,13 +806,18 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(200, f.read(), 'image/jpeg', {'Cache-Control': 'no-cache'})
             except FileNotFoundError:
                 return self.reply(404, {'error': 'no screenshot yet'})
-        if len(parts) == 3 and parts[:2] == ['api', 'boardshots'] and parts[2].endswith('.jpg') and BOARD_ID.match(parts[2][:-4]):
-            # a board's picture for its card; the page asks with ?u=<updated>, so a current one is kept by the browser
+        if len(parts) == 3 and parts[:2] == ['api', 'boardshots'] and parts[2].endswith('.jpg') and BOARD_ID.match(re.sub(r'-dark$', '', parts[2][:-4])):
+            # a board's picture for its card (<id>-dark.jpg: the dark one, for dark mode); the page asks with ?u=<updated>, so a
+            # current one is kept by the browser. A dark one not taken yet is answered with the light one, never kept.
+            bid = re.sub(r'-dark$', '', parts[2][:-4])
             path = os.path.join(BOARDSHOTS, parts[2])
+            stand_in = parts[2].endswith('-dark.jpg') and not os.path.exists(path)
+            if stand_in:
+                path = os.path.join(BOARDSHOTS, bid + '.jpg')
             try:
                 with open(path, 'rb') as f:
                     data = f.read()
-                fresh = os.stat(path).st_mtime >= os.stat(board_path(parts[2][:-4])).st_mtime
+                fresh = not stand_in and os.stat(path).st_mtime >= os.stat(board_path(bid)).st_mtime
             except OSError:
                 # the page draws the preview itself; never kept (Cloudflare otherwise has the browser keep a 404 for 4 h)
                 return self.reply(404, {'error': 'no picture yet'}, headers={'Cache-Control': 'no-store'})
@@ -778,6 +892,15 @@ class Handler(BaseHTTPRequestHandler):
     def post(self, parts):
         if parts[:2] == ['api', 'push'] and not PUSH:
             return self.reply(503, NO_PUSH)
+        if len(parts) == 4 and parts[:2] == ['api', 'library'] and parts[3] == 'skills' and parts[2] in UPSKILL:   # Upskill
+            text = ' '.join(str(json.loads(self.read_body()).get('text') or '').split())[:600]
+            if not text:
+                return self.reply(400, {'error': 'say the skill in a few words'})
+            with LOCK:
+                sk = skillbook.load()
+                sk.setdefault(parts[2], []).append({'id': secrets.token_hex(4), 'text': text, 'added': now_ms()})
+                write_json(os.path.join(DATA, 'skills.json'), sk)
+            return self.reply(201, {'skills': sk[parts[2]]})
         if parts == ['api', 'push', 'subscribe']:   # this phone wants notifications
             PUSH.subscribe(json.loads(self.read_body()))
             return self.reply(201, {'ok': True})
@@ -1018,12 +1141,49 @@ class Handler(BaseHTTPRequestHandler):
             # follow-ups use the last turns of THIS conversation (board, space or all), kept on disk
             # since (off a board): the mic was opened then, or it is a search-bar question: older turns are not history
             since = req.get('since') if isinstance(req.get('since'), (int, float)) else 0
-            history = [{'q': t['q'], 'a': t['a'], 'did': t.get('did'), 't': t.get('t', 0)} for t in read_talk(talk_id)['turns'] if not t['a'].startswith(NOT_MOVED) and t.get('t', 0) >= since] if BOARD_ID.match(talk_id) or talk_id in ('all', 'unsorted') else []
+            history = [{'q': t['q'], 'a': t['a'], 'did': t.get('did'), 'route': t.get('route'), 't': t.get('t', 0)} for t in read_talk(talk_id)['turns'] if not t['a'].startswith(NOT_MOVED) and t.get('t', 0) >= since] if BOARD_ID.match(talk_id) or talk_id in ('all', 'unsorted') else []
             # carry: the voice brought the user here mid-conversation ("open the Research board"); what was said just before counts
             carry = [{'q': str(c['q'])[:500], 'a': str(c['a'])[:2000], 'did': None, 't': c['t']} for c in (req.get('carry') or [])[:6]
                      if isinstance(c, dict) and c.get('q') and c.get('a') and isinstance(c.get('t'), (int, float))]
             have = {(h['t'], h['q']) for h in history}
             history = sorted(history + [c for c in carry if (c['t'], c['q']) not in have], key=lambda h: h['t'])[-3:]
+            waiting_on = PENDING.get(talk_id)
+            if waiting_on and time.time() - waiting_on['t'] > 1800:   # old: forgotten
+                PENDING.pop(talk_id, None)
+                waiting_on = None
+            said_back = pending_reply(question) if waiting_on else None
+            m = RULE_Q.match(question) if not waiting_on else None
+            if m:   # "add to my rules: ..." / "from now on every team ...": a standing rule, said once
+                rule = (m.group(1) or m.group(2)).strip().rstrip('.') + '.'
+                rule = rule[0].upper() + rule[1:]
+                add_rule(rule)
+                text = 'Added to your standing rules for every team: "%s"' % rule
+                turn = {'q': question, 'a': text, 'sources': [], 'checked': None, 't': now_ms(), 'route': 'rules'}
+                with LOCK:
+                    conv = read_talk(talk_id)
+                    conv['turns'] = (conv['turns'] + [turn])[-500:]
+                    write_json(talk_path(talk_id), conv)
+                return self.reply(200, {'answer': text, 'sources': [], 'turn': turn})
+
+            def settle(said_back):   # a yes does it, a no drops it
+                PENDING.pop(talk_id, None)
+                if said_back == 'yes':
+                    why = {'asked': waiting_on.get('asked', ''), 'said': waiting_on['say'], 'answer': question, 'when': now_ms(),
+                           'by': 'Assistant', 'where': req.get('board') and 'on this board' or 'from %s' % talk_id}
+                    try:
+                        text, extra = run_pending(waiting_on['action'], why)
+                    except (OSError, ValueError, KeyError) as e:
+                        text, extra = 'That did not work (%s), so nothing was added.' % str(e)[:120], {}
+                else:
+                    text, extra = 'Okay, I won\'t.', {}
+                turn = {'q': question, 'a': text, 'sources': [], 'checked': None, 't': now_ms(), 'route': 'confirm'}
+                with LOCK:
+                    conv = read_talk(talk_id)
+                    conv['turns'] = (conv['turns'] + [turn])[-500:]
+                    write_json(talk_path(talk_id), conv)
+                return self.reply(200, {'answer': text, 'sources': [], 'turn': turn, **extra})
+            if said_back:   # plain yes or no: no model needed
+                return settle(said_back)
             if req.get('board'):
                 try:
                     boards = [read_board(str(req['board']))] if BOARD_ID.match(str(req['board'])) else []
@@ -1040,13 +1200,36 @@ class Handler(BaseHTTPRequestHandler):
                 boards = [b for b in all_boards() if (b.get('space') if b.get('space') in spaces else None) in within]
                 scope = 'space:' + ('Unsorted' if sid is None else spaces[sid]['name'])
             try:
-                # the map of all spaces and boards goes with every question, so the layout itself can be talked about
-                everything = all_boards()
+                picked = []
+                if req.get('board') and isinstance(req.get('selected'), list):
+                    on = {i['id'] for i in boards[0].get('items') or []}
+                    picked = [str(x) for x in req['selected'][:300] if str(x) in on]
                 here = ('inside the board "%s"' % scope if req.get('board') else 'on the list of all boards' if talk_id == 'all'
                         else 'in the %s space' % scope[6:] if talk_id != 'unsorted' else 'on the list of boards not in any space')
                 if req.get('board'):
                     sp = spaces.get(boards[0].get('space'))
                     here += ' (in the %s space)' % sp['name'] if sp else ' (not in any space)'
+                    if picked:
+                        here += ', with %d item%s selected' % (len(picked), '' if len(picked) == 1 else 's')
+                    done = [r['task'].split(' (This is about')[0][:200] for r in RUNNER.view(boards[0]['id']) if r.get('status') in ('done', 'partial') and not r.get('parent')][-3:]
+                    if done:   # "what would it take to build this" right after a team answered it: the answer is on the board
+                        here += '. Teams that already finished their work on this board: %s' % '; '.join('"%s"' % d for d in done)
+                # what kind of question it is, decided while the map below is built (small talk and app questions skip it)
+                apps = integrations.names() if integrations.board_on(boards[0]['id'] if req.get('board') else None) else []
+                early = {}
+                agent_waits = bool([w for w in RUNNER.news()['waiting'] if w['board'] in {b['id'] for b in boards}])
+
+                def route_now():
+                    try:
+                        early['route'], early['reply'] = talk.small_talk(question, history, [1] if agent_waits else [], here, apps,
+                                                                         (waiting_on or {}).get('say', ''))
+                    except Exception:
+                        early['route'], early['reply'] = 'boards', None
+                routing = threading.Thread(target=route_now, daemon=True)
+                routing.start()
+                t_ask = time.time()
+                # the map of all spaces and boards goes with every question, so the layout itself can be talked about
+                everything = all_boards()
                 layout = talk.layout_entry(list(spaces.values()), everything, {b['id']: BRIEFER.load(b['id']) for b in everything}, here, detail=not req.get('board'),
                                            question=question, history=history)
                 names = {b['id']: b.get('name', '') for b in boards}
@@ -1054,7 +1237,38 @@ class Handler(BaseHTTPRequestHandler):
                 tasks = [{'board': t['board'], 'boardName': names.get(t['board'], ''), 'item': t['frame'], 'run': t['id'], 'frame': '',
                           'ended': t.get('ended'), 'text': RUNNER.progress(t)} for t in sorted(RUNNER.recent(set(names)), key=lambda t: t['created'])][-6:]
                 result = talk.answer(question, history, boards, scope, READER, {b['id']: BRIEFER.load(b['id']) for b in boards}, layout,
-                                     waiting, tasks, RUNNER.team_text(boards[0]['id']) if req.get('board') else '', req.get('seen'), FINDER)
+                                     waiting, tasks, RUNNER.team_text(boards[0]['id']) if req.get('board') else '', req.get('seen'), FINDER,
+                                     here=here, apps=apps, routed=(routing, early),
+                                     selected=picked, bid=boards[0]['id'] if req.get('board') else None, pending=(waiting_on or {}).get('say', ''),
+                                     spaces=[x['name'] for x in spaces.values()], pending_raw=(waiting_on or {}).get('raw'),
+                                     spaces_text='\n'.join('- %s%s: %s' % (x['name'], ' (inside %s)' % spaces[x['parent']]['name'] if x.get('parent') in spaces else '',
+                                                                             ', '.join(b.get('name', '') for b in everything if b.get('space') == x['id'])[:300])
+                                                            for x in spaces.values()))
+                print('%s ask %.2fs route=%s %r' % (time.strftime('%Y-%m-%d %H:%M:%S'), time.time() - t_ask, result.get('route'), question[:60]), flush=True)
+                if result.get('route') in ('yes', 'no') and waiting_on:   # the check heard agreement or a refusal in other words
+                    return settle(result['route'])
+                proposal = result.pop('proposal', None)
+                plan = result.pop('team', None)
+                if plan:   # a team job: ask first, saying where its work goes (on the selected items, when there are some)
+                    sel = []
+                    if picked:
+                        sel, about = task_items(boards[0], [{'board': boards[0]['id'], 'item': x} for x in picked], [])
+                        plan['task'] = plan.get('task', question) + about
+                        plan['n_selected'] = len(picked)
+                    pend = propose_team(plan, boards[0] if req.get('board') else None, space if space in spaces else None, list(spaces.values()), sel)
+                    if pend:
+                        pend['asked'] = question
+                        PENDING[talk_id] = pend
+                        result['answer'] = pend['say']
+                if proposal:   # the Assistant wants to put things on a board: say it in plain words and wait for their word
+                    pend = propose(proposal, boards[0] if req.get('board') else None, space if space in spaces else None, list(spaces.values()))
+                    if pend:
+                        pend['asked'] = question   # kept with what it adds: why it is on the board
+                        PENDING[talk_id] = pend
+                        result['answer'] = pend['say']
+                        for k in ('task', 'show', 'open', 'view', 'web_card', 'add_teammate', 'follow_up', 'steer', 'agent_answer', 'edit'):
+                            result.pop(k, None)   # one thing at a time: what it said it is about to do, nothing else
+                        result['sources'] = result.get('sources') or []
                 edit = result.pop('edit', None)
                 shown_card = result.pop('shown_card', None)
                 did = {'card': shown_card} if shown_card else None   # "the card below that" next time means this card
@@ -1067,10 +1281,15 @@ class Handler(BaseHTTPRequestHandler):
                     result['answer'] = NOT_MOVED + " Tell me which card and where it should go, and I'll move it."
 
                 task, mode = result.pop('task', None), result.pop('task_mode', 'team')
-                if task and req.get('board'):   # "have the team / an agent ...": a task frame on this board
-                    sel, about = task_items(boards[0], result.get('sources') or [], read_talk(talk_id)['turns'])
-                    r = RUNNER.start(boards[0]['id'], task + about, sel, None, mode)
-                    result['started'] = {'run': r['id'], 'frame': r['frame']}
+                if task and req.get('board'):   # "have the team / an agent ...": asked first, like any team job
+                    sel, about = task_items(boards[0], [{'board': boards[0]['id'], 'item': x} for x in picked] or result.get('sources') or [],
+                                            read_talk(talk_id)['turns'])
+                    pend = propose_team({'task': task + about, 'mode': mode, 'explicit': True, 'n_selected': len(picked)}, boards[0], None,
+                                        list(spaces.values()), sel)
+                    if pend:
+                        pend['asked'] = question
+                        PENDING[talk_id] = pend
+                        result['answer'] = pend['say']
                 card = result.pop('web_card', None)   # a live web page on the board, if the site lets itself be shown there
                 if card and req.get('board'):
                     url = card if card.startswith('http') else 'https://' + card
@@ -1091,7 +1310,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(503, {'error': 'no model', 'message': 'No model is set up yet. Open Settings (the gear on the home page) and pick one.'})
             except (OSError, ValueError, KeyError):
                 return self.reply(503, {'error': 'the model did not answer'})
+            if PENDING.get(talk_id):   # still waiting for their word (a question in between leaves it waiting)
+                result['pending_action'] = {'id': PENDING[talk_id]['id'], 'say': PENDING[talk_id]['say']}
             turn = {'q': question, 'a': result['answer'], 'sources': result['sources'], 'checked': result.get('checked'), 't': now_ms(),
+                    'route': result.get('route') or 'boards',
                     **({'did': did} if did else {})}
             with LOCK:
                 conv = read_talk(talk_id)
@@ -1127,6 +1349,9 @@ class Handler(BaseHTTPRequestHandler):
                 upstream = None
             if upstream is None:
                 return self.reply(503, {'error': 'voice service unavailable'})
+            gain = VOICE_GAIN.get(voice, 1.0)
+            pcm = 'octet-stream' in upstream.headers.get('Content-Type', 'application/octet-stream')
+            odd = b''
             with upstream:   # stream the speech through as it is made (no length; the connection closes at the end)
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/octet-stream')
@@ -1138,6 +1363,8 @@ class Handler(BaseHTTPRequestHandler):
                         chunk = upstream.read1(16384) if hasattr(upstream, 'read1') else upstream.read(16384)
                         if not chunk:
                             break
+                        if pcm and gain != 1.0:
+                            chunk, odd = louder(odd + chunk, gain)
                         self.wfile.write(chunk)
                         self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
@@ -1212,14 +1439,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(404, {'error': 'no such board'})
             board['name'] = str(req.get('name') or 'Untitled board')[:200]
             # agents add items while the page is open: keep theirs that this page has not seen yet (and not deleted),
-            # and a task frame keeps the size the agent grew it to
+            # and a task frame keeps the size the agent grew it to while its team is still at work (once it is done, the
+            # page's size wins: otherwise scaling a finished frame down snapped its height back, 2026-11-03)
             sent = {i.get('id'): i for i in req['items'] if isinstance(i, dict)}
             gone = set(req.get('deleted') or [])
+            live = {r['id'] for r in RUNNER.view(bid) if r['status'] in agents.ACTIVE}
             for i in board.get('items') or []:
                 if i.get('agent') and i['id'] not in sent and i['id'] not in gone:
                     req['items'].append(i)
-                elif i.get('run') and i['id'] in sent:
+                elif i.get('run') in live and i.get('type') == 'area' and i['id'] in sent:
                     sent[i['id']]['h'] = max(sent[i['id']].get('h', 0), i.get('h', 0))
+                elif i.get('chart') and i['id'] in sent:   # a team's org chart box: its status is the team's to change
+                    sent[i['id']].update(text=i.get('text'), color=i.get('color'), org=i.get('org'))
             # a page that has not seen a move made here yet sends the item at its old place: keep the move
             moves = {k: v for k, v in (MOVED.get(bid) or {}).items() if time.time() - v[2] < 900}
             MOVED[bid] = moves
@@ -1229,6 +1460,20 @@ class Handler(BaseHTTPRequestHandler):
                 if it and any(abs(it.get('x', 0) - ox) < .5 and abs(it.get('y', 0) - oy) < .5 for ox, oy in olds):
                     it.update(x=new['x'], y=new['y'], z=new.get('z', it.get('z')), w=new.get('w', it.get('w')), h=new.get('h', it.get('h')))
                     kept = True
+            # when each item first arrived: an item this board has not had is stamped now (added by hand), and a page that
+            # never saw a stamp or a record does not wipe it (records of why began on October 31, 2026)
+            stored = {i['id']: i for i in board.get('items') or [] if isinstance(i, dict) and i.get('id')}
+            for it in req['items']:
+                if not isinstance(it, dict) or not it.get('id'):
+                    continue
+                old = stored.get(it['id'])
+                if old is None:
+                    if not it.get('added') and not it.get('agent'):
+                        it['added'] = now_ms()
+                else:
+                    for k in ('added', 'why', 'voice'):   # voice: the user's recorded reason for adding it
+                        if k in old and k not in it:
+                            it[k] = old[k]
             board['items'] = req['items']
             board['view'] = req.get('view')
             board['updated'] = now_ms()
@@ -1238,6 +1483,12 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, {'updated': board['updated'], **({'refresh': True} if kept else {})})   # kept: this page should fetch the board
 
     def delete(self, parts):
+        if len(parts) == 5 and parts[:2] == ['api', 'library'] and parts[3] == 'skills' and parts[2] in UPSKILL:   # take a skill back
+            with LOCK:
+                sk = skillbook.load()
+                sk[parts[2]] = [x for x in sk.get(parts[2]) or [] if x['id'] != parts[4]]
+                write_json(os.path.join(DATA, 'skills.json'), sk)
+            return self.reply(200, {'skills': sk[parts[2]]})
         sid = self.space_id(parts)
         if sid:   # deleting a space never deletes boards: they become unsorted
             with LOCK:
@@ -1548,6 +1799,259 @@ def regroup(ids, groups):
     return out
 
 
+# ---------- the Assistant's confirmation line: say what is about to happen, wait for a yes ----------
+PENDING = {}   # conversation id -> {'id', 'say', 'action', 't'}: proposed, not done; kept 30 minutes, in memory only
+SAY_YES = re.compile(r"^\W*(yes|yeah|yep|yup|ya|yah|ok|okay|k|sure|go|go ahead|do it|please|please do|sounds good|perfect|great|"
+                     r"that's right|correct|absolutely|definitely|of course|for sure|mm+[- ]?hm+|uh[- ]?huh|mhm+|alright|all right)\b[\w\s,.!']*$", re.I)
+SAY_NO = re.compile(r"^\W*(no|nope|nah|never ?mind|cancel|stop|don't|do not|forget it|leave it|not now)\b", re.I)
+CHANGE_WORDS = re.compile(r"\b(but|actually|instead|rather|only|except|change|different|another|other|new board|in the|into)\b", re.I)
+
+
+def pending_reply(text):
+    """'yes', 'no' or None (a change, or something else) for a reply while an action waits."""
+    t = ' '.join(str(text).split())
+    if len(t.split()) <= 6 and SAY_YES.match(t) and not CHANGE_WORDS.search(t):
+        return 'yes'
+    if SAY_NO.match(t) and len(t.split()) <= 4:
+        return 'no'
+    return None
+
+
+def space_named(name, spaces):
+    """The space a model named ("Side projects" for "Side Projects"), or None."""
+    import difflib
+    n = str(name or '').strip().lower()
+    if not n:
+        return None
+    by = {x['name'].lower(): x for x in spaces}
+    if n in by:
+        return by[n]
+    near = difflib.get_close_matches(n, list(by), 1, .75)
+    return by[near[0]] if near else None
+
+
+def propose(p, here_board, here_space, spaces):
+    """A proposal from the Assistant -> the action and the sentence that says it (the app's words, never the model's)."""
+    emails = [str(x) for x in (p.get('email_ids') or []) if str(x).strip()][:30]
+    files = [str(x) for x in (p.get('file_ids') or []) if str(x).strip()][:30]
+    events = [str(x) for x in (p.get('event_ids') or []) if str(x).strip()][:40]
+    cards = [{'text': str(c.get('text') or '').strip()[:900], 'url': str(c.get('url') or '').strip()[:500]}
+             for c in (p.get('cards') or []) if isinstance(c, dict) and str(c.get('text') or '').strip()][:30]
+    n = len(emails) + len(files) + len(events) + len(cards)
+    if not n:
+        return None
+    only = [k for k, v in (('email', emails), ('Drive file', files), ('calendar event', events), ('card', cards)) if v]
+    what = '%d %s%s' % (n, only[0] if len(only) == 1 else 'card', '' if n == 1 else 's')
+    title = ' '.join(str(p.get('frame_title') or '').split())[:80] or 'From your apps'
+    a = {'emails': emails, 'files': files, 'events': events, 'cards': cards, 'title': title, 'what': what}
+    if p.get('where') == 'this board' and here_board:
+        a.update(board=here_board['id'])
+        say = 'Want me to add %s to this board, in a frame called "%s"?' % (what, title)
+    else:
+        sp = space_named(p.get('space'), spaces) or (next((x for x in spaces if x['id'] == here_space), None) if here_space else None)
+        name = ' '.join(str(p.get('board_name') or title).split())[:80]
+        a.update(new_board=name, space=sp['id'] if sp else None)
+        say = 'Want me to make a new board called "%s"%s with %s?' % (name, ' in %s' % sp['name'] if sp else ' with your unsorted boards', what)
+    return {'id': secrets.token_hex(4), 'say': say, 'action': a, 't': time.time(), 'raw': p}
+
+
+def attachment_item(filename, data):
+    """An email attachment kept like a dropped file: a PDF becomes its first-page picture (a click opens the PDF), a
+    picture is itself. -> board item fields (no place yet), or None."""
+    if data[:5] == b'%PDF-':
+        part = os.path.join(UPLOADS, secrets.token_hex(6))
+        with open(part, 'wb') as f:
+            f.write(data)
+        r = finish_upload(part, filename)
+        if not r.get('src'):
+            return None
+        item = {'type': 'img', 'src': r['src'], 'url': r['url'], 'label': filename}
+        pic = os.path.join(IMAGES, r['src'].rsplit('/', 1)[1])
+    elif data[:3] == b'\xff\xd8\xff' or data[:8] == b'\x89PNG\r\n\x1a\n':
+        name = hashlib.sha256(data).hexdigest() + ('.png' if data[:4] == b'\x89PNG' else '.jpg')
+        pic = os.path.join(IMAGES, name)
+        if not os.path.exists(pic):
+            with open(pic + '.tmp', 'wb') as f:
+                f.write(data)
+            os.replace(pic + '.tmp', pic)
+        READER.add(name)
+        item = {'type': 'img', 'src': 'api/images/' + name, 'label': filename}
+    else:
+        return None
+    try:   # its shape, so the card on the board is not stretched
+        out = subprocess.run(['sips', '-g', 'pixelWidth', '-g', 'pixelHeight', pic], capture_output=True, text=True, timeout=20).stdout
+        w, h = (int(re.search(r'%s: (\d+)' % k, out).group(1)) for k in ('pixelWidth', 'pixelHeight'))
+        item['ratio'] = h / w
+    except (OSError, AttributeError, ValueError, subprocess.TimeoutExpired):
+        item['ratio'] = 1.29
+    return item
+
+
+def card_source(c):
+    """Where one card came from, in words, for its "why" record."""
+    first = c.get('text', '').split('\n')
+    if c.get('kind') == 'email':
+        head, subj = first[0], (first[1] if len(first) > 1 else '')
+        return {'app': 'Gmail', 'title': 'Email from %s: %s' % (head, subj), 'url': c.get('url', '')}
+    if c.get('kind') == 'event':
+        return {'app': 'Google Calendar', 'title': 'Event: %s, %s' % (first[1] if len(first) > 1 else '', first[0]), 'url': c.get('url', '')}
+    if c.get('kind') == 'file':
+        return {'app': 'Google Drive', 'title': 'Drive file: %s' % first[0], 'url': c.get('url', '')}
+    return {'app': 'Assistant', 'title': 'Written by the Assistant from what it read', 'url': c.get('url', '')}
+
+
+def propose_team(plan, here_board, here_space, spaces, sel=None):
+    """A team job -> the action and the question that asks for it (where its work goes, said out loud)."""
+    task = ' '.join(str(plan.get('task') or '').split())[:1200]
+    if not task:
+        return None
+    mode = 'one' if plan.get('mode') == 'one' else 'team'
+    who = 'an agent' if mode == 'one' else 'a team'
+    lead = ('' if plan.get('explicit') else "That's a bigger job: %s. " % plan['why'].rstrip('.') if plan.get('why')
+            else "That's a bigger job. ")   # the user did not ask for a team: say why one is offered
+    a = {'kind': 'team', 'task': task, 'mode': mode, 'sel': list(sel or []), 'intent': plan.get('intent')}
+    it = plan.get('intent') or {}
+    if plan.get('changed'):   # a change to the set-up the user is about to say yes to: no "bigger job" or "can't" said twice
+        lead = ''
+    elif it.get('cannot') and it.get('deliver'):   # say up front what no team can do (a team once "engineered" an integration it could not build)
+        lead += "A team can hand back %s, but it can't %s. " % (
+            it['deliver'].rstrip('.'), it['cannot'][0].lower() + it['cannot'][1:].rstrip('.'))
+    if here_board:
+        a['board'] = here_board['id']
+        n = plan.get('n_selected') or 0   # what the user selected (the team also gets the cards stacked with them)
+        on = 'the %d selected item%s' % (n, '' if n == 1 else 's') if n else 'it'
+        say = '%sWant me to start %s on %s and put its work on this board?' % (lead, who, on)
+    else:
+        name = ' '.join(str(plan.get('board_name') or 'Team work').split())[:80]
+        sp = space_named(plan.get('space'), spaces) or (next((x for x in spaces if x['id'] == here_space), None) if here_space else None)
+        also = space_named(plan.get('space_also'), spaces) if not plan.get('changed') else None
+        new_space = ' '.join(str(plan.get('new_space') or '').split())[:60] if not sp else ''
+        a.update(new_board=name, space=sp['id'] if sp else None, new_space=new_space or None)
+        where = (' in %s' % sp['name'] + (', or would %s be better' % also['name'] if also and also['id'] != sp['id'] else '') if sp else
+                 ' in a new space called "%s"' % new_space if new_space else ' with your unsorted boards')
+        say = '%sWant me to start %s on it, on a new board called "%s"%s?' % (lead, who, name, where)
+    return {'id': secrets.token_hex(4), 'say': say, 'action': a, 't': time.time(), 'raw': dict(plan, kind='team')}
+
+
+def run_team(a):
+    """Start the team the user said yes to, on this board or on a new board (in a new space when that was the plan)."""
+    if a.get('new_board'):
+        space = a.get('space')
+        if a.get('new_space'):
+            with LOCK:
+                sp = read_spaces()
+                hit = next((x for x in sp['spaces'] if x['name'].lower() == a['new_space'].lower()), None)
+                if not hit:
+                    hit = {'id': secrets.token_hex(6), 'name': a['new_space'], 'created': now_ms()}
+                    sp['spaces'].append(hit)
+                    write_json(SPACES, sp)
+                space = hit['id']
+        t = now_ms()
+        board = {'id': secrets.token_hex(6), 'name': a['new_board'], 'created': t, 'updated': t, 'items': [], 'view': None, 'space': space}
+        with LOCK:
+            write_json(board_path(board['id']), board)
+        r = RUNNER.start(board['id'], a['task'], [], None, a['mode'], intent=a.get('intent'))
+        where = next((x['name'] for x in read_spaces()['spaces'] if x['id'] == space), None)
+        return ('Started. %s working on the new board "%s"%s. I\'ll tell you when it\'s done or needs you.'
+                % ('The team is' if a['mode'] == 'team' else 'An agent is', a['new_board'], ' in %s' % where if where else ''),
+                {'open': {'board': board['id']}})
+    r = RUNNER.start(a['board'], a['task'], a.get('sel') or [], None, a['mode'], intent=a.get('intent'))
+    return ('Started. %s working on it here. I\'ll tell you when it\'s done or needs you.' % ('The team is' if a['mode'] == 'team' else 'An agent is'),
+            {'started': {'run': r['id'], 'frame': r['frame']}})
+
+
+def run_pending(a, why=None):
+    if a.get('kind') == 'team':
+        return run_team(a)
+    """Do what was confirmed: build the cards from the apps themselves, put them in a frame. -> (what to say, extra reply fields)."""
+    made, missed = [], 0
+    for e in a['emails']:
+        try:
+            card = integrations.email_card(e)
+        except (OSError, ValueError):
+            missed += 1
+            continue
+        try:   # its PDFs and pictures go on the board themselves, in place of the link back to Gmail
+            card['files'] = [f for f in (attachment_item(n, data) for n, data in integrations.email_attachments(e)) if f]
+        except (OSError, ValueError):
+            card['files'] = []
+        made.append(card)
+    for f in a['files']:
+        try:
+            made.append(integrations.file_card(f))
+        except (OSError, ValueError):
+            missed += 1
+    for ev in a.get('events') or []:
+        try:
+            made.append(integrations.event_card(ev))
+        except (OSError, ValueError):
+            missed += 1
+    made += [dict(c, kind='card') for c in a['cards']]
+    if not made:
+        return 'I couldn\'t get those from your apps just now, so nothing was added.', {}
+    if a.get('new_board'):
+        t = now_ms()
+        board = {'id': secrets.token_hex(6), 'name': a['new_board'], 'created': t, 'updated': t, 'items': [], 'view': None,
+                 'space': a.get('space')}
+        with LOCK:
+            write_json(board_path(board['id']), board)
+        bid = board['id']
+    else:
+        bid = a['board']
+    tag = 'voice-' + secrets.token_hex(4)
+
+    def put(board):
+        items = board.get('items') or []
+        unit = 1 / max(((board.get('view') or {}).get('s') or 1), 1e-4) if items else 1.0
+        pad, gap, w, link_h, cols = 28 * unit, 18 * unit, 240 * unit, 70 * unit, min(3, len(made))
+        x = (max(i['x'] + i['w'] for i in items) + 160 * unit) if items else 100.0
+        y = min(i['y'] for i in items) if items else 100.0
+        head = 0
+        cells, col_y = [], [y + pad + head] * cols
+        for k, c in enumerate(made):
+            col = k % cols
+            rows = sum(max(1, -(-len(l) // 30)) for l in c['text'].split('\n'))   # about 30 letters a line at this size
+            nh = max(80, min(340, 34 + rows * 19)) * unit
+            cx = x + pad + col * (w + gap)
+            src = card_source(c)
+            stamp = {'why': dict(why, source=src)} if why else {}
+            if c.get('files'):   # an email with a PDF or picture: the attachment is what matters, no note with it
+                nh = -6 * unit
+            else:
+                cells.append({'type': 'note', 'text': c['text'], 'lines': True, 'fs': 13 * unit, 'x': cx, 'y': col_y[col], 'w': w, 'h': nh, **stamp})
+            for f in c.get('files') or []:   # an email's PDF or picture, under its note
+                fh = w * min(max(f.pop('ratio', 1.29), .3), 2.5)
+                cells.append(dict(f, x=cx, y=col_y[col] + nh + 6 * unit, w=w, h=fh,
+                                  **({'why': dict(why, source=dict(src, title='%s, attached to the %s' % (f.get('label', 'A file'), src['title'][0].lower() + src['title'][1:])))} if why else {})))
+                nh += 6 * unit + fh
+            if c.get('url') and not c.get('files'):
+                app = 'Gmail' if 'mail.google' in c['url'] else 'Calendar' if 'calendar' in c['url'] else 'Drive' if 'drive.google' in c['url'] or 'docs.google' in c['url'] else ''
+                cells.append({**stamp, 'type': 'link', 'url': c['url'], 'unfurl': {'title': 'Open in ' + app if app else 'Open the link', 'pub': app or None},
+                              'x': cx, 'y': col_y[col] + nh + 6 * unit, 'w': w, 'h': link_h})
+                col_y[col] += nh + 6 * unit + link_h + gap
+            else:
+                col_y[col] += nh + gap
+        fw, fh = 2 * pad + cols * w + (cols - 1) * gap, max(col_y) - y + pad - gap
+        z = max([i.get('z', 1) for i in items] + [1])
+        frame = {'id': 'f' + tag[6:], 'type': 'area', 'text': a['title'], 'color': '#f3f6fb', 'agent': tag, 'x': x, 'y': y, 'w': fw, 'h': fh, 'z': 1}
+        if why:
+            frame['why'] = dict(why, source={'app': 'Assistant', 'title': 'A frame for %s' % a['what']})
+        board['items'] = [frame] + items + [dict(c, id='v' + secrets.token_hex(5), agent=tag, z=z + 1 + k) for k, c in enumerate(cells)]
+        return frame['id']
+    frame = edit_board(bid, put)
+    live_send(bid, {'kind': 'saved', 'updated': now_ms()}, '')
+    BRIEFER.touch(bid)
+    n = len(made)
+    pdfs = sum(len(c.get('files') or []) for c in made)
+    if pdfs:
+        n_word = '%d card%s with %d attachment%s' % (n, '' if n == 1 else 's', pdfs, '' if pdfs == 1 else 's')
+    miss = ' %d couldn\'t be found in your apps.' % missed if missed else ''
+    what = n_word if pdfs else '%d card%s' % (n, '' if n == 1 else 's')
+    if a.get('new_board'):
+        return 'Done: I made the board "%s" with %s.%s Opening it now.' % (a['new_board'], what, miss), {'open': {'board': bid}}
+    return 'Done: I added %s to this board.%s' % (what, miss), {'show': [{'board': bid, 'item': frame}]}
+
+
 MOVED = {}   # board -> {item: ([old places], new item, when)}: moves made here, kept when a page still showing an old place saves
 
 
@@ -1573,8 +2077,77 @@ def edit_board(bid, fn):
 
 BRIEFER = briefs.Briefer(DATA, READER, read_board, lambda: [b['id'] for b in sorted(all_boards(), key=lambda b: len(b.get('items') or []))])   # small boards first: they are ready in minutes
 
+rules_board()   # made once, with the rules the user has already given
 RUNNER = agents.Runner(DATA, type('Store', (), {'read_board': staticmethod(read_board), 'edit_board': staticmethod(edit_board)}),
                        READER, BRIEFER.load, BRIEFER.touch)
+def builtins_frame():
+    """A frame on the rules board that says what is built into the app for agent teams, written from the code's own
+    settings each time the server starts, so it cannot drift from what the app really does. The user's rules stay theirs; these
+    cards are marked builtin (agents do not read them as rules) and are written again on every start."""
+    S = agents
+    cards = [
+        ('Reading the web', 'Nov 2', ['First: a plain read, under a second (the page as text)',
+            'Then: Lightpanda, a light browser that runs the page\'s JavaScript (up to 20 seconds), when the plain read '
+            'is turned away or comes back nearly empty',
+            'Last: Chrome on the browser service, only to click, type, fill in a form, or show you the page (its screenshot goes on the board)',
+            'Lightpanda: ' + ('on' if S.BROWSER_URL else 'off (no browser machine set up)')]),
+        ('Blocked sites', 'Nov 2', ['Skipped after: 2 pages of one site turn both readers away',
+            'For: the whole job; every teammate is told at once, and the Lead each round',
+            'Never: getting around a block (search engine caches, web archives, reader services)',
+            'Second tries: a part about a blocked site is not sent back']),
+        ('Steps', 'Nov 2', ['Each teammate: %d steps' % S.PART_STEPS, 'The Lead: %d steps' % S.MAX_STEPS,
+            'Free: reading the board, and a page a teammate already read in this job (up to %d per teammate)' % S.FREE_TURNS]),
+        ('Sticky notes', 'Nov 2', ['Hold: one short thought, up to %d characters (links not counted)' % S.STICKY_MAX,
+            'Shape: a fixed square or rectangle; it never grows or scrolls, words that do not fit fade out',
+            'Longer from an agent: goes on a card instead, whatever the agent asked for',
+            'Font: handwritten']),
+        ('Cards', 'Nov 2', ['For: a finding with details (title, "Label: value" rows, its source link)',
+            'Also: the intent, done-when, check results and disagreements a team puts on the board']),
+        ('Org chart', 'Nov 1', ['Where: above the team\'s work, when a team is set up',
+            'Shows: each teammate, why they are on the team, when their part is done, and how it is going']),
+        ('After each job', 'Nov 2', ['A card: What got in the way (blocked sites, pages read with Lightpanda, free steps)']),
+        ('Watchdog', 'Nov 3', ['Looks: every minute, at every team',
+            'Stuck: no progress for %d minutes gets one push to you and a line in the team\'s frame' % router.STALL_MIN,
+            'Stopped early: a team that ends unfinished or with an error is started again once, from its frame',
+            'Never: a team you stopped, a teammate\'s part (the Lead retries those), or work that ended before a restart']),
+        ('Router', 'Nov 3', ['Reads: new inbox email and calendar changes in the next 3 days, every 3 minutes',
+            'Drops first: no-reply senders, promotions and social mail, anything already seen',
+            'Then: your own model sorts the rest by the rules note on the Incoming board: ignore, note, or suggest a task',
+            'Record-only: it never starts a task, replies or sends; a suggested task has Start this task in its card\'s menu',
+            'Email goes to: the models on your own machines only, never an outside provider']),
+    ]
+    try:
+        bid = rules_board()
+
+        def put(board):
+            items = [i for i in board.get('items') or [] if not i.get('builtin')]
+            x0 = max([i['x'] + i.get('w', 0) for i in items if 'x' in i] + [0]) + 120
+            y0 = min([i['y'] for i in items if 'y' in i] + [40])
+            w, gap, pad, top = 320, 24, 28, 70
+            heights = [44 + 19 * sum(1 + len(l) // 30 for l in lines) for _, _, lines in cards]   # rows wrap in their value column
+            cols = [[], []]
+            for k in range(len(cards)):
+                cols[0 if sum(heights[j] for j in cols[0]) <= sum(heights[j] for j in cols[1]) else 1].append(k)
+            out = [{'id': 'builtin-frame', 'type': 'area', 'builtin': 1, 'color': '#f3f6fb', 'x': x0, 'y': y0, 'z': 0,
+                    'w': 2 * w + gap + 2 * pad, 'h': top + pad + max(sum(heights[j] + gap for j in c) for c in cols),
+                    'text': 'Built into the app (ask Claude to change these)'}]
+            for c, col in enumerate(cols):
+                y = y0 + top
+                for k in col:
+                    title, since, lines = cards[k]
+                    out.append({'id': 'builtin-%d' % k, 'type': 'note', 'builtin': 1, 'card': 1, 'grow': 'h', 'color': '#eef4ff', 'fs': 13,
+                                'x': x0 + pad + c * (w + gap), 'y': y, 'w': w, 'h': heights[k], 'z': 2,
+                                'text': '%s\n%s\nSince: %s' % (title, '\n'.join(lines), since)})
+                    y += heights[k] + gap
+            board['items'] = items + out
+        edit_board(bid, put)
+    except (OSError, ValueError, KeyError) as e:
+        print('built-in rules frame not written:', e)
+
+
+threading.Thread(target=builtins_frame, daemon=True).start()   # what the app does for agent teams, on the rules board
+threading.Thread(target=RUNNER.backfill_charts, daemon=True).start()   # older teams get their org chart, once
+threading.Thread(target=RUNNER.backfill_cards, daemon=True).start()   # older teams' long notes become cards, once
 
 def seed_examples():
     """A brand-new data folder starts with the example boards, in an Examples space. Once only: deleted ones stay deleted."""
@@ -1609,28 +2182,51 @@ BOARDSHOT_FAILED = {}
 BOARDSHOT_SEEN = [None, False]   # the board being photographed, and whether its page got the items
 
 
-def boardshot(bid, mtime):
-    """Photographs one board's preview (index.html?shot=<id>, a 320x160 card at 2x, about 15 KB). The picture's file
-    time is the board file's time it showed, so a board saved while it was taken is taken again."""
-    png, jpg = os.path.join(BOARDSHOTS, bid + '.png'), os.path.join(BOARDSHOTS, bid + '.jpg')
+def boardshot(bid, mtime, dark=False):
+    """Photographs one board's preview (index.html?shot=<id>, a 320x160 card at 2x, about 15 KB), light, or dark for dark
+    mode (<id>-dark.jpg). The picture's file time is the board file's time it showed, so a board saved while it was taken
+    is taken again."""
+    name = bid + ('-dark' if dark else '')
+    png, jpg = os.path.join(BOARDSHOTS, name + '.png'), os.path.join(BOARDSHOTS, name + '.jpg')
     tmp = jpg + '.' + secrets.token_hex(4) + '.jpg'
     BOARDSHOT_SEEN[:] = [bid, False]
     try:
         subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
                         '--user-data-dir=' + os.path.expanduser('~/Library/Caches/clewbert-boardshots'),
                         '--window-size=320,160', '--force-device-scale-factor=2', '--virtual-time-budget=15000',
-                        '--screenshot=' + png, 'http://127.0.0.1:%d/?shot=%s' % (PORT, bid)], capture_output=True, timeout=90)
+                        '--screenshot=' + png, 'http://127.0.0.1:%d/?shot=%s%s' % (PORT, bid, '&dark=1' if dark else '')], capture_output=True, timeout=90)
         subprocess.run(['sips', '-s', 'format', 'jpeg', '-s', 'formatOptions', '75', png, '--out', tmp], capture_output=True, timeout=60)
         if not BOARDSHOT_SEEN[1]:
             raise OSError('the page did not get the board')   # a blank picture is not kept
         os.utime(tmp, (mtime, mtime))
         os.replace(tmp, jpg)
     except (OSError, subprocess.SubprocessError):
-        BOARDSHOT_FAILED[bid] = mtime   # not tried again until the board changes
+        BOARDSHOT_FAILED[name] = mtime   # not tried again until the board changes
     finally:
         for f in (png, tmp):
             if os.path.exists(f):
                 os.remove(f)
+
+
+# The trained voices come out of the engine at different loudness: measured 2026-11-03 over 4 lines, Gen Jones -28.4 dBFS,
+# Kathryn Louise -27.9, Barry Eads -26.7, William Manire -25.8, Pete Williams -24.5, Steve Andersen -18.5. Gen Jones was
+# barely heard on the user's phone. Each is raised to about -20 dBFS here, as the speech streams through.
+VOICE_GAIN = {'gen-jones': 2.6, 'kathryn-louise': 2.5, 'barry-eads': 2.2, 'william-manire': 1.9, 'pete-williams': 1.7}
+
+
+def louder(data, gain):
+    """Raises 16-bit speech by gain; the loudest peaks are rounded off softly instead of clipping. -> (samples, a split byte to carry on)."""
+    n = len(data) // 2 * 2
+    a = array.array('h', data[:n])
+    knee, room = 24000, 32767 - 24000
+    for i, x in enumerate(a):
+        y = x * gain
+        if y > knee:
+            y = knee + room * math.tanh((y - knee) / room)
+        elif y < -knee:
+            y = -knee - room * math.tanh((-y - knee) / room)
+        a[i] = int(y)
+    return a.tobytes(), data[n:]
 
 
 def boardshot_loop():
@@ -1649,20 +2245,488 @@ def boardshot_loop():
                 mtime = os.stat(os.path.join(BOARDS, fn)).st_mtime
             except OSError:
                 continue
-            try:
-                shot = os.stat(os.path.join(BOARDSHOTS, bid + '.jpg')).st_mtime
-            except OSError:
-                shot = 0
-            if shot < mtime and time.time() - mtime > 15 and BOARDSHOT_FAILED.get(bid) != mtime:
-                todo.append((mtime, bid))
-        for mtime, bid in sorted(todo, reverse=True)[:20]:
-            boardshot(bid, mtime)
+            for dark in (False, True):   # the light picture first, then the dark one for dark mode
+                name = bid + ('-dark' if dark else '')
+                try:
+                    shot = os.stat(os.path.join(BOARDSHOTS, name + '.jpg')).st_mtime
+                except OSError:
+                    shot = 0
+                if shot < mtime and time.time() - mtime > 15 and BOARDSHOT_FAILED.get(name) != mtime:
+                    todo.append((mtime, not dark, bid, dark))
+        for mtime, _, bid, dark in sorted(todo, reverse=True)[:20]:   # newest boards first, light before dark
+            boardshot(bid, mtime, dark)
         time.sleep(1 if todo else 20)
 
 
 threading.Thread(target=boardshot_loop, daemon=True).start()
 PUSH = push.Push(DATA, named_news) if push else None
 NO_PUSH = {'message': 'Notifications need one Python package on the computer that runs Clewbert: pip3 install cryptography, then restart Clewbert.'}
+
+
+def incoming_board():
+    """The router's board: what came into email and the calendar, sorted by the rules note the user edits (made on first use)."""
+    path = os.path.join(DATA, 'router', 'board')
+    try:
+        with open(path) as f:
+            bid = f.read().strip()
+        if os.path.exists(board_path(bid)):
+            return bid
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    t = now_ms()
+    bid = secrets.token_hex(6)
+    items = [{'id': 'routertitle', 'type': 'note', 'color': 'none', 'grow': 'h', 'fs': 15, 'x': 40, 'y': 40, 'w': 1700, 'h': 60, 'z': 1,
+              'text': 'Incoming: the router reads new email and calendar events every few minutes and sorts them with the rules on '
+                      'the left. It only records; it never starts, replies or sends.'},
+             {'id': 'routerrules', 'type': 'note', 'text': router.FIRST_RULES, 'x': 40, 'y': 140, 'w': 300, 'h': 300, 'z': 2, 'fs': 12}]
+    with LOCK:
+        write_json(board_path(bid), {'id': bid, 'name': 'Incoming', 'created': t, 'updated': t, 'items': items, 'view': None, 'space': None})
+        with open(path, 'w') as f:
+            f.write(bid)
+    return bid
+
+
+class _NoPush:   # notifications are optional here: the watchdog and router still work, they only skip the phone
+    def send(self, *a, **k):
+        return 0
+
+
+WATCHDOG = router.Watchdog(RUNNER, PUSH or _NoPush())
+ROUTER = router.Router(DATA, incoming_board(), read_board, edit_board, RUNNER, PUSH or _NoPush())
+
+
+def agent_library():
+    """Every agent in the app and what it can do, for the top of the Agents screen. Written from the code's own settings
+    and tool lists on each call, so it cannot drift from what the agents really do."""
+    def model(job):
+        c = models.choice(job)
+        return ('%s on %s (an outside provider)' % (c[1], c[0])) if c else 'your own machines'
+    names = lambda tools: {t['function']['name'] for t in tools}
+    uses = {'search_board': 'reads the board', 'add_text': 'writes in its frame', 'ask_user': 'asks you', 'assign': 'hands parts to teammates',
+            'web_search': 'searches and reads the web', 'make_demo': 'builds a demo page and tries it like a person'}
+    google = bool((integrations.load().get('google') or {}).get('refresh_token'))
+    rs = ROUTER.state
+    c = rs.get('counts') or {}
+    today = c.get('day') == time.strftime('%Y-%m-%d')
+    briefs = len([f for f in os.listdir(os.path.join(DATA, 'briefs')) if f.endswith('.json')]) if os.path.isdir(os.path.join(DATA, 'briefs')) else 0
+    always = [
+        {'name': 'Assistant', 'color': '#2563eb', 'what': 'The voice you talk to. Answers about your boards, email, calendar and Drive, '
+         'moves and adds things on a board, and starts agent teams when you ask.', 'never': 'Sends, books or deletes anything without your yes.',
+         'status': 'Runs when you talk to it, on %s.' % model('voice')},
+        {'name': 'Router', 'color': '#f59e0b', 'what': 'Every 3 minutes reads new inbox email and calendar changes in the next 3 days, and '
+         'sorts them by your rules note: ignore, note it, or suggest a task.', 'never': 'Starts a task, replies or sends. Email never goes '
+         'to an outside provider.', 'status': ('' if rs.get('last') else 'Has not looked yet.') if google
+         else 'Waiting: Google is not connected (Settings).', 'last': rs.get('last'),
+         'today': ('Today: %d noted, %d suggested tasks, %d ignored.' % (c.get('note', 0), c.get('task', 0), c.get('ignore', 0) + c.get('skipped', 0))) if today else '',
+         'link': {'board': ROUTER.board, 'label': 'Open the Incoming board'}},
+        {'name': 'Watchdog', 'color': '#dc2626', 'what': 'Every minute looks at every team. A team with no progress for %d minutes gets one '
+         'push to you; a team that stops unfinished or with an error is started again once, from its frame.' % router.STALL_MIN,
+         'never': 'Touches a team you stopped, or work that ended before a restart.', 'last': WATCHDOG.last,
+         'status': '' if WATCHDOG.last else 'Starting.',
+         'today': 'Since the server started: %d stuck teams flagged, %d restarted.' % (WATCHDOG.flagged, WATCHDOG.retried)},
+        {'name': 'Board brief writer', 'color': '#0f766e', 'what': 'In the background reads each whole board, part by part, and writes '
+         'one brief of it, so the Assistant can answer about a board of any size.', 'never': 'Changes a board. It pauses while you are asking.',
+         'status': '%d boards have a brief, on %s.' % (briefs, model('voice'))},
+    ]
+    lead = names(agents.LEAD_TOOLS)
+    worker = names(agents.TOOLS)
+    team = []
+    for key, m in agents.STARTERS.items():
+        if key == 'lead':
+            u = [uses[n] for n in ('search_board', 'add_text', 'ask_user', 'assign') if n in lead | {'assign'}]
+        else:
+            u = [uses[n] for n in ('search_board', 'add_text', 'web_search', 'ask_user') if n in worker]
+            if agents.BROWSER_URL:
+                u.append('clicks, types and fills in forms in the agents\' browser')
+            if key.startswith('engineer'):
+                u.append('reads and edits code on the team\'s own branch, then checks and commits it')
+            if key == 'developer' and 'make_demo' in worker:
+                u.append(uses['make_demo'])
+            if google:
+                u.append('your connected Google apps (sending needs your yes)')
+        role = re.split(r'(?<=\.)\s', m.get('role', ''), maxsplit=1)[0]
+        team.append({'name': m['name'], 'color': m.get('color', '#475569'), 'what': role, 'uses': u,
+                     'model': 'the code model' if key in agents.STRONG_ROLES else model('agents')})
+    stats = agent_work()
+    for a in always:
+        a['key'] = re.sub(r'[^a-z]+', '-', a['name'].lower()).strip('-')
+    for a, key in zip(team, agents.STARTERS):
+        a['key'] = key
+        w = stats.get(key) or []
+        checked = [x for x in w if x['check']]
+        a['jobs'] = len(w)
+        saved = sum(max(0, x['human'] - x['ran']) for x in w) / 60
+        a['stat'] = ('%d jobs' % len(w) + (' · %d%% passed' % round(100 * sum(x['check']['pass'] for x in checked) / len(checked)) if checked else '')
+                     + (' · ~%s h saved' % (round(saved) if saved >= 10 else round(saved, 1)) if saved >= .1 else '')) if w else 'No jobs yet'
+    team.sort(key=lambda a: -a['jobs'])   # the ones called on most first
+    for k, a in enumerate(team[:3]):
+        if a['jobs']:
+            a['badge'] = 'Most called on' if k == 0 else 'Top 3'
+    return {'always': always, 'team': team}
+
+
+# What a person would take for each thing an agent did, in minutes: a rough, stated estimate, shown on the profile page.
+# (step-text pattern, skill, what one is called, minutes for a person)
+WORK_RATES = [
+    (r'^(Read|Opened) https?:', 'Web research', 'pages read', 4),
+    (r'^Read the (source|code) of|^Searched the code of', 'Web research', 'page sources read', 6),
+    (r'^Searched the web for', 'Web research', 'web searches', 2),
+    (r'^(Searched the board|Read (a|the) )', 'Reading the board', 'board items read', 0.5),
+    (r'^Added (a note|text|a heading|a card)', 'Writing on the board', 'notes and cards written', 3),
+    (r'^Added a link', 'Writing on the board', 'links added', 1),
+    (r'^Grouped (\d+)', 'Organizing', 'items grouped', 0.25),
+    (r'^(Made|Updated) the demo', 'Building demos', 'demo versions built', 20),
+    (r'^Tried the demo', 'Building demos', 'demo checks', 1),
+    (r'^Used (gmail|calendar|drive)', 'Email and calendar', 'lookups', 2),
+    (r'^(Clicked|Typed|Scrolled|Filled)', 'Using a browser', 'clicks and keystrokes', 0.5),
+    (r'^Handed out (\d+)', 'Leading', 'parts handed out', 5),
+    (r'^Checked against its done', 'Checking', 'checks', 2)]
+
+
+def work_of(steps):
+    """What one run did, counted from its steps: {(skill, name): count}, and the minutes a person would have taken."""
+    got, mins = {}, 0
+    for st in steps:
+        t = st.get('text') or ''
+        for pat, skill, name, rate in WORK_RATES:
+            m = re.match(pat, t)
+            if m:
+                n = int(m.group(1)) if m.groups() and str(m.group(1)).isdigit() else 1
+                got[(skill, name)] = got.get((skill, name), 0) + n
+                mins += n * rate
+                break
+    return got, mins
+
+
+def agent_work():
+    """Every part each standard role did, from the saved tasks: role key -> [work], newest first. A teammate a Lead made for
+    one job (its own name, an id like researcher-2) counts toward its role, with a "made for" line."""
+    runs = RUNNER.view()
+    by = {r['id']: r for r in runs}
+    names = board_names()
+    out = {}
+    for r in runs:
+        if r.get('member'):
+            key = re.sub(r'-\d+$', '', str(r['member'].get('id') or ''))
+        elif not r.get('parent') and r.get('crew'):
+            key = 'lead'   # a team's top task is its Lead's work
+        else:
+            continue
+        key = key if key in agents.STARTERS else agents.KIND_BASE.get(key, key)
+        if key not in agents.STARTERS:
+            continue
+        root = r
+        while root.get('parent') and root['parent'] in by:
+            root = by[root['parent']]
+        m = next((c for c in root.get('crew') or [] if c.get('id') == (r.get('member') or {}).get('id')), None) if r.get('member') else None
+        name = (r.get('member') or {}).get('name') or agents.STARTERS[key]['name']
+        with RUNNER.lock:
+            full = RUNNER.runs.get(r['id']) or {}
+            steps = list(full.get('steps') or [])
+        did, mins = work_of(steps)
+        ran = max(0, ((r.get('ended') or (steps[-1]['t'] if steps else r['created'])) - r['created']) / 60000)
+        out.setdefault(key, []).append({'id': root['id'], 'task': r['task'], 'board': r['board'], 'boardName': names.get(r['board'], ''),
+            'start': r['created'], 'ran': round(ran, 1), 'human': round(mins), 'did': [[k[0], k[1], v] for k, v in did.items()],
+            'summary': ' '.join(str(full.get('summary') or '').split())[:400], 'team': len(root.get('crew') or []),
+            'status': r['status'], 'when': r.get('ended') or r['created'], 'check': r.get('check'),
+            'madeFor': name if name != agents.STARTERS[key]['name'] else None, 'why': (m or {}).get('why'), 'job': root['task']})
+    for w in out.values():
+        w.sort(key=lambda x: -x['when'])
+    return out
+
+
+AG_WORDS = {'done': 'done', 'partial': 'done, with gaps', 'unfinished': 'stopped before finishing', 'failed': 'stopped by an error',
+            'stopped': 'stopped by the user', 'working': 'still working', 'queued': 'waiting to start', 'waiting': 'waiting on the user', 'team': 'leading a team'}
+
+BUILTIN_WHY = {
+    'assistant': 'Built first, with the app: so you can ask about your boards, email and calendar by voice and get things done hands-free.',
+    'router': 'Added on Nov 3, 2026, after DeepSeek\'s Super-agent article: so new email and calendar changes are sorted for you, '
+              'with code rules first and the model second, and nothing is done without you while it is new.',
+    'watchdog': 'Added on Nov 3, 2026, after DeepSeek\'s Super-agent article: teams were left showing "Stopped: didn\'t finish" or '
+                'went quiet with nobody noticing.',
+    'board-brief-writer': 'Added so a question can be answered about a board of any size: a question only sees about 3,000 words of a board at once.'}
+
+
+# what each kind of question to the Assistant would take a person, in minutes: (label, skill, what one is called, minutes)
+ASK_RATES = {None: ('Answered about this board', 'Answering about a board', 'questions about a board', 3),
+             'boards': ('Searched across your boards', 'Searching your boards', 'searches across boards', 5),
+             'outside': ('Looked in your email, calendar or Drive', 'Email, calendar and Drive', 'lookups', 5),
+             'team': ('Started an agent team', 'Starting teams', 'teams started', 2),
+             'confirm': ('Did what you confirmed', 'Doing what you asked', 'confirmed actions', 1),
+             'chat': ('Talked with you', 'Conversation', 'replies', 0)}
+
+
+class Resume:
+    """The Assistant's Experience entries, written by the local model like an executive assistant's LinkedIn: per board a
+    short role title and 2-4 accomplishment bullets, from the real questions and answers only. Kept in
+    DATA/library/assistant.json and written again only when that board's work changes; plain counts until then."""
+    def __init__(self):
+        self.path = os.path.join(DATA, 'library', 'assistant.json')
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        try:
+            with open(self.path) as f:
+                self.done = json.load(f)
+        except (OSError, ValueError):
+            self.done = {}
+        self.want, self.lock, self.wake = {}, threading.Lock(), threading.Event()
+        threading.Thread(target=self.loop, daemon=True).start()
+
+    def get(self, who, name, lines, fallback):
+        """The entry for one agent (who: its key and how to describe it) on one project; counts (fallback) until written."""
+        k = hashlib.sha1(json.dumps(['v3', who] + lines).encode()).hexdigest()[:16]   # v3: one writer for every agent
+        slot = who[0] + '|' + name
+        got = self.done.get(slot)
+        if got and got.get('key') == k:
+            return {'title': got['title'], 'bullets': got['bullets']}
+        with self.lock:
+            self.want[slot] = (k, who, name, lines)
+        self.wake.set()
+        return {'title': (got or {}).get('title') or '', 'bullets': (got or {}).get('bullets') or fallback}
+
+    def loop(self):
+        while True:
+            self.wake.wait(60)
+            self.wake.clear()
+            while True:
+                with self.lock:
+                    if not self.want:
+                        break
+                    slot, (k, who, name, lines) = self.want.popitem()
+                try:
+                    self.done[slot] = dict(self.write(who, name, lines), key=k)
+                    write_json(self.path, self.done)
+                except Exception as e:   # the model was away: the counts stay, it tries again when the page asks next
+                    print('resume:', e, flush=True)
+                    time.sleep(30)
+
+    def write(self, who, name, lines):
+        work = '\n'.join(lines[:40])
+        prompt = ('Write the Experience entry for "%s" on the LinkedIn profile of %s. Below is the real work done there. Write it '
+                  'the way a strong professional in that role describes their work: what they took care of and what it achieved '
+                  'for the user, not a list of tasks. Only claim results that passed their check or that the work says were done; leave '
+                  'out what failed. Group similar work and lead with the most useful result. Past tense, plain words, no "I", "me" or "my", no greetings, no quotes of questions. '
+                  'Leave out mistakes, corrections, explanations of how the app works, and searches that found nothing. No fact, '
+                  'name or number that is not in the work below. Answer with JSON only: {"title": the kind of work done there in at '
+                  'most 5 words, such as "Calendar and inbox management" or "Market research briefings", never "Board support" or '
+                  '"Executive assistant", "bullets": 1 to 4 bullets, each one sentence of at most 25 words}. Fewer, stronger '
+                  'bullets are better.\n\nWork:\n%s') % (name, who[1], work)
+        url, model_name = models.local('agents') or (agents.MODEL_URL, agents.MODEL)   # your own machines only
+        body = {'model': model_name, 'messages': [{'role': 'user', 'content': prompt}], 'max_tokens': 800, 'temperature': 0.3,
+                'chat_template_kwargs': {'enable_thinking': False}}
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=300) as f:
+            text = json.load(f)['choices'][0]['message'].get('content') or ''
+        d = json.loads(re.search(r'\{.*\}', text, re.S).group(0))
+        bullets = [' '.join(str(b).split()) for b in d.get('bullets') or [] if str(b).strip()][:4]
+        if not bullets:
+            raise ValueError('no bullets')
+        return {'title': ' '.join(str(d.get('title') or '').split())[:60], 'bullets': bullets}
+
+
+RESUME = Resume()
+
+
+def assistant_experience(a):
+    """The Assistant's work, from the conversations kept per board (DATA/talks/<board or space>.json): each board is a
+    project, each question a job. It keeps no timing, so the page shows a person's time only, not time saved."""
+    names = board_names()
+    spaces = {s['id']: s.get('name') or 'A space' for s in read_spaces()['spaces']}
+    cards = [c for c in board_cards() if c.get('count')]   # newest first; only boards with something on them have a picture
+    projects, skills, human, n = [], {}, 0, 0
+    for f in os.listdir(TALKS):
+        if not f.endswith('.json'):
+            continue
+        scope = f[:-5]
+        try:
+            with open(os.path.join(TALKS, f)) as fh:
+                turns = json.load(fh).get('turns') or []
+        except (OSError, ValueError):
+            continue
+        if not turns:
+            continue
+        name = 'All boards' if scope == 'all' else names.get(scope) or ('Space: ' + spaces[scope[1:]] if scope.startswith('s') and scope[1:] in spaces else None)
+        if not name:
+            continue
+        jobs, seen = [], set()
+        for x in turns:
+            q = ' '.join(str(x.get('q') or '').split())
+            if x.get('route') == 'chat' or len(q) < 4 or q.lower().strip('?.! ') in seen:   # greetings and repeats are not work
+                continue
+            seen.add(q.lower().strip('?.! '))
+            label, skill, what, rate = ASK_RATES.get(x.get('route'), ASK_RATES[None])
+            skills.setdefault(skill, {}).setdefault(what, 0)
+            skills[skill][what] += 1
+            human += rate
+            n += 1
+            jobs.append({'task': x.get('q') or '', 'madeFor': label, 'when': x.get('t') or 0, 'start': x.get('t') or 0, 'human': rate,
+                         'summary': ' '.join(str(x.get('a') or '').split())[:300], 'status': 'checked' if x.get('checked') else 'answered',
+                         'did': [], 'sources': len(x.get('sources') or [])})
+        jobs.sort(key=lambda j: -j['when'])
+        if not jobs:
+            continue
+        thumbs = [] if scope in names else [c['id'] for c in cards if scope == 'all' or c.get('space') == scope[1:]][:4]   # All boards or a space: its newest boards
+        projects.append({'board': scope if scope in names else '', 'thumbs': thumbs, 'boardName': name, 'jobs': jobs, 'from': min(j['when'] for j in jobs),
+                         'to': max(j['when'] for j in jobs), 'human': sum(j['human'] for j in jobs), 'ran': None})
+    checked = sum(1 for e in projects for j in e['jobs'] if j['status'] == 'checked')
+    who = ('assistant', 'an executive assistant (an AI assistant) who supports the user')
+    for e in projects:   # written like an executive assistant's LinkedIn entry, not a log of every question
+        jobs = e.pop('jobs')
+        kinds = {}
+        for j in jobs:
+            kinds[j['madeFor']] = kinds.get(j['madeFor'], 0) + 1
+        e.update(RESUME.get(who, e['boardName'], ['- %s | asked: %s | answered: %s' % (j['madeFor'], j['task'][:200], j['summary'][:300]) for j in jobs],
+                            ['%s: %d' % (k, v) for k, v in sorted(kinds.items(), key=lambda p: -p[1])]))
+        e['count'] = len(jobs)
+    a['experience'] = sorted([e for e in projects if e['count'] > 1], key=lambda e: -e['to'])   # a one-off job is not its own entry
+    a['also'] = [{'board': e['board'], 'boardName': e['boardName']} for e in sorted(projects, key=lambda e: -e['to']) if e['count'] <= 1]
+    a['skills'] = sorted([[k, sorted(v.items(), key=lambda p: -p[1])] for k, v in skills.items()], key=lambda p: -sum(c for _, c in p[1]))
+    a['value'] = {'human': human, 'ran': None, 'rates': [[r[2], r[3]] for r in ASK_RATES.values() if r[3]]} if n else None
+    a['facts'] = [['Questions answered', str(n)], ['Boards and spaces', str(len(projects))],
+                  ['Checked against the board', str(checked)]]
+    a['history'] = []
+
+
+def agent_profile(key):
+    """One agent's page: its library entry, why it exists, and its work history."""
+    lib = agent_library()
+    a = next((x for x in lib['always'] + lib['team'] if x['key'] == key), None)
+    if not a:
+        return None
+    a = dict(a)
+    if key in agents.STARTERS:
+        a['why'] = ('One of the standard roles a Lead can put on a team. A Lead can also make a teammate of this kind for one job, '
+                    'with its own name and reason; that work is counted here, with a "made for" line.')
+        w = agent_work().get(key) or []
+        checked = [x for x in w if x['check']]
+        a['facts'] = [['Jobs', str(len(w))], ['Passed their check', '%d of %d' % (sum(x['check']['pass'] for x in checked), len(checked)) if checked else '-'],
+                      ['Boards', str(len({x['board'] for x in w}))], ['Made for a job', str(len({x['madeFor'] for x in w if x['madeFor']}))]]
+        a['last'] = w[0]['when'] if w else None
+        a['history'] = w[:200]
+        human, ran = sum(x['human'] for x in w), sum(x['ran'] for x in w)
+        a['value'] = {'human': human, 'ran': round(ran), 'rates': [[name, rate] for _, _, name, rate in WORK_RATES]} if w else None
+        skills = {}
+        for x in w:
+            for skill, name, n in x['did']:
+                skills.setdefault(skill, {}).setdefault(name, 0)
+                skills[skill][name] += n
+        a['skills'] = sorted([[k, sorted(v.items(), key=lambda p: -p[1])] for k, v in skills.items()], key=lambda p: -sum(n for _, n in p[1]))
+        boards = {}
+        for x in w:
+            boards.setdefault(x['board'], []).append(x)
+        a['experience'] = sorted([{'board': b, 'boardName': xs[0]['boardName'] or 'A board', 'jobs': xs, 'from': min(x['start'] for x in xs),
+                                   'to': max(x['when'] for x in xs), 'human': sum(x['human'] for x in xs), 'ran': round(sum(x['ran'] for x in xs))}
+                                  for b, xs in boards.items()], key=lambda e: -e['to'])
+        who = (key, 'the %s, an AI agent on the user\'s agent teams (its role: %s)' % (a['name'], agents.STARTERS[key].get('role', '')[:300]))
+        for e in a['experience']:   # a LinkedIn entry per board: role title and what it delivered, the jobs as links under it
+            lines = []
+            for x in e['jobs']:
+                did = {}
+                for _, n, c in x['did']:
+                    did[n] = did.get(n, 0) + c
+                lines.append('- task: %s%s | did: %s | result: %s%s' % (x['task'][:250], ' | made for the job as %s: %s' % (x['madeFor'], (x['why'] or '')[:200]) if x['madeFor'] else '',
+                    ', '.join('%d %s' % (c, n) for n, c in did.items()) or 'nothing recorded',
+                    ('passed its check' if x['check']['pass'] else 'did not pass its check') if x['check'] else AG_WORDS.get(x['status'], x['status']),
+                    ' | its own summary: ' + x['summary'][:300] if x['summary'] else ''))
+            passed = sum(1 for x in e['jobs'] if x['check'] and x['check']['pass'])
+            e.update(RESUME.get(who, e['boardName'], lines, ['%d %s here' % (len(e['jobs']), 'job' if len(e['jobs']) == 1 else 'jobs')]
+                                + (['%d passed their check' % passed] if passed else [])))
+    else:
+        a['why'] = BUILTIN_WHY.get(key, '')
+        a['facts'] = []
+        if key == 'assistant':
+            assistant_experience(a)
+        elif key == 'router':
+            b = read_board(ROUTER.board)
+            cards = sorted([i for i in b.get('items') or [] if i.get('router')], key=lambda i: -(i.get('why') or {}).get('when', 0))
+            a['history'] = [{'task': i['text'].split('\n')[0], 'board': ROUTER.board, 'boardName': 'Incoming', 'when': (i.get('why') or {}).get('when'),
+                             'status': 'task' if i.get('router') and i.get('color') == router.COLORS['task'] else 'note'} for i in cards[:100]]
+        elif key == 'watchdog':
+            a['history'] = list(reversed(WATCHDOG.events[-100:]))
+        elif key == 'board-brief-writer':
+            d = os.path.join(DATA, 'briefs')
+            files = sorted((f for f in os.listdir(d) if f.endswith('.json')), key=lambda f: -os.path.getmtime(os.path.join(d, f))) if os.path.isdir(d) else []
+            names = board_names()
+            a['history'] = [{'task': 'Brief of ' + (names.get(f[:-5]) or 'a board'), 'board': f[:-5], 'boardName': names.get(f[:-5], ''),
+                             'when': int(os.path.getmtime(os.path.join(d, f)) * 1000), 'status': 'done'} for f in files[:60] if f[:-5] in names]
+        else:
+            a['history'] = []
+        own_resume(key, a)
+    a['how'] = agent_how(key, a) or {}
+    a['how'].update(upskill=True, skills=skillbook.load().get(key) or [],   # every agent has the same Upskill box
+                    nomodel=key == 'watchdog')   # plain code: words it is taught cannot change it
+    return a
+
+
+UPSKILL = set(agents.STARTERS) | {'assistant', 'router', 'watchdog', 'board-brief-writer'}   # every agent in the library
+
+
+def google_tools():   # the connected Google tools, from the app's own list: name, what it does, and whether it asks your yes
+    return [[n.replace('_', ' '), v[0].split('. ')[0].rstrip('.') + '.' + (' Asks your yes first.' if v[3] else '')] for n, v in integrations.GOOGLE.items()]
+
+
+def agent_how(key, a):
+    """How an agent works, from the code itself: its prompt, the instructions every agent shares, its tools (with what each
+    does), its model, and the skills the user added (teammates only)."""
+    google = bool((integrations.load().get('google') or {}).get('refresh_token'))
+    desc = lambda ts: [[t['function']['name'].replace('_', ' '), t['function']['description'].split('. ')[0].rstrip('.') + '.'] for t in ts]
+    if key in agents.STARTERS:
+        if key == 'lead':
+            tools = agents.LEAD_TOOLS
+        else:
+            tools = agents.TOOLS + (agents.BROWSER_TOOLS if agents.BROWSER_URL else []) + (agents.CODE_TOOLS if key == 'engineer' else agents.CODE_READ)
+        apps = google_tools() if google and key != 'lead' else []
+        return {'prompt': agents.STARTERS[key].get('role', ''), 'shared': agents.SYSTEM, 'tools': desc(tools) + apps, 'model': a.get('model'),
+                'skills': skillbook.load().get(key) or [], 'upskill': True,
+                'note': 'A board can change this prompt for its own team (on the board: Edit team, then ... on this teammate). Skills added here go to this role on every board.'}
+    if key == 'router':
+        return {'prompt': router.JUDGE % ('(your rules note on the Incoming board)', '(the new email and calendar items)'),
+                'note': 'Before the model sees anything, code drops no-reply senders, promotions and social mail, and anything already seen. '
+                        'To change what it does, edit the rules note on the Incoming board.', 'link': a.get('link'), 'model': 'your own machines only'}
+    if key == 'watchdog':
+        return {'prompt': router.__doc__.split('\n\n')[1].replace('\n', ' '), 'note': 'Plain code, no model: it checks every minute.'}
+    if key == 'board-brief-writer':
+        return {'prompt': ' '.join(briefs.__doc__.split('\n\n')[1].split()), 'note': 'Runs on %s.' % ('an outside provider' if models.choice('voice') else 'your own machines')}
+    if key == 'assistant':
+        return {'tools': google_tools() if google else [],
+                'note': 'Its instructions are in talk.py: it answers from your boards and connected apps, and asks your yes before anything that sends, books or deletes.'}
+    return None
+
+
+def own_resume(key, a):
+    """The Router, Watchdog and Board brief writer: one Experience entry each, from their own work log."""
+    h = [x for x in a.get('history') or [] if x.get('when')]
+    if key not in ('router', 'watchdog', 'board-brief-writer'):
+        return
+    a['experience'] = []
+    if not h:
+        return
+    if key == 'router':
+        b = read_board(ROUTER.board)
+        lines = ['- ' + ' | '.join(i['text'].split('\n')[:5]) for i in b.get('items') or [] if i.get('router')]
+        place, name, thumbs = ROUTER.board, 'Incoming', []
+        fallback = ['%d emails and calendar changes noted or turned into suggested tasks' % len(h)]
+    elif key == 'watchdog':
+        lines = ['- %s team: %s' % ('flagged a stuck' if x['status'] == 'stuck' else 'restarted a stopped', x['task'][:200]) for x in h]
+        place, name, thumbs = '', 'Your agent teams', []
+        fallback = ['%d teams flagged or restarted' % len(h)]
+    else:
+        d = os.path.join(DATA, 'briefs')
+        lines = []
+        for x in h[:30]:
+            try:
+                with open(os.path.join(d, x['board'] + '.json')) as f:
+                    sm = ((json.load(f).get('brief') or {}).get('summary') or '')
+            except (OSError, ValueError):
+                sm = ''
+            lines.append('- briefed %s: %s' % (x['boardName'], ' '.join(str(sm).split())[:250]))
+        place, name, thumbs = '', 'Your boards', [x['board'] for x in h[:4]]
+        fallback = ['Kept a brief of %s boards up to date' % len(h)]
+    who = (key, 'the %s, an AI agent in the user\'s Clewbert app (%s)' % (a['name'], a['what']))
+    e = {'board': place, 'boardName': name, 'thumbs': thumbs, 'from': min(x['when'] for x in h), 'to': max(x['when'] for x in h),
+         'human': 0, 'ran': None, 'count': len(h)}
+    e.update(RESUME.get(who, name, lines, fallback))
+    a['experience'] = [e]
 
 if __name__ == '__main__':
     seed_examples()

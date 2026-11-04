@@ -53,7 +53,15 @@ def _change(fn):
 
 
 def board_on(bid):
-    return bool(bid) and load().get('boards', {}).get(bid, True) is not False
+    """Apps on for this board (bid None = not on a board, so on)."""
+    return load().get('boards', {}).get(bid, True) is not False if bid else True
+
+
+def names():
+    """What is connected, in words, without asking any server (for the voice's quick check)."""
+    s = load()
+    out = ['Gmail, Google Calendar and Google Drive'] if (s.get('google') or {}).get('refresh_token') else []
+    return out + [x['name'] for x in s.get('servers', [])]
 
 
 def public(bid=None):
@@ -228,11 +236,55 @@ def gmail_search(a):
     return (DATA_NOTE % 'Gmail' + '\n'.join(rows)) if rows else 'No emails match "%s".' % q
 
 
+TEXTOF = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bin', 'textof')   # on-device text of a PDF or picture
+
+
+def _attachments(payload):
+    """Every attached file of an email: (name, type, size, attachment id)."""
+    out = []
+
+    def walk(p):
+        b = p.get('body') or {}
+        if p.get('filename') and b.get('attachmentId'):
+            out.append((p['filename'], p.get('mimeType', ''), b.get('size') or 0, b['attachmentId']))
+        for c in p.get('parts') or []:
+            walk(c)
+    walk(payload)
+    return out
+
+
+def _file_text(name, data, chars=3000):
+    """The words in an attached PDF or picture, read on this machine; '' when it cannot be read."""
+    import subprocess, tempfile
+    if not os.path.exists(TEXTOF):
+        return ''
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, 'f' + os.path.splitext(name)[1].lower()[:6])
+        with open(path, 'wb') as f:
+            f.write(data)
+        try:
+            r = subprocess.run([TEXTOF, path], capture_output=True, timeout=90)
+        except (OSError, subprocess.TimeoutExpired):
+            return ''
+    return r.stdout.decode('utf-8', 'replace').strip()[:chars] if r.returncode == 0 else ''
+
+
 def gmail_read(a):
     mid = re.sub(r'[^0-9a-zA-Z]', '', str(a.get('message_id') or ''))
     x = _google('GET', 'https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=full' % mid)
     head = '\n'.join('%s: %s' % (h, _header(x, h)) for h in ('From', 'To', 'Cc', 'Date', 'Subject') if _header(x, h))
-    return DATA_NOTE % 'an email' + head + '\n\n' + _body(x.get('payload', {}))
+    files = _attachments(x.get('payload', {}))
+    att = '\n\nAttachments: ' + ('; '.join('%s (%s, %d KB)' % (n, t.split('/')[-1], max(1, sz // 1024)) for n, t, sz, _ in files) if files else 'none')
+    read = 0
+    for n, t, sz, aid in files:   # what is inside an attached PDF or picture (an invoice's amount is in the PDF, not the email)
+        if read >= 2 or sz > 15 * 1024 * 1024 or not (t in ('application/pdf', 'image/jpeg', 'image/png') or n.lower().endswith(('.pdf', '.jpg', '.jpeg', '.png'))):
+            continue
+        d = _google('GET', 'https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/attachments/%s' % (mid, aid))
+        words = _file_text(n, base64.urlsafe_b64decode((d.get('data') or '') + '==='))
+        if words:
+            att += '\n\nText inside the attachment %s:\n%s' % (n, words)
+            read += 1
+    return DATA_NOTE % 'an email' + head + '\n\n' + _body(x.get('payload', {})) + att
 
 
 def _mime(a):
@@ -254,13 +306,50 @@ def gmail_send(a):
     return 'Sent to %s: "%s". Message id %s.' % (a.get('to'), a.get('subject'), m.get('id'))
 
 
+NAMES_CACHE = {'t': 0, 'files': []}   # the newest Drive names, for "did you mean" (kept 5 minutes)
+
+
+def _squash(s):
+    return re.sub(r'[^a-z0-9]+', '', s.lower())
+
+
+def close_names(query, names, n=5):
+    """Names that sound like what was asked: speech to text writes "batten AI" for "Baton AI". Compared with the spaces
+    and punctuation taken out, against the whole name and against each run of words as long as the question."""
+    import difflib
+    q, qw = _squash(query), len(query.split()) or 1
+    if len(q) < 3:
+        return []
+    scored = []
+    for name in names:
+        words = re.findall(r'[A-Za-z0-9]+', name)
+        parts = [name] + [' '.join(words[i:i + qw]) for i in range(max(1, len(words) - qw + 1))]
+        best = max(difflib.SequenceMatcher(None, q, _squash(p)).ratio() for p in parts if _squash(p))  if words else 0
+        if best >= .72:
+            scored.append((best, name))
+    scored.sort(key=lambda x: -x[0])
+    return [nm for _, nm in scored[:n]]
+
+
 def drive_search(a):
     words = str(a.get('query') or '').replace('\\', '').replace("'", "\\'")
     q = "trashed=false and (name contains '%s' or fullText contains '%s')" % (words, words)
     fs = _google('GET', 'https://www.googleapis.com/drive/v3/files?' + _q(
         q=q, pageSize=15, fields='files(id,name,mimeType,modifiedTime,webViewLink)', orderBy='modifiedTime desc')).get('files') or []
-    return '\n'.join('[%s] %s (%s, changed %s) %s' % (f['id'], f['name'], f['mimeType'].split('.')[-1], f.get('modifiedTime', '')[:10],
-                                                     f.get('webViewLink', '')) for f in fs) or 'No Drive files match "%s".' % a.get('query')
+    if fs:
+        return '\n'.join('[%s] %s (%s, changed %s) %s' % (f['id'], f['name'], f['mimeType'].split('.')[-1], f.get('modifiedTime', '')[:10],
+                                                         f.get('webViewLink', '')) for f in fs)
+    if time.time() - NAMES_CACHE['t'] > 300:
+        NAMES_CACHE.update(t=time.time(), files=_google('GET', 'https://www.googleapis.com/drive/v3/files?' + _q(
+            q='trashed=false', pageSize=1000, fields='files(id,name,mimeType,webViewLink)', orderBy='modifiedTime desc')).get('files') or [])
+    near = close_names(str(a.get('query') or ''), [f['name'] for f in NAMES_CACHE['files']])
+    if not near:
+        return 'No Drive files match "%s", and no file or folder has a name close to it.' % a.get('query')
+    by = {f['name']: f for f in NAMES_CACHE['files']}
+    return ('No Drive file is called "%s". The words may have been heard wrong: these names are close to it. Ask the person '
+            'if they meant the closest one, naming it, before going on:\n' % a.get('query')
+            + '\n'.join('[%s] %s (%s) %s' % (by[nm]['id'], nm, 'folder' if by[nm]['mimeType'].endswith('folder') else
+                                             by[nm]['mimeType'].split('.')[-1].split('/')[-1], by[nm].get('webViewLink', '')) for nm in near))
 
 
 def drive_read(a):
@@ -285,10 +374,11 @@ def calendar_events(a):
     ev = _google('GET', 'https://www.googleapis.com/calendar/v3/calendars/primary/events?' + _q(
         timeMin=iso(t0), timeMax=iso(t0 + days * 86400), singleEvents='true', orderBy='startTime', maxResults=50,
         q=a.get('query'))).get('items') or []
-    rows = ['%s to %s | %s%s%s' % ((e.get('start') or {}).get('dateTime') or (e.get('start') or {}).get('date', ''),
+    rows = ['[%s] %s to %s | %s%s%s | link %s' % (e.get('id', ''), (e.get('start') or {}).get('dateTime') or (e.get('start') or {}).get('date', ''),
                                     (e.get('end') or {}).get('dateTime') or (e.get('end') or {}).get('date', ''), e.get('summary', '(no title)'),
                                     ' | at ' + e['location'] if e.get('location') else '',
-                                    ' | with ' + ', '.join(x.get('email', '') for x in e.get('attendees', [])) if e.get('attendees') else '')
+                                    ' | with ' + ', '.join(x.get('email', '') for x in e.get('attendees', [])) if e.get('attendees') else '',
+                                    e.get('htmlLink', ''))
             for e in ev]
     return (DATA_NOTE % 'the calendar' + '\n'.join(rows)) if rows else 'No events in those %d days.' % days
 
@@ -302,6 +392,72 @@ def calendar_add_event(a):
         body['attendees'] = [{'email': e.strip()} for e in str(a['attendees']).split(',') if e.strip()]
     e = _google('POST', 'https://www.googleapis.com/calendar/v3/calendars/primary/events', body)
     return 'Added to the calendar: "%s" %s. %s' % (e.get('summary'), (e.get('start') or {}).get('dateTime', ''), e.get('htmlLink', ''))
+
+
+def email_card(mid):
+    """A board card for one email, built from Gmail itself (never from a model's words): who, when, subject, its first lines."""
+    mid = re.sub(r'[^0-9a-zA-Z]', '', str(mid))
+    x = _google('GET', 'https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=full' % mid)
+    frm = re.sub(r'\s*<[^>]+>', '', _header(x, 'From')).strip('" ') or _header(x, 'From')
+    import html as _html   # Gmail's own short preview of the email: clean, no quoted headers
+    lines = re.sub(r'[\u034f\u00ad\u200b-\u200f\u2060-\u2064\ufeff]', '', _html.unescape(x.get('snippet') or ''))   # invisible padding
+    lines = re.sub(r'https?://\S+|\(\s*\)|\[\s*\]', '', lines).strip()
+    lines = re.split(r'-{3,}\s*Forwarded message|\bOn .{5,60} wrote:', re.sub(r'\s{2,}', ' ', lines))[0].strip()[:240]
+    subject = _header(x, 'Subject') or ''
+    if subject and _squash(lines).startswith(_squash(subject)[:40]):   # the preview only repeats the subject
+        lines = lines[len(subject):].strip(' .:-')
+    date = time.strftime('%a %b %d, %Y', time.localtime(int(x.get('internalDate', '0')) / 1000)) if x.get('internalDate') else _header(x, 'Date')
+    return {'text': ('%s · %s\n%s\n\n%s' % (frm, date, _header(x, 'Subject') or '(no subject)', lines)).strip(),
+            'url': 'https://mail.google.com/mail/u/0/#all/' + mid, 'kind': 'email'}
+
+
+def email_attachments(mid, most=4, cap=20 * 1024 * 1024):
+    """An email's PDFs and pictures as (filename, bytes), straight from Gmail; other kinds of files are left in the email."""
+    mid = re.sub(r'[^0-9a-zA-Z]', '', str(mid))
+    x = _google('GET', 'https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=full' % mid)
+    found = []
+
+    def walk(p):
+        b, name = p.get('body') or {}, p.get('filename') or ''
+        if name and b.get('attachmentId') and (b.get('size') or 0) <= cap and (
+                p.get('mimeType') in ('application/pdf', 'image/jpeg', 'image/png') or name.lower().endswith(('.pdf', '.jpg', '.jpeg', '.png'))):
+            found.append((name, b['attachmentId']))
+        for c in p.get('parts') or []:
+            walk(c)
+    walk(x.get('payload', {}))
+    out = []
+    for name, aid in found[:most]:
+        d = _google('GET', 'https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/attachments/%s' % (mid, aid))
+        out.append((name, base64.urlsafe_b64decode((d.get('data') or '') + '===')))
+    return out
+
+
+def event_card(eid):
+    """A board card for one calendar event, from Calendar itself: the day and time, title, place, who."""
+    eid = re.sub(r'[^0-9a-zA-Z_-]', '', str(eid))
+    e = _google('GET', 'https://www.googleapis.com/calendar/v3/calendars/primary/events/' + eid)
+    st = (e.get('start') or {}).get('dateTime') or (e.get('start') or {}).get('date', '')
+    try:
+        if 'T' in st:
+            t = time.mktime(time.strptime(st[:19], '%Y-%m-%dT%H:%M:%S'))
+            when = time.strftime('%a %b ', time.localtime(t)) + str(time.localtime(t).tm_mday) + time.strftime(', %I:%M %p', time.localtime(t)).replace(' 0', ' ')
+        else:
+            when = time.strftime('%a %b %d', time.strptime(st, '%Y-%m-%d')) + ', all day'
+    except ValueError:
+        when = st
+    more = '\n'.join(x for x in ('at ' + e['location'] if e.get('location') else '',
+                                  'with ' + ', '.join(a.get('email', '') for a in e.get('attendees', [])[:6]) if e.get('attendees') else '') if x)
+    return {'text': '%s\n%s%s' % (when, e.get('summary') or '(no title)', '\n' + more if more else ''),
+            'url': e.get('htmlLink') or 'https://calendar.google.com', 'kind': 'event'}
+
+
+def file_card(fid):
+    """A board card for one Drive file or folder, from Drive itself."""
+    fid = re.sub(r'[^0-9a-zA-Z_-]', '', str(fid))
+    f = _google('GET', 'https://www.googleapis.com/drive/v3/files/%s?fields=name,mimeType,modifiedTime,webViewLink' % fid)
+    kind = 'folder' if f.get('mimeType', '').endswith('folder') else f.get('mimeType', '').split('.')[-1].split('/')[-1]
+    return {'text': '%s\n%s in Google Drive, changed %s' % (f.get('name', 'A file'), kind, f.get('modifiedTime', '')[:10]),
+            'url': f.get('webViewLink') or 'https://drive.google.com/open?id=' + fid, 'kind': 'file'}
 
 
 S = {'type': 'string'}

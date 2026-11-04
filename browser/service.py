@@ -13,10 +13,12 @@ open, click n, type n text, select n option, scroll, back. A screenshot of the s
                                            ("press Space", "scroll down 600", "click Explode", "wait 1000"), and report
                                            its JavaScript errors; GET /s/<session>/shot?i=n is the picture after step n
   GET  /s/<session>/shot                                               the latest screenshot (JPEG)
+  POST /read {url}   a page's text, read by Lightpanda (a light browser that runs the page's JavaScript but draws no
+                     pictures): faster than Chromium, and it gets through to some pages that turn Chromium away
   GET  /health
 Playwright's sync API is not thread-safe, so one thread owns the browser and requests queue for it.
 """
-import json, os, queue, re, sys, threading, time
+import json, os, queue, re, subprocess, sys, threading, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from playwright.sync_api import sync_playwright, Error as PWError, TimeoutError as PWTimeout
 
@@ -28,6 +30,29 @@ MAX_SESSIONS = 6
 TEXT_WORDS = 1200
 VIEW = {'width': 1280, 'height': 800}
 SESSION = re.compile(r'^[a-z0-9]{6,40}$')
+LIGHTPANDA = os.environ.get('LIGHTPANDA', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lightpanda', 'lightpanda'))
+READ_SECONDS = 20         # a page Lightpanda cannot read in this long is given up on
+
+
+def light_read(url):
+    """{url, status, text}: the page as Markdown (pictures left out), or {error}. Never more than READ_SECONDS."""
+    if not re.match(r'^https?://', str(url or '')):
+        return {'error': 'only http and https addresses can be read'}
+    if not os.path.exists(LIGHTPANDA):
+        return {'error': 'Lightpanda is not installed'}
+    try:
+        p = subprocess.run([LIGHTPANDA, 'fetch', '--dump', 'markdown', '--json', '--wait-until', 'networkalmostidle',
+                            '--wait-ms', '8000', '--dump-max-bytes', '300000', url], capture_output=True, timeout=READ_SECONDS,
+                           env=dict(os.environ, LIGHTPANDA_DISABLE_TELEMETRY='true'))
+        out = json.loads(p.stdout or b'{}')
+    except subprocess.TimeoutExpired:
+        return {'error': 'the page did not finish loading in %d seconds' % READ_SECONDS}
+    except ValueError:
+        return {'error': 'Lightpanda could not read it'}
+    if out.get('error'):
+        return {'error': str(out['error'])[:200]}
+    text = re.sub(r'!\[[^\]]*\]\([^)]*\)', '', out.get('content') or '')   # pictures say nothing to an agent
+    return {'url': out.get('url') or url, 'status': out.get('http_status'), 'text': re.sub(r'\n{3,}', '\n\n', text).strip()}
 
 # numbers every visible thing a person could click or type in, and describes it in a line
 NUMBER = r"""() => {
@@ -154,7 +179,7 @@ class Browser:
             url = str(a.get('url') or '')
             if not re.match(r'^https?://', url):
                 return {'error': 'only http and https addresses can be opened'}
-            pg.goto(url, wait_until='domcontentloaded', timeout=30000)
+            pg.goto(url, wait_until='domcontentloaded', timeout=20000)
         elif cmd in ('click', 'type', 'select'):
             el = pg.locator('[data-cc-n="%d"]' % int(a.get('n') or 0))
             if not el.count():
@@ -287,13 +312,16 @@ class Handler(BaseHTTPRequestHandler):
         p = self.parts()
         if not self.allowed():
             return
-        if len(p) != 3 or p[0] != 's' or not SESSION.match(p[1]):
-            return self.reply(404, {'error': 'not found'})
         try:
             args = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
         except ValueError:
             return self.reply(400, {'error': 'bad json'})
-        self.reply(200, BROWSER.do(p[1], p[2], args if isinstance(args, dict) else {}))
+        args = args if isinstance(args, dict) else {}
+        if p == ['read']:   # its own process, beside the Chromium thread
+            return self.reply(200, light_read(args.get('url')))
+        if len(p) != 3 or p[0] != 's' or not SESSION.match(p[1]):
+            return self.reply(404, {'error': 'not found'})
+        self.reply(200, BROWSER.do(p[1], p[2], args))
 
     def log_message(self, *a):
         pass
