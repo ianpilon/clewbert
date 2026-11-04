@@ -248,6 +248,7 @@
   .cv-stage.t-pen{cursor:crosshair}
   .cv-stage.t-note,.cv-stage.t-text{cursor:cell}
   .cv-stage.t-frame,.cv-stage.t-frame .cv-item{cursor:crosshair}
+  .cv-stage.t-doc,.cv-stage.t-doc .cv-item{cursor:cell}
   .cv-stage.t-pen .cv-item,.cv-stage.t-pen .cv-ink .hit{cursor:crosshair}
   .cv-stage.t-note .cv-item,.cv-stage.t-text .cv-item{cursor:cell}
   /* left tool bar (Miro style): select, sticky note, text, marker, stickers */
@@ -1127,7 +1128,7 @@
     <div class="pill cv-help cv-rec" id="cvRec" hidden></div>
     <div class="pill cv-help" id="cvHelp" hidden><b>Shortcuts and tips</b><ul>
       <li><kbd>⌘V</kbd> paste screenshots and links · drag in any file</li><li>Drag empty space to select · <kbd>Space</kbd>+drag, two-finger scroll or middle button to pan · <kbd>⌘</kbd>-scroll to zoom</li>
-      <li>Tools: <kbd>V</kbd> select · <kbd>N</kbd> note · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>P</kbd> marker · <kbd>A</kbd> agent task</li><li>Double-click for a note, or a note to edit it · hold <kbd>⌥</kbd> while resizing to grow from the centre</li>
+      <li>Tools: <kbd>V</kbd> select · <kbd>N</kbd> note · <kbd>T</kbd> text · <kbd>D</kbd> document · <kbd>F</kbd> frame · <kbd>P</kbd> marker · <kbd>A</kbd> agent task</li><li>Double-click for a note, or a note to edit it · hold <kbd>⌥</kbd> while resizing to grow from the centre</li>
       <li><kbd>⌘Z</kbd> undo · <kbd>⇧⌘Z</kbd> redo</li><li>Voice: <kbd>M</kbd> mutes the mic · <kbd>Esc</kbd> closes what is open</li></ul></div>
   </div>
   <div class="cv-stage" id="cvStage">
@@ -1152,14 +1153,16 @@
       <button data-tool="select" title="Select (V)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 3l14 8-6 1.5L10 19z"/></svg></button>
       <button data-tool="note" draggable="true" title="Sticky note (N): click the board to place it, or drag it there"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 4h16v10l-6 6H4z"/><path d="M14 20v-6h6"/></svg></button>
       <button data-tool="text" draggable="true" title="Text (T): click for a title, drag a box for a paragraph"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 5h14M12 5v15"/></svg></button>
+      <button data-tool="doc" draggable="true" title="Document (D): click the board to place a card you paste into, or drag this onto the board; it becomes a .md or PDF file"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h7M9 17h5" stroke-linecap="round"/></svg></button>
       <button data-tool="frame" draggable="true" title="Frame (F): click the board to place one, drag the area it should cover, or drag this onto the board; double-click its title to name it"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="1.5"/><path d="M3 4h8" stroke-linecap="round"/></svg></button>
       <button data-tool="pen" title="Marker (P): draw on the board"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4l5 5L9 20H4v-5z"/><path d="M12.5 6.5l5 5"/></svg></button>
       <button data-tool="emoji" title="Stickers: click one to add it, or drag it onto the board"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 14.5c1.8 2 5.2 2 7 0"/><circle cx="9.2" cy="10" r=".6" fill="currentColor"/><circle cx="14.8" cy="10" r=".6" fill="currentColor"/></svg></button>
       <button class="tbfold" id="tbFold" title="Hide the tools (the voice stays)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg></button>
     </div>
-    <div class="cv-fly" id="cvTextFly" hidden><div class="row" id="cvTextStyles"></div><div class="row" id="cvTextFonts" style="margin-top:7px"></div><div class="row" id="cvTextFills" style="margin-top:9px"></div><div class="row" id="cvTextPaste" style="margin-top:9px"></div></div>
+    <div class="cv-fly" id="cvTextFly" hidden><div class="row" id="cvTextStyles"></div><div class="row" id="cvTextFonts" style="margin-top:7px"></div><div class="row" id="cvTextFills" style="margin-top:9px"></div></div>
     <div class="cv-fly" id="cvNoteFly" hidden><div class="row" id="cvNoteColors"></div></div>
     <div class="cv-fly" id="cvFrameFly" hidden><div class="row" id="cvFrameFills"></div></div>
+    <div class="cv-fly" id="cvDocFly" hidden><div class="row" id="cvDocKinds"></div></div>
     <div class="cv-fly" id="cvPenFly" hidden><div class="row" id="cvPenColors"></div><div class="row" id="cvPenSizes" style="margin-top:7px"></div></div>
     <div class="cv-fly ag-fly" id="agFly" hidden><div class="ag-h">Agent task</div><div class="row ag-mode" id="agMode"><button class="tx on" data-m="team">Team</button><button class="tx" data-m="one">One agent</button><span class="hint" id="agWho"></span></div><textarea id="agTask" placeholder="What should the agent do? For example: find three brokers in Nova Scotia and put each on a note."></textarea><div class="row"><span class="hint" id="agCtx"></span><button class="go" id="agStart">Start</button></div></div>
     <div class="cv-fly" id="cvEmojiFly" hidden><div class="cv-emojis" id="cvEmojis"></div></div>
@@ -2506,10 +2509,10 @@ window.addEventListener('hashchange',()=>{if(CV_CROP)cvCropEnd(true);});
 
 // Left tool bar. Sizes are divided by the zoom so a new note, text, sticker or line looks the same on screen at any zoom.
 let cvTool='select';
-const CV_TOOL_KEYS={v:'select',n:'note',t:'text',f:'frame',p:'pen'};
+const CV_TOOL_KEYS={v:'select',n:'note',t:'text',d:'doc',f:'frame',p:'pen'};const CV_DOC={kind:'md'};   // the document tool: which file a card becomes
 const CV_PEN={color:'#1f2430',size:3};
 // text: a size style and a font, both from fonts every Mac and iPhone already has
-const CV_TEXT={style:'body',font:'sans',fill:'',paste:'text'};   // fill '' = see-through; paste = what a long paste of words becomes: text on the board, a .md file, or a PDF
+const CV_TEXT={style:'body',font:'sans',fill:''};   // fill '' = see-through
 const CV_TEXT_STYLES={h1:{label:'Heading 1',fs:40,fw:700},h2:{label:'Heading 2',fs:28,fw:700},body:{label:'Body',fs:18,fw:400},small:{label:'Small',fs:13,fw:400}};
 const CV_FONTS={sans:{label:'Sans',css:'var(--font)'},serif:{label:'Serif',css:'Georgia,"Times New Roman",serif'},mono:{label:'Mono',css:'ui-monospace,Menlo,monospace'},hand:{label:'Handwritten',css:'var(--hand)'}};
 const CV_FRAME_FILLS=[['#f3f6fb','Frame grey'],['#ffffff','White'],['#fafaf7','Off-white'],['#fbf5e6','Cream'],['#f3eee4','Sand'],['#eef0f3','Light grey'],['#eaf2fd','Pale blue'],['#ecf7ec','Pale green'],['#fdf6d8','Pale yellow'],['#fbeaea','Pale pink'],['#f1ecf9','Pale lavender']];const CV_FRAME={color:'#f3f6fb'};
@@ -2521,7 +2524,7 @@ const CV_EMOJIS='👍 👎 👉 👈 👆 👇 🙌 👏 🙏 💪 🤝 ❤️ �
 // an option panel sits level with its tool's button, or below the voice panel when that is open, never under it
 function cvPlaceFlys(){
   const st=$('#cvStage').getBoundingClientRect(),vc=$('#vc'),vcBottom=vc.hidden||vc.classList.contains('right')?0:vc.getBoundingClientRect().bottom-st.top+8;
-  for(const [fly,tool] of [['#cvNoteFly','note'],['#cvTextFly','text'],['#cvFrameFly','frame'],['#cvPenFly','pen'],['#cvEmojiFly','emoji']]){
+  for(const [fly,tool] of [['#cvNoteFly','note'],['#cvTextFly','text'],['#cvDocFly','doc'],['#cvFrameFly','frame'],['#cvPenFly','pen'],['#cvEmojiFly','emoji']]){
     const b=$(`#cvTb [data-tool=${tool}]`);$(fly).style.top=Math.max($('#cvTb').offsetTop+b.offsetTop-5,vcBottom)+'px';}
 }
 new ResizeObserver(()=>cvPlaceFlys()).observe($('#vc'));
@@ -2539,8 +2542,8 @@ function cvSetTool(t){
   cvTool=t;$('#cvEmojiFly').hidden=true;
   document.querySelectorAll('#cvTb button[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   cvPlaceFlys();
-  const st=$('#cvStage');st.classList.remove('t-pen','t-note','t-text','t-frame');if(t!=='select')st.classList.add('t-'+t);
-  $('#cvPenFly').hidden=t!=='pen';$('#cvNoteFly').hidden=t!=='note';$('#cvTextFly').hidden=t!=='text';$('#cvFrameFly').hidden=t!=='frame';
+  const st=$('#cvStage');st.classList.remove('t-pen','t-note','t-text','t-frame','t-doc');if(t!=='select')st.classList.add('t-'+t);
+  $('#cvPenFly').hidden=t!=='pen';$('#cvNoteFly').hidden=t!=='note';$('#cvTextFly').hidden=t!=='text';$('#cvFrameFly').hidden=t!=='frame';$('#cvDocFly').hidden=t!=='doc';
 }
 // Text fits its words. Its w and h are measured from the page (the board uses them for selection, fit and previews).
 // A sticky note's words fill it (Miro): a few words are big, and the type shrinks as you write more, so all of it fits.
@@ -2591,8 +2594,8 @@ function cvTextResize(e,it,el,c,hx,hy){   // corners scale the type (Miro); the 
   window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);
 }
 // click = a title that grows as you type; w (a dragged width) = a paragraph box that wraps
-function cvPlaceDoc(p){   // the text tool with Paste as .md or PDF: a file card waiting for its words, cursor in its body
-  const u=cvUnit(),it=cvAddItem({type:'file',doc:CV_TEXT.paste,label:'',x:p.x-130*u,y:p.y-60*u,w:260*u,h:340*u});
+function cvPlaceDoc(p){   // the document tool: a file card waiting for its words, cursor in its body; it becomes the .md or PDF picked
+  const u=cvUnit(),it=cvAddItem({type:'file',doc:CV_DOC.kind,label:'',x:p.x-130*u,y:p.y-60*u,w:260*u,h:340*u});
   const body=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"] .fprev`);if(body)body.focus({preventScroll:true});
 }
 async function cvDocFill(it,text){   // the waiting card's words become the file it promised: the same card fills in, nothing else appears or goes
@@ -2611,7 +2614,6 @@ async function cvDocFill(it,text){   // the waiting card's words become the file
   }catch(e){delete it.uploading;delete it._filling;it.label='';if(cvBoardId===boardId)draw();cvSaveState('upload');}
 }
 function cvPlaceText(p,w){
-  if(!w&&(CV_TEXT.paste==='md'||CV_TEXT.paste==='pdf'))return cvPlaceDoc(p);
   const k=cvUnit(),ts=CV_TEXT_STYLES[CV_TEXT.style],fs=ts.fs*k;
   const it=cvAddItem({type:'note',color:'none',text:'',fs,...(ts.fw!==400?{fw:ts.fw}:{}),...(CV_TEXT.font!=='sans'?{font:CV_TEXT.font}:{}),...(CV_TEXT.fill?{fill:CV_TEXT.fill}:{}),
     grow:w?'h':'w',x:w?p.x:p.x-fs*.2,y:w?p.y:p.y-fs*.75,w:w||fs,h:fs*1.5});
@@ -2621,6 +2623,7 @@ function cvPlaceText(p,w){
 function cvPlace(tool,p){   // a sticky note, a text box or a frame at p, ready to type in
   if(tool==='text')return cvPlaceText(p);
   if(tool==='frame'){const k=cvUnit();return cvAddFrame(p.x-450*k,p.y-300*k,900*k,600*k);}
+  if(tool==='doc')return cvPlaceDoc(p);
   const k=cvUnit(),it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k,...(CV_NOTE.color?{color:CV_NOTE.color}:{})});it._fresh=true;
   const f=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(f)cvEditNote(f);
 }
@@ -2645,6 +2648,7 @@ function cvEditFrameTitle(it,el){   // the title is the frame's handle: double-c
 function cvUseTool(e){
   e.preventDefault();e.stopPropagation();
   if(cvTool==='note'){cvSetTool('select');cvPlace('note',cvPoint(e));return;}
+  if(cvTool==='doc'){cvSetTool('select');cvPlaceDoc(cvPoint(e));return;}
   if(cvTool==='text'){   // click = title, drag = a paragraph box as wide as the drag
     const stage=$('#cvStage'),r=stage.getBoundingClientRect(),p0=cvPoint(e),sx=e.clientX,sy=e.clientY;let box=null,p1=p0;
     const mv=ev=>{if(!box&&Math.abs(ev.clientX-sx)+Math.abs(ev.clientY-sy)<6)return;
@@ -2692,8 +2696,8 @@ function cvUseTool(e){
   $('#cvPenSizes').innerHTML=[3,8].map(n=>`<button class="sz${n===CV_PEN.size?' on':''}" data-s="${n}" title="${n===3?'Fine':'Thick'} line"><i style="width:${n+2}px;height:${n+2}px"></i></button>`).join('');
   $('#cvTextStyles').innerHTML=Object.entries(CV_TEXT_STYLES).map(([k,v])=>`<button class="tx${k===CV_TEXT.style?' on':''}" data-k="${k}" style="font-weight:${v.fw}">${v.label}</button>`).join('');
   $('#cvTextFonts').innerHTML=Object.entries(CV_FONTS).map(([k,v])=>`<button class="tx${k===CV_TEXT.font?' on':''}" data-k="${k}" style="font-family:${escapeAttr(v.css||'inherit')}">${v.label}</button>`).join('');
-  $('#cvTextPaste').innerHTML='<span class="lbl">Paste as</span>'+[['text','Text'],['md','.md'],['pdf','PDF']].map(([k,l])=>`<button class="tx${k===CV_TEXT.paste?' on':''}" data-k="${k}" title="${k==='text'?'Pasted words become text on the board':k==='md'?'Pasted words become a Markdown file':'Pasted words become a PDF'}">${l}</button>`).join('');
-  $('#cvTextPaste').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_TEXT.paste=b.dataset.k;document.querySelectorAll('#cvTextPaste .tx').forEach(x=>x.classList.toggle('on',x===b));};
+  $('#cvDocKinds').innerHTML='<span class="lbl">File</span>'+[['md','.md'],['pdf','PDF']].map(([k,l])=>`<button class="tx${k===CV_DOC.kind?' on':''}" data-k="${k}" title="${k==='md'?'The card becomes a Markdown file':'The card becomes a PDF'}">${l}</button>`).join('');
+  $('#cvDocKinds').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_DOC.kind=b.dataset.k;document.querySelectorAll('#cvDocKinds .tx').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvTextStyles').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_TEXT.style=b.dataset.k;document.querySelectorAll('#cvTextStyles .tx').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvTextFonts').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_TEXT.font=b.dataset.k;document.querySelectorAll('#cvTextFonts .tx').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvTextFills').innerHTML='<span class="lbl">Fill</span>'+CV_TEXT_FILLS.map(([c,n])=>`<button class="sw${c?'':' none'}${c===CV_TEXT.fill?' on':''}" data-c="${c}" style="${c?'background:'+c:''}" title="${n}"></button>`).join('');
@@ -2867,9 +2871,6 @@ function cvPasteText(txt,p){   // a few words become a sticky note; anything lon
   // sized like the board's own items, never for the zoom (a long paste zoomed out came in at many times the size of everything else, 2026-11-04)
   const u=cvUnit();
   if(txt.length<=120&&!/\n/.test(txt))return cvAddItem({type:'note',text:txt,fs:16*u,x:p.x-100*u,y:p.y-100*u,w:200*u,h:200*u},true);
-  if(CV_TEXT.paste==='md'||CV_TEXT.paste==='pdf'){   // the text tool's "Paste as": the words land as a file, named from their first line (2026-11-04)
-    const kind=CV_TEXT.paste,fake={text:txt},name=cvFileName(txt.split('\n').find(l=>l.trim())||'','Pasted').slice(0,60)+'.'+kind;
-    return cvUploadFile(new File([kind==='md'?cvToMarkdown(fake):cvToPdf(fake)],name,{type:kind==='md'?'text/markdown':'application/pdf'}),p);}
   const it=cvAddItem({type:'note',text:txt,color:'none',grow:'h',lines:true,fs:14*u,x:p.x-310*u,y:p.y-100*u,w:620*u,h:200*u},true);
   const el=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`);if(el)cvFitText(it,el);cvSave();return it;
 }
