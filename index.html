@@ -1943,13 +1943,8 @@ $('#cvFmt').addEventListener('click',e=>{const btn=e.target.closest('button'),x=
   let all=true;for(let i=a;i<b;i++)if(!on[c][i])all=false;   // all of it already set: the click takes it off
   for(let i=a;i<b;i++)on[c][i]=!all;
   cvSetMarks(x.it,cvMarksFrom(t,on));cvPaintText(x.f,x.it);cvSelRestore(x.f,a,b);cvFitText(x.it,x.el);cvSave();cvFmtShow();});
-<<<<<<< HEAD
-function cvEditNote(f){f.contentEditable='plaintext-only';f.focus();const r=document.createRange();r.selectNodeContents(f);r.collapse(false);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);}
-function cvIsUrl(t){return /^https?:\/\/\S+$/i.test(t);}
-=======
 function cvEditNote(f){f.contentEditable='plaintext-only';f.focus({preventScroll:true});const r=document.createRange();r.selectNodeContents(f);r.collapse(false);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);}
-function cvIsUrl(t){return /^https?:\/\/\S+$/i.test(t)||(cvAppLink(t)&&!/\s/.test(t));}
->>>>>>> 0422a3de (Document placeholder looks like the file card it becomes: badge and name header over a body to paste into, 260 x 340 like a file chip. A PDF made from words stays a card with its header and first lines (like the .md one) instead of turning into a page picture, from the placeholder and from Turn into a PDF alike. The board does not jump to a note or frame title when typing starts. Deploy refuses a page or server file that does not parse (a stray comment took the site down for a minute today) (Ian, 2026-11-04))
+function cvIsUrl(t){return /^https?:\/\/\S+$/i.test(t);}
 
 // Arrows join two items (an agent Lead's frame to a teammate's): drawn edge to edge, redrawn when either one moves
 // a page in a card is laid out at desktop width and shrunk to the card (a narrow card would get the phone layout)
