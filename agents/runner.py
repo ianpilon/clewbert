@@ -14,8 +14,8 @@ import base64, json, os, queue, re, secrets, subprocess, threading, time, urllib
 import integrations, models, skills, talk
 from . import code, web
 
-MODEL_URL = os.environ.get('AGENT_MODEL_URL', 'http://100.121.91.119:8889/v1/chat/completions')   # Qwen 30B on gx10-head
-MODEL = os.environ.get('AGENT_MODEL', 'qwen3-30b-a3b')
+MODEL_URL = os.environ.get('AGENT_MODEL_URL', '')   # a chat/completions address with tool calls on your own machine, or pick a provider in Settings
+MODEL = os.environ.get('AGENT_MODEL', '')
 # the strongest models for the Developer and the designers, tried in order (the usual model is the last resort):
 # AGENT_CODE_MODELS="url|model;url|model", or one AGENT_CODE_MODEL_URL + AGENT_CODE_MODEL
 CODE_MODELS = [tuple(x.split('|', 1)) for x in os.environ.get('AGENT_CODE_MODELS', '').split(';') if '|' in x] or (
@@ -34,7 +34,7 @@ BLOCKED_PAGE = re.compile(r'sorry, you have been blocked|attention required! \| 
 BOARD_READS = ('search_board', 'read_item', 'read_frame')
 FREE_TURNS = 10          # turns that only read the board or got an answer kept from earlier do not count as steps, up to this many
 PART_STEPS = 16          # a teammate's part is small: done in about 12 steps, or cut too big (long runs drift)
-BROWSER_URL = os.environ.get('BROWSER_URL', '').rstrip('/')   # browser/service.py (a real browser), e.g. http://gx10:8790
+BROWSER_URL = os.environ.get('BROWSER_URL', '').rstrip('/')   # browser/service.py (a real browser), e.g. http://localhost:8790
 BROWSER_TOKEN = os.environ.get('BROWSER_TOKEN') or (open(os.environ['BROWSER_TOKEN_FILE']).read().strip()
                                                     if os.path.exists(os.environ.get('BROWSER_TOKEN_FILE', '')) else '')
 # a click or Enter that sends something out into the world waits for the person's yes
@@ -178,12 +178,12 @@ STARTERS['design-lead'] = {'name': 'Design Lead', 'color': '#7c3aed', 'role':
     'together into ONE design brief for whoever builds it: what to build, how it works (every control and state), how it '
     'looks (exact values), and the fixes, in order of importance. Never designs or builds it alone.'}
 STARTERS['engineer'] = {'name': 'Engineer', 'color': '#0e7490', 'role':
-    'Writes real code in one of Ian\'s code bases, on the team\'s branch. Nothing it does is live: Ian reviews the branch first.\n'
+    'Writes real code in one of the user\'s code bases, on the team\'s branch. Nothing it does is live: the user reviews the branch first.\n'
     'Work in small steps: find the code that matters (code_files, code_search), read it whole (code_read), then change it '
     '(code_edit for a change inside a file, code_write for a new file). Match the code base\'s own style. After changes, '
     'code_check; fix every error it reports. Then code_commit with a message that says what changed and why. Finish only '
-    'after a commit with a clean check, and say in your frame what you changed, what you did not get to, and what Ian '
-    'should check when he reviews it. You cannot run the app, its tests or any command: never say you did.'}
+    'after a commit with a clean check, and say in your frame what you changed, what you did not get to, and what the user '
+    'should check when the user reviews it. You cannot run the app, its tests or any command: never say you did.'}
 WHY = {'lead': 'Turns your goal into a plan and owns the final answer', 'engineer': 'Writes the code, on a branch for your review',
        'researcher': 'Finds the facts the work stands on', 'writer': 'Turns results into words people read',
        'analyst': 'Compares and ranks what the team found', 'checker': 'Makes sure what we say holds up',
@@ -428,7 +428,7 @@ class Runner:
         ms = self.team(bid)['members']
         names = {m['id']: m['name'] for m in ms}
         return 'This board\'s agent team (who reports to whom, and why):\n' + '\n'.join(
-            '- %s: %s. Reports to %s.%s' % (m['name'], m.get('why') or 'no reason given', names.get(boss_of(m), 'you (Ian)'),
+            '- %s: %s. Reports to %s.%s' % (m['name'], m.get('why') or 'no reason given', names.get(boss_of(m), 'you'),
                                              (' Manages: %s.' % ', '.join(x['name'] for x in reports_of(ms, m['id']))) if reports_of(ms, m['id']) else '')
             for m in ms)
 
@@ -560,8 +560,8 @@ class Runner:
         else:
             prompt += '\n\nTASK: ' + task
         rules = self.rules()
-        if rules:   # Ian's standing rules, for every team and every part
-            prompt += '\n\nIAN\'S STANDING RULES FOR EVERY TEAM (follow them over anything else here):\n' + rules
+        if rules:   # the user's standing rules, for every team and every part
+            prompt += '\n\nTHE USER\'S STANDING RULES FOR EVERY TEAM (follow them over anything else here):\n' + rules
         r = {'id': rid, 'board': bid, 'task': task, 'status': 'queued', 'created': now_ms(), 'frame': frame['id'],
              'focus': frame['id'], 'lay': lay, 'steps': [], 'selected': list(selected)[:200], 'lead': is_lead,
              'member': member, 'parent': parent, 'children': [], 'intent': intent if not parent else None,
@@ -766,11 +766,11 @@ class Runner:
     def final_check(self, r, summary):
         """The whole job against what the intent card promised: the Lead's frame first, then its parts' frames."""
         it = r.get('intent') or {}
-        bar = 'Ian gets: %s. What he wants: %s' % (it.get('deliver'), it.get('want') or r['task'])
+        bar = 'The user gets: %s. What the user wants: %s' % (it.get('deliver'), it.get('want') or r['task'])
         words = self.frame_words(r) + '\n' + summary
         kids = [self.runs[c] for c in r.get('children', []) if c in self.runs]
         retried = {x.get('retry_of') for x in kids if (x.get('check') or {}).get('pass')}
-        gaps = []   # a team once said Done while its own notes said Ian's spreadsheet was never read
+        gaps = []   # a team once said Done while its own notes said the user's spreadsheet was never read
         for x in kids:
             fw = self.frame_words(x)
             if (x.get('check') or {}).get('pass'):
@@ -780,7 +780,7 @@ class Runner:
             gaps += ['A teammate wrote: "%s"' % m.group(0).strip() for m in CANT_READ.finditer(fw)][:3]
         if gaps:
             bar += ('. KNOWN GAPS, from the team\'s own work (if one of them is something the job needed, such as a file or '
-                    'source Ian gave, the job is NOT passed; name it in "missing"):\n- ' + '\n- '.join(gaps[:10]))
+                    'source the user gave, the job is NOT passed; name it in "missing"):\n- ' + '\n- '.join(gaps[:10]))
         try:
             v = talk.check_part(r['task'], bar, words)
         except (OSError, ValueError, KeyError) as e:
@@ -794,7 +794,7 @@ class Runner:
         return v
 
     def conflicts(self, r, kids):
-        """A card for each fact two teammates disagree on, saying which one is right (a verifier once wrote that Ian's
+        """A card for each fact two teammates disagree on, saying which one is right (a verifier once wrote that the user's
         spreadsheet had no price column; the writer rightly overruled it, but the wrong card stood alone on the board)."""
         frames = '\n\n'.join('[%s]\n%s' % ((x.get('member') or {}).get('name', 'Teammate'), self.frame_words(x)[:4000]) for x in kids)
         try:
@@ -874,7 +874,7 @@ class Runner:
             try:
                 self.run(r)
             except Exception as e:   # a run never takes the worker down with it
-                r['status'], r['error'] = 'failed', '%s: %s' % (type(e).__name__, e)
+                r['status'], r['error'] = 'failed', str(e) if isinstance(e, models.NoModel) else '%s: %s' % (type(e).__name__, e)
                 self.step(r, 'Stopped by an error: ' + r['error'][:200])
                 self.save(r)
             if r['status'] in ENDED:
@@ -1060,6 +1060,8 @@ class Runner:
                 except OSError:
                     continue
         url, name = models.local('agents') or (MODEL_URL, MODEL)
+        if not url:
+            raise models.NoModel(job)
         return self.ask_model(messages, tools, url, name)
 
     def ask_model(self, messages, tools, url, name, big=False):
@@ -1252,7 +1254,7 @@ class Runner:
                 v = self.final_check(r, str(a.get('summary') or ''))
                 if not v['pass'] and not r.get('final_retry'):
                     r['final_retry'] = True
-                    return ('Not finished: the final check read the work against what Ian was promised (%s) and found this '
+                    return ('Not finished: the final check read the work against what the user was promised (%s) and found this '
                             'missing: %s. Hand out one more round for it if it can be had, or say plainly in your frame that '
                             'it is missing and why; then finish again.' % (it['deliver'], v['missing'] or v['why']))
                 r['final_done'] = True
@@ -1898,8 +1900,8 @@ class Runner:
                 self.step(r, '%s (%s, branch %s)' % (said, repo, code.branch(team)))
                 self.code_card(r, repo, work)
                 return ('%s, on branch %s of the %s code base on this machine. It is not on GitHub and is not meant to be: '
-                        'Ian reviews this branch here before anything goes live. Use exactly this branch name when you write '
-                        'about it, and never ask Ian to push it.' % (said, code.branch(team), repo))
+                        'The user reviews this branch here before anything goes live. Use exactly this branch name when you write '
+                        'about it, and never ask the user to push it.' % (said, code.branch(team), repo))
         except (ValueError, OSError, subprocess.TimeoutExpired) as e:
             return 'That did not work: %s' % e
         return 'There is no tool called %s.' % name
@@ -1918,7 +1920,7 @@ class Runner:
                 'background:#fff;color:#1f2937}header{padding:14px 18px;font:600 15px system-ui;border-bottom:1px solid #e5e7eb}'
                 'header p{font:400 13px system-ui;color:#6b7280;margin:4px 0 0}pre{margin:0;padding:12px 18px;white-space:pre}'
                 'div{white-space:pre}.a{background:#e7f6ec}.d{background:#fdecec}.h{color:#1d4ed8;font-weight:600;margin-top:6px}</style>'
-                '<header>Code changes in %s, branch %s<p>Not live. Nothing here ships until Ian reviews this branch.</p></header>'
+                '<header>Code changes in %s, branch %s<p>Not live. Nothing here ships until the user reviews this branch.</p></header>'
                 '<pre>%s</pre><div style="padding:0 18px 18px">%s</div>') % (esc(repo), esc(repo), esc(code.branch(team)), esc(stat), rows)
         with open(os.path.join(self.demos, did + '.html.tmp'), 'w') as f:
             f.write(page)
@@ -1932,7 +1934,7 @@ class Runner:
                            'label': 'Code changes: %s, branch %s' % (repo, code.branch(team))}, r['lay']['inner'], 520 * r['lay']['u'], wide=True)
 
     def rules(self):
-        """Ian's standing rules: every note on the rules board (its id in <data>/rules_board), one rule each."""
+        """The user's standing rules: every note on the rules board (its id in <data>/rules_board), one rule each."""
         try:
             with open(os.path.join(os.path.dirname(self.dir), 'rules_board')) as f:
                 board = self.store.read_board(f.read().strip())
@@ -1987,7 +1989,7 @@ class Runner:
             have = code.repos(os.path.dirname(self.dir))
             notes = r['team_notes_read'] = self.notes_for(r['board'], r['task'])
             want = talk.team_design(r['task'], r.get('intent'), (
-                '- engineer: writes real code in one of these code bases: %s. It works on its own branch, which Ian reviews '
+                '- engineer: writes real code in one of these code bases: %s. It works on its own branch, which the user reviews '
                 'before anything goes live: it can read, search, edit, check syntax and commit, but cannot run the app or '
                 'deploy. Say in "does" which code base.\n' % ', '.join(have)) if have else '', notes)
         except (OSError, ValueError, KeyError):
@@ -2018,7 +2020,7 @@ class Runner:
         self.step(r, 'Put a team together for this job: ' + ', '.join(m['name'] for m in crew[1:]))
 
     def crew_chart(self, r, crew, above=False):
-        """The job's team as an org chart in its own frame ABOVE the team's work, drawn as the org cards Ian knows (the
+        """The job's team as an org chart in its own frame ABOVE the team's work, drawn as the org cards the user knows (the
         old Agents tab): the Lead on top, thin lines down to each teammate, each card with why it is there, its
         done-when and how its part is going; crew_paint keeps them up to date. The Lead's frame moves down to make room."""
         u = r['lay']['u']
@@ -2173,7 +2175,7 @@ class Runner:
             pass
 
     def intent_card(self, r):
-        """First card in a team's frame: what Ian wants, what the team hands back, what no team can do. The Lead
+        """First card in a team's frame: what the user wants, what the team hands back, what no team can do. The Lead
         works to it, so a team does not set off to build what it cannot (Oct 31: "engineer our own integrations")."""
         it = r.get('intent')
         if not it:
@@ -2198,7 +2200,7 @@ class Runner:
         h = sum(max(1, -(-len(p) // int(per_line))) for p in lines) * fs * 1.35 + fs * 2
         self.place(r, {'type': 'note', 'text': text, 'color': '#eef4ff', 'card': 1, 'grow': 'h', 'fs': fs}, width, h, wide=True)
         self.step(r, 'Wrote the intent: what the team will hand back' + (' and what it cannot do' if it.get('cannot') else ''))
-        brief = 'THE INTENT, AGREED WITH IAN (it is the first card in your frame): the team hands back %s.' % it['deliver']
+        brief = 'THE INTENT, AGREED WITH THE USER (it is the first card in your frame): the team hands back %s.' % it['deliver']
         if it.get('cannot'):
             brief += ' Do NOT attempt this, no team can: %s. Say in your answer that it has to be built into the app itself.' % it['cannot']
         r['messages'][1]['content'] += '\n\n' + brief
