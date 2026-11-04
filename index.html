@@ -4705,12 +4705,20 @@ $('#obStart').onclick=async()=>{
   await vcVoices();
   vcSay("Hi, I'm Clewbert. This is the Start here board. Ask me anything about it, or say: show me around.",VC.askSeq);
 };
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)widgetHint();});   // the widget resumed the app: do what its tap asked
+async function widgetHint(){
+  let j;try{j=await api('widget/hint');}catch(e){return;}
+  if(!j||!j.hint)return;
+  if(j.hint==='agents'){if(location.hash!=='#agents')location.hash='agents';return;}
+  if(cvBoardId)location.hash='';   // the search box and the voice live on the boards page
+  setTimeout(()=>{if(j.hint==='voice'){if(!VC.on)vcOpen();}else{const i=$('#sbInput');if(i){i.value='';i.focus();}}},cvBoardId?500:150);
+}
 (async()=>{
   if(SHOT){shotPaint();return;}   // the board picture page: no welcome screen
   let s=null;try{s=await api('setup');}catch(e){}
   if(s){VC.speech=s.speech;if(!s.ready){obPick('xai');$('#ob').hidden=false;$('#obKey').focus();return;}}
   route();
-  widgetParams();
+  widgetParams();widgetHint();
   newsPoll();
   pushInit();
 })();

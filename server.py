@@ -773,6 +773,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {'key': PUSH.public}) if PUSH else self.reply(503, NO_PUSH)
         if len(parts) == 3 and parts[:2] == ['api', 'teams'] and BOARD_ID.match(parts[2]):
             return self.reply(200, dict(RUNNER.team(parts[2]), starters=agents.STARTERS))
+        if parts == ['api', 'widget', 'hint']:   # the page, coming to the front: did the widget just ask for the search box or the voice?
+            hint = WIDGET_HINT[1] if time.time() - WIDGET_HINT[0] < 30 else ''
+            WIDGET_HINT[:] = [0, '']
+            return self.reply(200, {'hint': hint})
         if parts == ['api', 'widget']:   # the phone's home-screen widget: counts and one line, only with the widget token
             if not secrets.compare_digest(self.headers.get('X-Widget-Token') or '', widget_token()):
                 return self.reply(401, {'error': 'The widget token is missing or wrong. Settings shows it.'})
@@ -952,6 +956,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, own_server(json.loads(self.read_body())))
         if len(parts) == 4 and parts[:3] == ['api', 'settings', 'test'] and parts[3] in models.JOBS:
             return self.reply(200, models.test(parts[3]) if models.choice(parts[3]) else local_test(parts[3]))
+        if parts == ['api', 'widget', 'hint']:   # the widget was tapped: remember what it wants for the page about to come to the front
+            if not secrets.compare_digest(self.headers.get('X-Widget-Token') or '', widget_token()):
+                return self.reply(401, {'error': 'The widget token is missing or wrong. Settings shows it.'})
+            hint = str(json.loads(self.read_body() or b'{}').get('hint') or '')
+            if hint not in ('search', 'voice', 'agents'):
+                raise ValueError
+            WIDGET_HINT[:] = [time.time(), hint]
+            return self.reply(200, {'ok': True})
         if parts == ['api', 'uploads']:   # a dropped file arrives in pieces: start, PUT each piece in order, then done
             up = secrets.token_hex(6)
             open(os.path.join(UPLOADS, up), 'wb').close()
@@ -1648,6 +1660,10 @@ def widget_token():
     except OSError:
         pass
     return tok
+
+
+WIDGET_HINT = [0.0, '']   # what the widget's tap wants of the page (search, voice, agents) and when: the bar resumes the app instead of
+                          # opening an address, which Android covers with a splash screen; the hint rides here (2026-11-04)
 
 
 def widget_status():

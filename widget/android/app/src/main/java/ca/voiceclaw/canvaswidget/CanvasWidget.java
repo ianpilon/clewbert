@@ -53,16 +53,18 @@ public class CanvasWidget extends AppWidgetProvider {
             v.setOnClickPendingIntent(R.id.ask, setup); v.setOnClickPendingIntent(R.id.mic, setup); v.setOnClickPendingIntent(R.id.bulb, setup);
         } else {
             if (status != null) v.setTextViewText(R.id.status, status);
-            v.setOnClickPendingIntent(R.id.ask, open(c, cfg.base + "/?q=", 1));
-            v.setOnClickPendingIntent(R.id.mic, open(c, cfg.base + "/?voice=1", 2));
-            v.setOnClickPendingIntent(R.id.bulb, open(c, cfg.base + "/#agents", 3));
+            v.setOnClickPendingIntent(R.id.ask, open(c, cfg.base + "/?q=", "search", 1));
+            v.setOnClickPendingIntent(R.id.mic, open(c, cfg.base + "/?voice=1", "voice", 2));
+            v.setOnClickPendingIntent(R.id.bulb, open(c, cfg.base + "/#agents", "agents", 3));
         }
         AppWidgetManager.getInstance(c).updateAppWidget(new ComponentName(c, CanvasWidget.class), v);
     }
 
-    static PendingIntent open(Context c, String url, int code) {
-        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    /** A tap goes through OpenActivity: it leaves the hint on the server and resumes the installed app (no splash when warm);
+     *  the address is the fallback when no app is installed. */
+    static PendingIntent open(Context c, String url, String hint, int code) {
+        Intent i = new Intent(c, OpenActivity.class).putExtra("url", url).putExtra("hint", hint);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION);
         return PendingIntent.getActivity(c, code, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
