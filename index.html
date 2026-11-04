@@ -1232,7 +1232,7 @@ function cvDownload(it){
   if(it.uploading)return null;
   if(it.type==='img'){
     if(/^api\/images\/[0-9a-f]{64}\.pdf$/.test(it.url||''))return {href:it.url,name:named(it.label,'document','pdf')};
-    if(/^api\//.test(it.src||''))return {href:it.src,name:named(it.label,'Picture',ext(it.src))};
+    if(/^api\//.test(it.src||''))return {href:it.src,name:named(it.label,'Picture',ext(it.src)),...(it.crop?{crop:it.crop}:{})};   // cropped on the board: the download is the cropped picture (2026-11-04)
     return null;
   }
   if((it.type==='media'||it.type==='file')&&/^api\//.test(it.src||''))return {href:it.src,name:named(it.label,it.type==='media'?'Video':'file',ext(it.src))};
@@ -2405,9 +2405,19 @@ function cvGroupMenu(btn){
     on('dl',()=>dls.forEach((d,n)=>setTimeout(()=>cvSaveDownload(d),n*400)));   // one at a time: browsers drop downloads that start together
   });
 }
-function cvSaveDownload(dl){   // a stored file downloads under a readable name; words (a note) are made into a .txt
-  const u=dl.text?URL.createObjectURL(new Blob([dl.text()],{type:'text/plain;charset=utf-8'})):dl.href,a=document.createElement('a');
-  a.href=u;a.download=dl.name;document.body.appendChild(a);a.click();a.remove();if(dl.text)setTimeout(()=>URL.revokeObjectURL(u),1000);
+async function cvCroppedBlob(dl){   // the part of a picture that shows on the board, at the picture's own pixels
+  const img=new Image();img.src=dl.href;await img.decode();
+  const c=dl.crop,W=img.naturalWidth,H=img.naturalHeight,cv=document.createElement('canvas');
+  cv.width=Math.max(1,Math.round(W*c.w));cv.height=Math.max(1,Math.round(H*c.h));
+  cv.getContext('2d').drawImage(img,Math.round(W*c.x),Math.round(H*c.y),cv.width,cv.height,0,0,cv.width,cv.height);
+  const png=/\.png$/i.test(dl.href);
+  return new Promise(r=>cv.toBlob(r,png?'image/png':'image/jpeg',.92));
+}
+async function cvSaveDownload(dl){   // a stored file downloads under a readable name; words (a note) are made into a .txt; a cropped picture downloads cropped
+  let u=dl.href,tmp=false;
+  if(dl.text){u=URL.createObjectURL(new Blob([dl.text()],{type:'text/plain;charset=utf-8'}));tmp=true;}
+  else if(dl.crop){try{u=URL.createObjectURL(await cvCroppedBlob(dl));tmp=true;}catch(e){}}   // if the crop cannot be drawn, the whole picture still downloads
+  const a=document.createElement('a');a.href=u;a.download=dl.name;document.body.appendChild(a);a.click();a.remove();if(tmp)setTimeout(()=>URL.revokeObjectURL(u),1000);
 }
 
 // Crop a picture (Miro): the whole picture shows dimmed, the kept part bright in a frame; drag a corner or edge to crop,
