@@ -1859,7 +1859,10 @@ const cvShotDark=()=>cvDarkUI()?'-dark':'';
 const cvK=()=>1/(cvView.s||1);
 // an agent's frame is sized like what is already on the board, not for the zoom (same rule as the server's board_unit):
 // zoomed right out, a frame sized for the zoom came out many times the size of the board's own items (2026-11-04)
-function cvUnit(){const its=(cvBoard&&cvBoard.items||[]).filter(i=>!['area','arrow','ink'].includes(i.type)&&i.w>0),hand=its.filter(i=>!i.agent),ws=(hand.length>=3?hand:its).map(i=>i.w).sort((a,b)=>a-b);
+function cvUnit(){const its=(cvBoard&&cvBoard.items||[]).filter(i=>!['area','arrow','ink'].includes(i.type)&&i.w>0),hand=its.filter(i=>!i.agent);
+  const st=hand.filter(i=>i.type==='note'&&i.color!=='none'&&!i.card&&!i.grow).map(i=>i.w).sort((a,b)=>a-b);   // the board's own sticky notes set the scale best: a new sticky matches them
+  if(st.length>=2)return Math.max(.05,Math.min(50,st[st.length>>1]/200));
+  const ws=(hand.length>=3?hand:its).map(i=>i.w).sort((a,b)=>a-b);
   return ws.length?Math.max(.05,Math.min(50,ws[ws.length>>1]/260)):cvK();}   // a new item is sized for the current zoom, so it looks the same size on screen (Miro): big when zoomed out, as on a phone   // board pictures: the dark one in dark mode
 addEventListener('cc-theme',()=>document.querySelectorAll('img.cvprev-shot').forEach(im=>{   // the theme changed: swap the pictures
   im.src=im.src.replace(/\/boardshots\/([0-9a-f]+)(-dark)?\.jpg/,(m,id)=>'/boardshots/'+id+cvShotDark()+'.jpg');}));
@@ -2575,7 +2578,7 @@ function cvTextResize(e,it,el,c,hx,hy){   // corners scale the type (Miro); the 
 }
 // click = a title that grows as you type; w (a dragged width) = a paragraph box that wraps
 function cvPlaceText(p,w){
-  const k=1/cvView.s,ts=CV_TEXT_STYLES[CV_TEXT.style],fs=ts.fs*k;
+  const k=cvUnit(),ts=CV_TEXT_STYLES[CV_TEXT.style],fs=ts.fs*k;
   const it=cvAddItem({type:'note',color:'none',text:'',fs,...(ts.fw!==400?{fw:ts.fw}:{}),...(CV_TEXT.font!=='sans'?{font:CV_TEXT.font}:{}),...(CV_TEXT.fill?{fill:CV_TEXT.fill}:{}),
     grow:w?'h':'w',x:w?p.x:p.x-fs*.2,y:w?p.y:p.y-fs*.75,w:w||fs,h:fs*1.5});
   const el=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`);
@@ -2583,11 +2586,11 @@ function cvPlaceText(p,w){
 }
 function cvPlace(tool,p){   // a sticky note, a text box or a frame at p, ready to type in
   if(tool==='text')return cvPlaceText(p);
-  if(tool==='frame'){const k=cvK();return cvAddFrame(p.x-450*k,p.y-300*k,900*k,600*k);}
-  const k=1/cvView.s,it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k,...(CV_NOTE.color?{color:CV_NOTE.color}:{})});it._fresh=true;
+  if(tool==='frame'){const k=cvUnit();return cvAddFrame(p.x-450*k,p.y-300*k,900*k,600*k);}
+  const k=cvUnit(),it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k,...(CV_NOTE.color?{color:CV_NOTE.color}:{})});it._fresh=true;
   const f=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(f)cvEditNote(f);
 }
-function cvSticker(ch,p){const k=1/cvView.s,c=p||cvCenter();cvAddItem({type:'emoji',ch,x:c.x-40*k,y:c.y-40*k,w:80*k,h:80*k},!p);}   // dragged to a spot: there; clicked: a free spot
+function cvSticker(ch,p){const k=cvUnit(),c=p||cvCenter();cvAddItem({type:'emoji',ch,x:c.x-40*k,y:c.y-40*k,w:80*k,h:80*k},!p);}   // dragged to a spot: there; clicked: a free spot
 function cvAddFrame(x,y,w,h,behind){   // a frame you make yourself, like the ones a team's work sits in, named by its title.
   // Drawn over a group of items (the tool's drag) it goes behind them, on purpose; placed or dropped, it lands on top like anything new
   const it={type:'area',text:'',color:CV_FRAME.color,x,y,w,h,id:'c'+Date.now().toString(36)+(cvUidN++)};
@@ -2623,7 +2626,7 @@ function cvUseTool(e){
     const mv=ev=>{if(!box&&Math.abs(ev.clientX-sx)+Math.abs(ev.clientY-sy)<6)return;
       if(!box){box=document.createElement('div');box.className='cv-marquee';stage.appendChild(box);}
       p1=cvPoint(ev);box.style.cssText=`left:${Math.min(sx,ev.clientX)-r.left}px;top:${Math.min(sy,ev.clientY)-r.top}px;width:${Math.abs(ev.clientX-sx)}px;height:${Math.abs(ev.clientY-sy)}px`;};
-    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);cvSetTool('select');const k=cvK();
+    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);cvSetTool('select');const k=cvUnit();
       if(box){box.remove();cvAddFrame(Math.min(p0.x,p1.x),Math.min(p0.y,p1.y),Math.max(Math.abs(p1.x-p0.x),120*k),Math.max(Math.abs(p1.y-p0.y),80*k),true);}
       else cvAddFrame(p0.x-450*k,p0.y-300*k,900*k,600*k);};
     window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);return;
@@ -2741,7 +2744,7 @@ async function cvUnfurl(boardId,itemId,url){
   }
 }
 function cvNewLink(url,cx,cy){   // centred on cx,cy
-  const k=cvK(),x=cx-140*k,y=cy-55*k;
+  const k=cvUnit(),x=cx-140*k,y=cy-55*k;
   if(cvAppLink(url)){cvAddItem({type:'link',url,x,y,w:280*k,h:110*k},true);return;}   // nothing on the web to preview
   const it=cvAddItem({type:'link',url,x,y,w:280*k,h:110*k,pending:true,tries:1},true);
   cvUnfurl(cvBoardId,it.id,url);
@@ -2824,6 +2827,13 @@ async function cvFetchImage(url,p){   // the server fetches it (the page cannot 
     cvAddImage(new File([blob],'picture',{type:blob.type||'image/jpeg'}),0,p);}
   catch(e){cvSaveState('image');}
 }
+function cvPasteText(txt,p){   // a few words become a sticky note; anything longer is a block of text as wide as a document page, its paragraphs kept,
+  // sized like the board's own items, never for the zoom (a long paste zoomed out came in at many times the size of everything else, 2026-11-04)
+  const u=cvUnit();
+  if(txt.length<=120&&!/\n/.test(txt))return cvAddItem({type:'note',text:txt,fs:16*u,x:p.x-100*u,y:p.y-100*u,w:200*u,h:200*u},true);
+  const it=cvAddItem({type:'note',text:txt,color:'none',grow:'h',lines:true,fs:14*u,x:p.x-310*u,y:p.y-100*u,w:620*u,h:200*u},true);
+  const el=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`);if(el)cvFitText(it,el);cvSave();return it;
+}
 function cvAddFiles(files,p){
   files.forEach((f,i)=>{
     if(/^image\//.test(f.type))return cvAddImage(f,i,p);   // any picture Chrome can decode (a GIF loses its motion)
@@ -2832,7 +2842,7 @@ function cvAddFiles(files,p){
 }
 async function cvUploadFile(file,p){
   const boardId=cvBoardId,c=p||cvCenter();
-  const k=cvK(),it=cvAddItem({type:'file',label:file.name,size:file.size,uploading:true,x:c.x-130*k,y:c.y-60*k,w:260*k,h:120*k},true);
+  const k=cvUnit(),it=cvAddItem({type:'file',label:file.name,size:file.size,uploading:true,x:c.x-130*k,y:c.y-60*k,w:260*k,h:120*k},true);
   const bar=()=>$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"] .upbar i`);
   try{
     const {up}=await api('uploads',{method:'POST'});
@@ -2952,7 +2962,7 @@ async function cvNoteToDoc(it,kind){
     const [a,b]=CV_DOWNS;   // both presses on empty board, within 6 px and half a second of each other, else it is two clicks, not a double-click (2026-11-04)
     if(!a||!b||a.item||b.item||b.t-a.t>500||Math.hypot(a.x-b.x,a.y-b.y)>6)return;
     const p=cvPoint(e);
-    const k=cvK(),it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k});it._fresh=true;
+    const k=cvUnit(),it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k});it._fresh=true;
     const el=stage.querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(el)cvEditNote(el);
   });
   // two fingers (phone, tablet): pinch zooms around the point between them, and moving them pans
@@ -3007,7 +3017,7 @@ async function cvNoteToDoc(it,kind){
     if(!txt)return;
     const u=cvExtractUrl(txt);
     if(u)cvNewLink(u,p.x,p.y);
-    else{const k=cvK();cvAddItem({type:'note',text:txt,fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k},true);}
+    else cvPasteText(txt,p);
   });
   // zoom controls
   const zoomBy=f=>{const r=stage.getBoundingClientRect(),px=r.width/2,py=r.height/2;
@@ -3062,7 +3072,7 @@ async function cvNoteToDoc(it,kind){
     const p=cvCenter();
     const u=cvExtractUrl(txt);
     if(u)cvNewLink(u,p.x,p.y);
-    else{const k=cvK();cvAddItem({type:'note',text:txt,fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k},true);}
+    else cvPasteText(txt,p);
   });
   document.addEventListener('keydown',e=>{
     if(e.key==='Escape'&&!$('#agFly').hidden){agFlyClose();return;}   // the agent box sits over the folded voice card: it goes first
@@ -4148,7 +4158,7 @@ function cvAddFromMenu(a){
     f.onchange=()=>{if(f.files&&f.files.length)cvAddFiles([...f.files],p);};f.click();};
   if(a==='photo')pick('image/*',true);
   else if(a==='library')pick('image/*,video/*',false);
-  else if(a==='note'){const k=cvK(),it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k},true);
+  else if(a==='note'){const k=cvUnit(),it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k},true);
     const el=$('#cvStage').querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(el)cvEditNote(el);}
   else if(a==='link')menuOpen($('#cvMenuBtn'),`<div class="mh">Paste a link</div><div class="mlink"><input type="url" inputmode="url" autocomplete="off" placeholder="https://…"><button class="go">Add</button></div><div class="merr"></div>`,m=>{
     const inp=m.querySelector('input'),add=()=>{const u=cvExtractUrl(inp.value.trim());
