@@ -1363,7 +1363,7 @@ function homePaint(){
   shown.forEach(b=>{
     const card=document.createElement('div');card.className='bcard';card.draggable=true;
     const n=b.count??b.items.length,sp=spaceOf(b)&&spaceOf(b)!==HOME.space?' · '+escapeHtml(spaceName(spaceOf(b))):'';   // in a parent space: which sub-space it is in
-    const by=b.by==='agent'?'<span class="cvprev-by" title="Made by an agent team">'+CV_BY_ICON+'Agent</span>':b.by==='assistant'?'<span class="cvprev-by assistant" title="Made by your assistant">'+CV_BY_ICON+'Assistant</span>':'';
+    const by=b.by==='agent'?'<span class="cvprev-by" title="Made by an agent team">'+CV_BY_ICON+'Agent generated</span>':b.by==='assistant'?'<span class="cvprev-by assistant" title="Made by your assistant">'+CV_BY_ICON+'Assistant generated</span>':'';
     card.innerHTML=`<div class="cvprev">${n?`<img class="cvprev-shot" alt="" loading="lazy" decoding="async" src="api/boardshots/${b.id}${cvShotDark()}.jpg?u=${b.updated}&v=${CV_SHOT_V}">`:''}<div class="cvprev-inner"></div><span class="cvprev-badge"></span>${by}</div>
       <div class="bmeta"><span class="bname">${escapeHtml(b.name)}</span><span class="bsub">${n} item${n===1?'':'s'} · edited ${ago(b.updated)}${sp}</span></div>
       <button class="bmore" title="Move or delete">⋯</button>`;
