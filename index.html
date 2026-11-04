@@ -3030,7 +3030,7 @@ async function cvNoteToDoc(it,kind){
     if(!cvOpenNow())return;
     const ae=document.activeElement;
     if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA/.test(ae.tagName)))return;
-    const files=[...(e.clipboardData.files||[])];[...(e.clipboardData.items||[])].forEach(i=>{if(i.kind==='file'){const f=i.getAsFile();if(f&&!files.includes(f))files.push(f);}});
+    const files=[...(e.clipboardData.files||[])];if(!files.length)[...(e.clipboardData.items||[])].forEach(i=>{if(i.kind==='file'){const f=i.getAsFile();if(f)files.push(f);}});   // the item list only when the file list is empty: the same picture is in both (it pasted twice, 2026-11-04)
     const mine=(e.clipboardData.getData('text/x-cv-items')||!files.length)?cvClipItems(e.clipboardData):null;   // a picture on the clipboard is a picture, unless board items really came with it
     if(mine){e.preventDefault();cvPasteItems(mine);return;}
     if(files.length){e.preventDefault();cvAddFiles(files,null);return;}
