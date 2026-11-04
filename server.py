@@ -690,7 +690,7 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 3 and parts[:2] == ['api', 'brief'] and BOARD_ID.match(parts[2]):
             return self.reply(200, BRIEFER.view(parts[2]))
         if parts == ['api', 'settings']:
-            return self.reply(200, dict(models.public(), local=local_models(), startup=local_models(False)))
+            return self.reply(200, dict(models.public(), local=local_models(), startup=local_models(False), widget_token=widget_token()))
         if parts == ['api', 'integrations']:
             bid = (urllib.parse.parse_qs(self.path.partition('?')[2]).get('board') or [''])[0]
             return self.reply(200, integrations.public(bid if BOARD_ID.match(bid) else None))
@@ -746,6 +746,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {'key': PUSH.public}) if PUSH else self.reply(503, NO_PUSH)
         if len(parts) == 3 and parts[:2] == ['api', 'teams'] and BOARD_ID.match(parts[2]):
             return self.reply(200, dict(RUNNER.team(parts[2]), starters=agents.STARTERS))
+        if parts == ['api', 'widget']:   # the phone's home-screen widget: counts and one line, only with the widget token
+            if not secrets.compare_digest(self.headers.get('X-Widget-Token') or '', widget_token()):
+                return self.reply(401, {'error': 'The widget token is missing or wrong. Settings shows it.'})
+            return self.reply(200, widget_status())
         if parts == ['api', 'news']:   # what the person has not been told yet, on every board (the voice and notifications)
             return self.reply(200, named_news())
         if len(parts) == 3 and parts[:2] == ['api', 'import'] and parts[2] in IMPORTS:
@@ -1581,6 +1585,46 @@ def board_cards():
 
 def board_names():
     return {c['id']: c.get('name') or '' for c in board_cards()}
+
+
+def widget_token():
+    """The phone widget's key: a random word kept in the data folder, made the first time it is asked for.
+    Settings shows it; the widget sends it as X-Widget-Token. Delete the file to make a new one."""
+    path = os.path.join(DATA, 'widget-token')
+    try:
+        with open(path) as f:
+            tok = f.read().strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
+    tok = secrets.token_hex(16)
+    with open(path, 'w') as f:
+        f.write(tok + '\n')
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return tok
+
+
+def widget_status():
+    """What the phone widget shows under its title: how many questions wait, tasks run and finished tasks are untold,
+    plus one line about the most pressing of them. Read-only; nothing from the boards themselves."""
+    news = named_news()
+    names = board_names()
+    running = [r for r in RUNNER.view() if r['board'] in names and r['status'] in ('queued', 'working', 'team')]
+    waiting, done = news['waiting'], news['done']
+    if waiting:
+        w = waiting[0]
+        line = '%s asks: %s' % ((w.get('member') or {}).get('name') or 'The team', w.get('question') or '')
+    elif done:
+        line = 'Finished: %s' % done[-1]['task']
+    elif running:
+        line = 'Working: %s' % running[0]['task']
+    else:
+        line = 'All quiet. %d boards.' % len(names)
+    return {'waiting': len(waiting), 'running': len(running), 'done': len(done), 'line': line[:140]}
 
 
 def named_news():

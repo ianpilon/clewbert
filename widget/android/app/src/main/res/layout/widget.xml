@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="60dp"
+    android:orientation="horizontal" android:gravity="center_vertical"
+    android:background="@drawable/pill" android:paddingStart="14dp" android:paddingEnd="8dp">
+    <ImageView android:id="@+id/bulb" android:layout_width="30dp" android:layout_height="30dp"
+        android:src="@drawable/bulb" android:contentDescription="Your boards" />
+    <LinearLayout android:id="@+id/ask" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+        android:orientation="vertical" android:gravity="center_vertical" android:paddingStart="12dp" android:paddingEnd="6dp">
+        <TextView android:id="@+id/title" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/ask_default" android:textColor="#B3FFFFFF" android:textSize="17sp" android:singleLine="true" />
+        <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/loading" android:textColor="#FF8AB4F8" android:textSize="12sp" android:singleLine="true" android:ellipsize="end" />
+    </LinearLayout>
+    <ImageView android:id="@+id/mic" android:layout_width="44dp" android:layout_height="44dp" android:padding="10dp"
+        android:src="@drawable/mic" android:contentDescription="Talk to your boards" />
+</LinearLayout>

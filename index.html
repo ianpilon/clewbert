@@ -1166,6 +1166,8 @@
   <div id="stgSrv"></div>
   <label>Connected apps <span>what the agents can use; sending or changing anything always asks you first</span></label>
   <div id="stgApps"></div>
+  <label>Phone widget <span>an "Ask" bar on your Android home screen: search, the voice, and what the agents are up to</span></label>
+  <div id="stgWidget"></div>
   <label>Keys <span>kept on this server only, never shown again in full</span></label>
   <div id="stgKeys"></div>
   <div class="oe-foot"><span class="stg-msg" id="stgMsg"></span><button class="oe-cx" id="stgCancel">Close</button><button class="go" id="stgSave">Save</button></div>
@@ -2970,11 +2972,24 @@ const STG_JOBS=[['voice','Voice','answers you and writes board briefs'],['agents
 const STG={data:null,lists:{},drop:new Set()};
 const stgAn=n=>(/^[AEIOUx]/.test(n)?'an ':'a ')+n;   // an OpenAI, an Anthropic, an xAI ("ex-A-I") key
 
+function widgetParams(){   // the phone widget opens the page with ?q=<words> (search bar, keyboard up) or ?voice=1 (the voice, listening)
+  const P=new URLSearchParams(location.search);if(!P.has('q')&&!P.has('voice'))return;
+  history.replaceState(null,'',location.pathname+location.hash);   // so a reload does not ask again
+  setTimeout(()=>{if(P.has('voice')){if(!VC.on)vcOpen();}else{const i=$('#sbInput');i.value=P.get('q')||'';i.focus();if(i.value.trim())sbFind();}},600);
+}
 async function stgOpen(){
   $('#stg').hidden=false;stgMsg('');
   try{STG.data=await api('settings');}catch(e){stgMsg('Settings did not load. Reload the page and try again.',true);return;}
   STG.drop=new Set();STG.own=null;stgPaint();stgOwnLoad();   // names as the models that really answer
-  stgAppsLoad();
+  stgAppsLoad();stgWidgetPaint();
+}
+/* ---------------- Phone widget: the Android bar needs this page's address and the widget token ---------------- */
+function stgWidgetPaint(){
+  const t=STG.data.widget_token||'';
+  $('#stgWidget').innerHTML=`<div class="stg-jn">Install the widget app on your Android phone from the <a href="https://github.com/ianpilon/clewbert/releases" target="_blank" rel="noopener">Clewbert releases page</a> (a file ending in .apk), open it, and enter these two things. The bar then opens this page's search or voice, and shows waiting questions, running tasks and finished work. Prefer a plain icon? Use your browser's menu, "Add to Home screen", instead.</div>
+    <div class="oe-row"><span class="stg-sv"><b>Address</b> <code id="stgWAddr">${escapeHtml(location.origin)}</code></span><button class="oe-cx" data-copy="stgWAddr">Copy</button></div>
+    <div class="oe-row"><span class="stg-sv"><b>Token</b> <code id="stgWTok">${escapeHtml(t)}</code></span><button class="oe-cx" data-copy="stgWTok">Copy</button></div>`;
+  $('#stgWidget').querySelectorAll('[data-copy]').forEach(b=>{b.onclick=()=>{navigator.clipboard.writeText($('#'+b.dataset.copy).textContent).then(()=>{b.textContent='Copied';setTimeout(()=>b.textContent='Copy',1500);},()=>{b.textContent='Select it and copy';});};});
 }
 /* ---------------- Connected apps: Google straight to Google (your own sign-in app), and your own MCP servers ----------------
    The server keeps every secret (integrations.json, owner-only) and only says whether one is set. */
@@ -4550,6 +4565,7 @@ $('#obStart').onclick=async()=>{
   let s=null;try{s=await api('setup');}catch(e){}
   if(s){VC.speech=s.speech;if(!s.ready){obPick('xai');$('#ob').hidden=false;$('#obKey').focus();return;}}
   route();
+  widgetParams();
   newsPoll();
   pushInit();
 })();

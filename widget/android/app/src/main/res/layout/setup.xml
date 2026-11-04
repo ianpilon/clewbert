@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="24dp">
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="22sp" android:textStyle="bold" android:text="Clewbert widget" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="8dp" android:paddingBottom="16dp" android:textSize="15sp"
+        android:text="Open Settings (the gear) on your boards page. Under Phone widget it shows the two things to enter here. Then add the widget to your home screen from the button at the bottom." />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Address of your boards page" android:textStyle="bold" />
+    <EditText android:id="@+id/base" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textUri" android:hint="https://boards.example.com or http://192.168.1.20:8135" android:autofillHints="url" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="12dp" android:text="Widget token" android:textStyle="bold" />
+    <EditText android:id="@+id/token" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textVisiblePassword" android:hint="from Settings, Phone widget" android:autofillHints="password" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="12dp" android:text="Words on the bar" android:textStyle="bold" />
+    <EditText android:id="@+id/title" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textCapSentences" android:hint="Ask Clewbert" android:autofillHints="name" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="20dp" android:text="Only if your page sits behind Cloudflare Access" android:textStyle="bold" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="13sp" android:text="A service token from Cloudflare Zero Trust, allowed on your Access app. Leave both empty otherwise." />
+    <EditText android:id="@+id/cfid" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textVisiblePassword" android:hint="CF-Access-Client-Id" android:autofillHints="username" />
+    <EditText android:id="@+id/cfsecret" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textPassword" android:hint="CF-Access-Client-Secret" android:autofillHints="password" />
+    <TextView android:id="@+id/result" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="16dp" android:textSize="14sp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="12dp">
+        <Button android:id="@+id/test" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="Test" />
+        <Button android:id="@+id/save" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="Save" />
+    </LinearLayout>
+    <Button android:id="@+id/pin" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Add the bar to my home screen" />
+</LinearLayout>
+</ScrollView>

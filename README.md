@@ -75,3 +75,7 @@ conversations, `settings.json` (your provider keys) and `integrations.json` (you
 ## Licence
 
 Apache License 2.0. See `LICENSE` and `NOTICE`.
+
+## Phone widget (Android)
+
+An "Ask" bar for the phone's home screen, like the Google bar but for your boards: tap the words for the search box, the mic for the voice, the bulb for the task list, with a live line of waiting questions, running tasks and finished work. Install the `.apk` from the [releases page](https://github.com/ianpilon/clewbert/releases); the setup and build steps are in [widget/android/README.md](widget/android/README.md). Settings > Phone widget shows the address and the token to enter. Prefer a plain icon? Chrome's menu, Add to Home screen, works as before.

@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Clewbert widget</string>
+    <string name="widget_desc">An "Ask" bar: search your boards or talk to them, and see what the agents are up to.</string>
+    <string name="ask_default">Ask Clewbert</string>
+    <string name="loading">Checking your boards…</string>
+    <string name="setup_needed">Tap to set up</string>
+    <string name="unreachable">Can\'t reach your boards right now</string>
+    <string name="bad_token">The token is wrong. Settings on your boards page shows it.</string>
+</resources>

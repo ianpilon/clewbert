@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <application android:label="@string/app_name" android:icon="@drawable/bulb" android:allowBackup="false" android:usesCleartextTraffic="true">
+        <activity android:name=".SetupActivity" android:exported="true" android:label="@string/app_name" android:theme="@android:style/Theme.DeviceDefault.DayNight">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity>
+        <activity android:name=".PinActivity" android:exported="true" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" />
+        <receiver android:name=".CanvasWidget" android:exported="true">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <intent-filter><action android:name="ca.voiceclaw.canvaswidget.REFRESH" /></intent-filter>
+            <intent-filter><action android:name="ca.voiceclaw.canvaswidget.PIN" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info" />
+        </receiver>
+        <service android:name=".RefreshJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false" />
+    </application>
+</manifest>
