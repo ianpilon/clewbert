@@ -472,6 +472,10 @@
   .cv-item:hover .rsz,.cv-item.sel .rsz{display:block}
   .cv-note.plain .frame{background:transparent;border-color:transparent;box-shadow:none}
   .cv-note.plain.filled .frame{padding:.4em .6em;border-radius:.25em}   /* text with a fill colour: a little room around the words */
+  /* a document placeholder (the text tool with Paste as .md or PDF): a page; what is pasted or typed into it becomes that file */
+  .cv-note.doc .frame{background:#fff;border:1px solid var(--border);border-radius:.15em;box-shadow:var(--shadow);padding:1.8em 2em;white-space:pre-wrap;overflow:hidden;color:#1a1a1a}
+  .cv-note.doc .frame:empty::before{content:'Paste here. This page becomes a ' attr(data-what) ' file.';color:#8a8f98}
+  .cv-note.doc::after{content:attr(data-doc);position:absolute;right:.9em;top:.7em;font-size:calc(11px / var(--zs,1));font-weight:700;letter-spacing:.04em;color:#8a8f98;pointer-events:none}
   /* text made with the text tool fits its words: grow-w = one line wide as the words (a title), grow-h = a set width that wraps (a paragraph) */
   .cv-note.grow .frame{height:auto;overflow:visible;padding:.1em .2em;line-height:1.3;border-radius:0}
   .cv-note.grow-w .frame{white-space:pre;min-width:.6em}
@@ -1859,11 +1863,12 @@ const cvShotDark=()=>cvDarkUI()?'-dark':'';
 const cvK=()=>1/(cvView.s||1);
 // an agent's frame is sized like what is already on the board, not for the zoom (same rule as the server's board_unit):
 // zoomed right out, a frame sized for the zoom came out many times the size of the board's own items (2026-11-04)
-function cvUnit(){const its=(cvBoard&&cvBoard.items||[]).filter(i=>!['area','arrow','ink'].includes(i.type)&&i.w>0),hand=its.filter(i=>!i.agent);
-  const st=hand.filter(i=>i.type==='note'&&i.color!=='none'&&!i.card&&!i.grow).map(i=>i.w).sort((a,b)=>a-b);   // the board's own sticky notes set the scale best: a new sticky matches them
-  if(st.length>=2)return Math.max(.05,Math.min(50,st[st.length>>1]/200));
-  const ws=(hand.length>=3?hand:its).map(i=>i.w).sort((a,b)=>a-b);
-  return ws.length?Math.max(.05,Math.min(50,ws[ws.length>>1]/260)):cvK();}   // a new item is sized for the current zoom, so it looks the same size on screen (Miro): big when zoomed out, as on a phone   // board pictures: the dark one in dark mode
+// what one board unit is here: each hand-made item's width over the width its kind is born with (a sticky 200, a card 300, a file chip 260,
+// a link card 300, a picture 440, a document page 620); the middle of those ratios. A page or a big picture no longer drags the scale up
+function cvNominal(i){if(i.type==='note')return i.color!=='none'?200:i.card?300:(i.doc||i.grow==='h'||i.lines)?620:260;return {file:260,link:300,media:440,img:440,emoji:80,shot:440}[i.type]||300;}
+function cvUnit(){const its=(cvBoard&&cvBoard.items||[]).filter(i=>!['area','arrow','ink'].includes(i.type)&&i.w>0&&!i.uploading),hand=its.filter(i=>!i.agent);
+  const rs=(hand.length>=1?hand:its).map(i=>i.w/cvNominal(i)).sort((a,b)=>a-b);
+  return rs.length?Math.max(.05,Math.min(50,rs[rs.length>>1])):cvK();}
 addEventListener('cc-theme',()=>document.querySelectorAll('img.cvprev-shot').forEach(im=>{   // the theme changed: swap the pictures
   im.src=im.src.replace(/\/boardshots\/([0-9a-f]+)(-dark)?\.jpg/,(m,id)=>'/boardshots/'+id+cvShotDark()+'.jpg');}));
 function cvPale(hex){const m=/^#?([0-9a-f]{6})$/i.exec(hex||'');if(!m)return false;const n=parseInt(m[1],16),r=n>>16,g=n>>8&255,b=n&255;
@@ -2158,6 +2163,7 @@ function cvItemEl(it){
       f.addEventListener('blur',()=>{if(cvBoard&&cvBoard.items.includes(it))cvCardFill(f,it.text);});}
     f.addEventListener('dblclick',e=>{e.stopPropagation();cvEditNote(f);});   // like Miro: click selects and drags, double-click types
     f.addEventListener('blur',()=>{f.contentEditable='false';f.scrollTop=0;$('#cvFmt').hidden=true;   // done typing: the bold/highlight bar goes too
+      if(it.doc&&String(it.text||'').trim()){setTimeout(()=>{if(cvBoard&&cvBoard.items.includes(it))cvDocConvert(it,it.text);});return;}   // a document placeholder with words in it becomes the file
       if((it.grow||it._fresh)&&!String(it.text||'').trim())setTimeout(()=>{   // empty text is not left behind as an invisible item; a new sticky nobody typed in is not left behind either: no blank note ever lands on its own (2026-11-04)
         if(!cvBoard||!cvBoard.items.includes(it))return;
         cvBoard.items=cvBoard.items.filter(i=>i!==it);cvSel.delete(it.id);cvRender();cvSave();});});
@@ -2167,7 +2173,8 @@ function cvItemEl(it){
     if(it.font&&CV_FONTS[it.font])f.style.fontFamily=CV_FONTS[it.font].css;
     cvNoteSize(it,el);
     if(it.card){}
-    else if(it.color==='none'){el.classList.add('plain');if(it.fill){el.classList.add('filled');f.style.background=cvBack(it.fill);}}
+    else if(it.color==='none'){el.classList.add('plain');if(it.fill){el.classList.add('filled');f.style.background=cvBack(it.fill);}
+      if(it.doc){el.classList.add('doc');el.dataset.doc=it.doc.toUpperCase();f.dataset.what=it.doc==='md'?'Markdown':'PDF';}}
     else{el.style.setProperty('--fold-c',cvFold(it.color));   // in dark every note is a dark card (the stylesheet): only the fold keeps its colour
       if(it.color&&!cvDarkUI()){f.style.background=it.color;f.style.borderColor='transparent';if(cvIsDark(it.color))f.style.color='#fff';}}
     f.addEventListener('input',()=>{it.text=f.textContent;delete it._fresh;if(!it.card)cvReadMarks(f,it);cvFitText(it,el);cvSave();});
@@ -2577,7 +2584,17 @@ function cvTextResize(e,it,el,c,hx,hy){   // corners scale the type (Miro); the 
   window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);
 }
 // click = a title that grows as you type; w (a dragged width) = a paragraph box that wraps
+function cvPlaceDoc(p){   // the text tool with Paste as .md or PDF: a page-shaped placeholder; what is pasted or typed into it becomes that file
+  const u=cvUnit(),it=cvAddItem({type:'note',color:'none',text:'',fs:14*u,lines:true,doc:CV_TEXT.paste,x:p.x-310*u,y:p.y-60*u,w:620*u,h:800*u});it._fresh=true;
+  const el=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`);if(el)cvEditNote(el.querySelector('.frame'));
+}
+async function cvDocConvert(it,text){   // the placeholder's words become the file it promised, in its place
+  const kind=it.doc,fake={text},name=cvFileName(text.split('\n').find(l=>l.trim())||'','Document').slice(0,60)+'.'+kind;
+  const doc=await cvUploadFile(new File([kind==='md'?cvToMarkdown(fake):cvToPdf(fake)],name,{type:kind==='md'?'text/markdown':'application/pdf'}),{x:it.x+130*cvUnit(),y:it.y+60*cvUnit()});
+  if(doc&&cvBoard&&cvBoard.items.includes(it))cvDrop([it.id]);
+}
 function cvPlaceText(p,w){
+  if(!w&&(CV_TEXT.paste==='md'||CV_TEXT.paste==='pdf'))return cvPlaceDoc(p);
   const k=cvUnit(),ts=CV_TEXT_STYLES[CV_TEXT.style],fs=ts.fs*k;
   const it=cvAddItem({type:'note',color:'none',text:'',fs,...(ts.fw!==400?{fw:ts.fw}:{}),...(CV_TEXT.font!=='sans'?{font:CV_TEXT.font}:{}),...(CV_TEXT.fill?{fill:CV_TEXT.fill}:{}),
     grow:w?'h':'w',x:w?p.x:p.x-fs*.2,y:w?p.y:p.y-fs*.75,w:w||fs,h:fs*1.5});
@@ -3065,6 +3082,11 @@ async function cvNoteToDoc(it,kind){
   document.addEventListener('paste',e=>{
     if(!cvOpenNow())return;
     const ae=document.activeElement;
+    if(ae&&ae.isContentEditable){   // pasting into a document placeholder: the words become the file, right there
+      const el=ae.closest('.cv-item'),it=el&&cvBoard&&cvBoard.items.find(i=>i.id===el.dataset.id);
+      if(it&&it.doc){const txt=(e.clipboardData.getData('text/plain')||'').trim();if(!txt)return;
+        e.preventDefault();it.text=(String(it.text||'').trim()?it.text+'\n':'')+txt;delete it._fresh;ae.blur();return;}   // the blur turns it into the file
+    }
     if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA/.test(ae.tagName)))return;
     const files=[...(e.clipboardData.files||[])];if(!files.length)[...(e.clipboardData.items||[])].forEach(i=>{if(i.kind==='file'){const f=i.getAsFile();if(f)files.push(f);}});   // the item list only when the file list is empty: the same picture is in both (it pasted twice, 2026-11-04)
     const mine=(e.clipboardData.getData('text/x-cv-items')||!files.length)?cvClipItems(e.clipboardData):null;   // a picture on the clipboard is a picture, unless board items really came with it
