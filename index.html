@@ -125,6 +125,14 @@
   .bcard .bmeta{padding-right:44px}
   .bcard .bsub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .bcard.dragging{opacity:.5}
+  /* a sub-space card on its parent's page: up to four of its boards' pictures, click to go in, drop a board on it to move it there */
+  .scard .cvprev.scol{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:5px;padding:7px;box-sizing:border-box}
+  .scard .cvprev.scol.one{grid-template-columns:1fr;grid-template-rows:1fr}
+  .scard .cvprev.scol.two{grid-template-rows:1fr}
+  .scol-shot{width:100%;height:100%;min-height:0;object-fit:contain;background:var(--card);border:1px solid var(--border);border-radius:6px;pointer-events:none}
+  .scol-blank{border:1px dashed var(--border);border-radius:6px}
+  .scard.drop{border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.25)}
+  .home-h{grid-column:1/-1;margin:14px 0 -6px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
   .imp-bg{position:fixed;inset:0;z-index:97;background:rgba(16,20,28,.35);display:grid;place-items:center;padding:16px}
   .imp-bg[hidden]{display:none}
   .imp{width:460px;max-width:100%;background:var(--card);border-radius:14px;box-shadow:0 20px 60px rgba(16,20,28,.3);padding:20px 22px 18px;display:flex;flex-direction:column;gap:8px}
@@ -1330,9 +1338,23 @@ function homePaint(){
   $('#homeTitle').textContent=title;document.title=(HOME.space?title+' · ':'')+'Clewbert';
   $('#micHome').title=HOME.space?'Talk to the boards in '+title:'Talk to your boards';
   renderSpaces();vcTitle();
-  const shown=boards.filter(b=>!HOME.space||(HOME.space==='unsorted'?!spaceOf(b):inSpace(b,HOME.space)));
+  const subs=HOME.space&&HOME.space!=='unsorted'?subsOf(HOME.space):[];
+  // a space with sub-spaces shows those first, as cards of their boards' pictures, then the boards that sit directly in it (2026-11-04)
+  const shown=boards.filter(b=>!HOME.space||(HOME.space==='unsorted'?!spaceOf(b):subs.length?spaceOf(b)===HOME.space:inSpace(b,HOME.space)));
   grid.innerHTML='';
-  if(!shown.length){grid.innerHTML=HOME.space?`<div class="home-empty">No boards in ${escapeHtml(title)} yet.<br>Click <b>New board</b>, or drag a board onto it from All boards.</div>`:'<div class="home-empty">No boards yet.<br>Click <b>New board</b> to start one.</div>';return;}
+  subs.forEach(x=>{
+    const bs=boards.filter(b=>spaceOf(b)===x.id).sort((a,b)=>(b.updated||0)-(a.updated||0)),latest=bs[0]&&bs[0].updated;
+    const card=document.createElement('div');card.className='bcard scard';
+    card.innerHTML=`<div class="cvprev scol${bs.length===1?' one':bs.length===2?' two':''}">${bs.slice(0,4).map(b=>(b.count??(b.items||[]).length)?`<img class="scol-shot" alt="" loading="lazy" decoding="async" src="api/boardshots/${b.id}${cvShotDark()}.jpg?u=${b.updated}&v=${CV_SHOT_V}">`:'<span class="scol-blank"></span>').join('')||'<span class="scol-blank"></span>'}<span class="cvprev-badge">${bs.length} board${bs.length===1?'':'s'}</span></div>
+      <div class="bmeta"><span class="bname">${escapeHtml(x.name)}</span><span class="bsub">Sub-space · ${bs.length} board${bs.length===1?'':'s'}${latest?' · edited '+ago(latest):''}</span></div>`;
+    card.onclick=()=>{location.hash='s/'+x.id;};
+    card.addEventListener('dragover',e=>{if(e.dataTransfer.types.includes('text/x-board')){e.preventDefault();card.classList.add('drop');}});
+    card.addEventListener('dragleave',()=>card.classList.remove('drop'));
+    card.addEventListener('drop',e=>{e.preventDefault();card.classList.remove('drop');const bid=e.dataTransfer.getData('text/x-board');if(bid)moveBoard(bid,x.id);});
+    grid.appendChild(card);
+  });
+  if(!shown.length&&!subs.length){grid.innerHTML=HOME.space?`<div class="home-empty">No boards in ${escapeHtml(title)} yet.<br>Click <b>New board</b>, or drag a board onto it from All boards.</div>`:'<div class="home-empty">No boards yet.<br>Click <b>New board</b> to start one.</div>';return;}
+  if(subs.length&&shown.length)grid.insertAdjacentHTML('beforeend',`<h4 class="home-h">Boards in ${escapeHtml(title)}</h4>`);
   shown.forEach(b=>{
     const card=document.createElement('div');card.className='bcard';card.draggable=true;
     const n=b.count??b.items.length,sp=spaceOf(b)&&spaceOf(b)!==HOME.space?' · '+escapeHtml(spaceName(spaceOf(b))):'';   // in a parent space: which sub-space it is in
