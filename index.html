@@ -1152,7 +1152,7 @@
       <button data-tool="emoji" title="Stickers: click one to add it, or drag it onto the board"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 14.5c1.8 2 5.2 2 7 0"/><circle cx="9.2" cy="10" r=".6" fill="currentColor"/><circle cx="14.8" cy="10" r=".6" fill="currentColor"/></svg></button>
       <button class="tbfold" id="tbFold" title="Hide the tools (the voice stays)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg></button>
     </div>
-    <div class="cv-fly" id="cvTextFly" hidden><div class="row" id="cvTextStyles"></div><div class="row" id="cvTextFonts" style="margin-top:7px"></div><div class="row" id="cvTextFills" style="margin-top:9px"></div></div>
+    <div class="cv-fly" id="cvTextFly" hidden><div class="row" id="cvTextStyles"></div><div class="row" id="cvTextFonts" style="margin-top:7px"></div><div class="row" id="cvTextFills" style="margin-top:9px"></div><div class="row" id="cvTextPaste" style="margin-top:9px"></div></div>
     <div class="cv-fly" id="cvNoteFly" hidden><div class="row" id="cvNoteColors"></div></div>
     <div class="cv-fly" id="cvFrameFly" hidden><div class="row" id="cvFrameFills"></div></div>
     <div class="cv-fly" id="cvPenFly" hidden><div class="row" id="cvPenColors"></div><div class="row" id="cvPenSizes" style="margin-top:7px"></div></div>
@@ -2495,7 +2495,7 @@ let cvTool='select';
 const CV_TOOL_KEYS={v:'select',n:'note',t:'text',f:'frame',p:'pen'};
 const CV_PEN={color:'#1f2430',size:3};
 // text: a size style and a font, both from fonts every Mac and iPhone already has
-const CV_TEXT={style:'body',font:'sans',fill:''};   // fill '' = see-through
+const CV_TEXT={style:'body',font:'sans',fill:'',paste:'text'};   // fill '' = see-through; paste = what a long paste of words becomes: text on the board, a .md file, or a PDF
 const CV_TEXT_STYLES={h1:{label:'Heading 1',fs:40,fw:700},h2:{label:'Heading 2',fs:28,fw:700},body:{label:'Body',fs:18,fw:400},small:{label:'Small',fs:13,fw:400}};
 const CV_FONTS={sans:{label:'Sans',css:'var(--font)'},serif:{label:'Serif',css:'Georgia,"Times New Roman",serif'},mono:{label:'Mono',css:'ui-monospace,Menlo,monospace'},hand:{label:'Handwritten',css:'var(--hand)'}};
 const CV_FRAME_FILLS=[['#f3f6fb','Frame grey'],['#ffffff','White'],['#fafaf7','Off-white'],['#fbf5e6','Cream'],['#f3eee4','Sand'],['#eef0f3','Light grey'],['#eaf2fd','Pale blue'],['#ecf7ec','Pale green'],['#fdf6d8','Pale yellow'],['#fbeaea','Pale pink'],['#f1ecf9','Pale lavender']];const CV_FRAME={color:'#f3f6fb'};
@@ -2658,6 +2658,8 @@ function cvUseTool(e){
   $('#cvPenSizes').innerHTML=[3,8].map(n=>`<button class="sz${n===CV_PEN.size?' on':''}" data-s="${n}" title="${n===3?'Fine':'Thick'} line"><i style="width:${n+2}px;height:${n+2}px"></i></button>`).join('');
   $('#cvTextStyles').innerHTML=Object.entries(CV_TEXT_STYLES).map(([k,v])=>`<button class="tx${k===CV_TEXT.style?' on':''}" data-k="${k}" style="font-weight:${v.fw}">${v.label}</button>`).join('');
   $('#cvTextFonts').innerHTML=Object.entries(CV_FONTS).map(([k,v])=>`<button class="tx${k===CV_TEXT.font?' on':''}" data-k="${k}" style="font-family:${escapeAttr(v.css||'inherit')}">${v.label}</button>`).join('');
+  $('#cvTextPaste').innerHTML='<span class="lbl">Paste as</span>'+[['text','Text'],['md','.md'],['pdf','PDF']].map(([k,l])=>`<button class="tx${k===CV_TEXT.paste?' on':''}" data-k="${k}" title="${k==='text'?'Pasted words become text on the board':k==='md'?'Pasted words become a Markdown file':'Pasted words become a PDF'}">${l}</button>`).join('');
+  $('#cvTextPaste').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_TEXT.paste=b.dataset.k;document.querySelectorAll('#cvTextPaste .tx').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvTextStyles').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_TEXT.style=b.dataset.k;document.querySelectorAll('#cvTextStyles .tx').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvTextFonts').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_TEXT.font=b.dataset.k;document.querySelectorAll('#cvTextFonts .tx').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvTextFills').innerHTML='<span class="lbl">Fill</span>'+CV_TEXT_FILLS.map(([c,n])=>`<button class="sw${c?'':' none'}${c===CV_TEXT.fill?' on':''}" data-c="${c}" style="${c?'background:'+c:''}" title="${n}"></button>`).join('');
@@ -2831,6 +2833,9 @@ function cvPasteText(txt,p){   // a few words become a sticky note; anything lon
   // sized like the board's own items, never for the zoom (a long paste zoomed out came in at many times the size of everything else, 2026-11-04)
   const u=cvUnit();
   if(txt.length<=120&&!/\n/.test(txt))return cvAddItem({type:'note',text:txt,fs:16*u,x:p.x-100*u,y:p.y-100*u,w:200*u,h:200*u},true);
+  if(CV_TEXT.paste==='md'||CV_TEXT.paste==='pdf'){   // the text tool's "Paste as": the words land as a file, named from their first line (2026-11-04)
+    const kind=CV_TEXT.paste,fake={text:txt},name=cvFileName(txt.split('\n').find(l=>l.trim())||'','Pasted').slice(0,60)+'.'+kind;
+    return cvUploadFile(new File([kind==='md'?cvToMarkdown(fake):cvToPdf(fake)],name,{type:kind==='md'?'text/markdown':'application/pdf'}),p);}
   const it=cvAddItem({type:'note',text:txt,color:'none',grow:'h',lines:true,fs:14*u,x:p.x-310*u,y:p.y-100*u,w:620*u,h:200*u},true);
   const el=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`);if(el)cvFitText(it,el);cvSave();return it;
 }
