@@ -2155,7 +2155,7 @@ function cvItemEl(it){
       f.addEventListener('blur',()=>{if(cvBoard&&cvBoard.items.includes(it))cvCardFill(f,it.text);});}
     f.addEventListener('dblclick',e=>{e.stopPropagation();cvEditNote(f);});   // like Miro: click selects and drags, double-click types
     f.addEventListener('blur',()=>{f.contentEditable='false';f.scrollTop=0;$('#cvFmt').hidden=true;   // done typing: the bold/highlight bar goes too
-      if(it.grow&&!String(it.text||'').trim())setTimeout(()=>{   // empty text is not left behind as an invisible item
+      if((it.grow||it._fresh)&&!String(it.text||'').trim())setTimeout(()=>{   // empty text is not left behind as an invisible item; a new sticky nobody typed in is not left behind either: no blank note ever lands on its own (2026-11-04)
         if(!cvBoard||!cvBoard.items.includes(it))return;
         cvBoard.items=cvBoard.items.filter(i=>i!==it);cvSel.delete(it.id);cvRender();cvSave();});});
     if(it.grow){el.classList.add('grow','grow-'+it.grow);if(it.grow==='w')el.style.width='auto';el.style.height='auto';}
@@ -2167,7 +2167,7 @@ function cvItemEl(it){
     else if(it.color==='none'){el.classList.add('plain');if(it.fill){el.classList.add('filled');f.style.background=cvBack(it.fill);}}
     else{el.style.setProperty('--fold-c',cvFold(it.color));   // in dark every note is a dark card (the stylesheet): only the fold keeps its colour
       if(it.color&&!cvDarkUI()){f.style.background=it.color;f.style.borderColor='transparent';if(cvIsDark(it.color))f.style.color='#fff';}}
-    f.addEventListener('input',()=>{it.text=f.textContent;if(!it.card)cvReadMarks(f,it);cvFitText(it,el);cvSave();});
+    f.addEventListener('input',()=>{it.text=f.textContent;delete it._fresh;if(!it.card)cvReadMarks(f,it);cvFitText(it,el);cvSave();});
     f.addEventListener('pointerdown',e=>{if(f.isContentEditable)e.stopPropagation();}); // typing in it → text selection, not drag
     if(it.ask)agAskForm(el,it);   // an agent's question: answer it right on the note
   }
@@ -2574,7 +2574,7 @@ function cvPlaceText(p,w){
 function cvPlace(tool,p){   // a sticky note, a text box or a frame at p, ready to type in
   if(tool==='text')return cvPlaceText(p);
   if(tool==='frame'){const k=cvK();return cvAddFrame(p.x-450*k,p.y-300*k,900*k,600*k);}
-  const k=1/cvView.s,it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k,...(CV_NOTE.color?{color:CV_NOTE.color}:{})});
+  const k=1/cvView.s,it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k,...(CV_NOTE.color?{color:CV_NOTE.color}:{})});it._fresh=true;
   const f=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(f)cvEditNote(f);
 }
 function cvSticker(ch,p){const k=1/cvView.s,c=p||cvCenter();cvAddItem({type:'emoji',ch,x:c.x-40*k,y:c.y-40*k,w:80*k,h:80*k},!p);}   // dragged to a spot: there; clicked: a free spot
@@ -2935,10 +2935,14 @@ async function cvNoteToDoc(it,kind){
   window.addEventListener('blur',()=>{cvSpace=false;stage.classList.remove('space');});
   stage.addEventListener('pointerdown',e=>{if(e.pointerType==='touch')CV_TOUCHED=Date.now();});
   // double-click empty space → sticky note
+  const CV_DOWNS=[];   // the last two presses on the board: where, when, and whether on an item
+  stage.addEventListener('pointerdown',e=>{CV_DOWNS.push({t:Date.now(),x:e.clientX,y:e.clientY,item:!!e.target.closest('.cv-item,#cvTb,.cv-fly')});if(CV_DOWNS.length>2)CV_DOWNS.shift();},true);
   stage.addEventListener('dblclick',e=>{
     if(e.target.closest('.cv-item')||Date.now()-CV_TOUCHED<800||Date.now()-CV_DRAGGED<800)return;   // phones add from the ⋯ menu instead; a selection drag is not a double-click
+    const [a,b]=CV_DOWNS;   // both presses on empty board, within 6 px and half a second of each other, else it is two clicks, not a double-click (2026-11-04)
+    if(!a||!b||a.item||b.item||b.t-a.t>500||Math.hypot(a.x-b.x,a.y-b.y)>6)return;
     const p=cvPoint(e);
-    const k=cvK(),it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k});
+    const k=cvK(),it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k});it._fresh=true;
     const el=stage.querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(el)cvEditNote(el);
   });
   // two fingers (phone, tablet): pinch zooms around the point between them, and moving them pans
