@@ -2262,7 +2262,7 @@ function cvItemMenu(it,el,btn){
   const ico=k=>`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${CV_MI[k]}</svg>`;
   const pic=it.type==='img',dl=cvDownload(it),what=pic?(/\.pdf$/.test(it.url||'')?'PDF':'picture'):it.type==='note'?'note':it.type==='link'?'link card':it.type==='area'?'frame':it.type==='file'?'file':it.type==='shot'?'screenshot':'item';
   menuOpen(btn,`${cvOpenTarget(it)&&!it.uploading?`<button data-a="open">${ico('open')}Open this ${what}</button>`:''}${pic&&!it.uploading?`<button data-a="crop">${ico('crop')}Crop</button>`:''}
-    ${pic?`<button data-a="link">${ico('link')}${it.url?'Edit the link on this picture':'Add a link to this picture'}</button>`:''}
+    ${pic?`<button data-a="link" title="${it.url?'Edit the link on this picture':'Add a link to this picture'}">${ico('link')}Link</button>`:''}
     ${it.suggest?`<button data-a="suggest">${ico('doc')}Start this task</button>`:''}
     <button data-a="agent">${ico('agent')}Agent task on this ${what}</button>
     <button data-a="why">${ico('why')}Why is this here?</button>
