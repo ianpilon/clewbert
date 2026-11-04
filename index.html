@@ -473,9 +473,11 @@
   .cv-note.plain .frame{background:transparent;border-color:transparent;box-shadow:none}
   .cv-note.plain.filled .frame{padding:.4em .6em;border-radius:.25em}   /* text with a fill colour: a little room around the words */
   /* a document placeholder (the text tool with Paste as .md or PDF): a page; what is pasted or typed into it becomes that file */
-  .cv-note.doc .frame{background:#fff;border:1px solid var(--border);border-radius:.15em;box-shadow:var(--shadow);padding:1.8em 2em;white-space:pre-wrap;overflow:hidden;color:#1a1a1a}
-  .cv-note.doc .frame:empty::before{content:'Paste here. This page becomes a ' attr(data-what) ' file.';color:#8a8f98}
-  .cv-note.doc::after{content:attr(data-doc);position:absolute;right:.9em;top:.7em;font-size:calc(11px / var(--zs,1));font-weight:700;letter-spacing:.04em;color:#8a8f98;pointer-events:none}
+  .cv-note.doc .frame{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:3.4em .9em .9em;white-space:pre-wrap;overflow:hidden;font-size:1em}
+  .cv-note.doc .frame:empty::before{content:'Paste here. It becomes a ' attr(data-what) ' file.';color:#8a8f98}
+  .cv-note.doc .mbar{position:absolute;left:0;right:0;top:0;z-index:1;display:flex;align-items:center;gap:7px;padding:7px 10px;font-size:12px;font-weight:600;border-bottom:1px solid var(--border);background:var(--soft);border-radius:var(--radius) var(--radius) 0 0;pointer-events:none}
+  .cv-note.doc .mbar .ext{font-size:.833em;font-weight:800;letter-spacing:.04em;color:#fff;background:#64748b;border-radius:.4em;padding:.2em .5em;text-transform:uppercase}
+  .cv-note.doc .mbar .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* text made with the text tool fits its words: grow-w = one line wide as the words (a title), grow-h = a set width that wraps (a paragraph) */
   .cv-note.grow .frame{height:auto;overflow:visible;padding:.1em .2em;line-height:1.3;border-radius:0}
   .cv-note.grow-w .frame{white-space:pre;min-width:.6em}
@@ -1865,7 +1867,7 @@ const cvK=()=>1/(cvView.s||1);
 // zoomed right out, a frame sized for the zoom came out many times the size of the board's own items (2026-11-04)
 // what one board unit is here: each hand-made item's width over the width its kind is born with (a sticky 200, a card 300, a file chip 260,
 // a link card 300, a picture 440, a document page 620); the middle of those ratios. A page or a big picture no longer drags the scale up
-function cvNominal(i){if(i.type==='note')return i.color!=='none'?200:i.card?300:(i.doc||i.grow==='h'||i.lines)?620:260;return {file:260,link:300,media:440,img:440,emoji:80,shot:440}[i.type]||300;}
+function cvNominal(i){if(i.type==='note')return i.color!=='none'?200:i.card?300:i.doc?260:(i.grow==='h'||i.lines)?620:260;return {file:260,link:300,media:440,img:440,emoji:80,shot:440}[i.type]||300;}
 function cvUnit(){const its=(cvBoard&&cvBoard.items||[]).filter(i=>!['area','arrow','ink'].includes(i.type)&&i.w>0&&!i.uploading),hand=its.filter(i=>!i.agent);
   const rs=(hand.length>=1?hand:its).map(i=>i.w/cvNominal(i)).sort((a,b)=>a-b);
   return rs.length?Math.max(.05,Math.min(50,rs[rs.length>>1])):cvK();}
@@ -1941,8 +1943,13 @@ $('#cvFmt').addEventListener('click',e=>{const btn=e.target.closest('button'),x=
   let all=true;for(let i=a;i<b;i++)if(!on[c][i])all=false;   // all of it already set: the click takes it off
   for(let i=a;i<b;i++)on[c][i]=!all;
   cvSetMarks(x.it,cvMarksFrom(t,on));cvPaintText(x.f,x.it);cvSelRestore(x.f,a,b);cvFitText(x.it,x.el);cvSave();cvFmtShow();});
+<<<<<<< HEAD
 function cvEditNote(f){f.contentEditable='plaintext-only';f.focus();const r=document.createRange();r.selectNodeContents(f);r.collapse(false);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);}
 function cvIsUrl(t){return /^https?:\/\/\S+$/i.test(t);}
+=======
+function cvEditNote(f){f.contentEditable='plaintext-only';f.focus({preventScroll:true});const r=document.createRange();r.selectNodeContents(f);r.collapse(false);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);}
+function cvIsUrl(t){return /^https?:\/\/\S+$/i.test(t)||(cvAppLink(t)&&!/\s/.test(t));}
+>>>>>>> 0422a3de (Document placeholder looks like the file card it becomes: badge and name header over a body to paste into, 260 x 340 like a file chip. A PDF made from words stays a card with its header and first lines (like the .md one) instead of turning into a page picture, from the placeholder and from Turn into a PDF alike. The board does not jump to a note or frame title when typing starts. Deploy refuses a page or server file that does not parse (a stray comment took the site down for a minute today) (Ian, 2026-11-04))
 
 // Arrows join two items (an agent Lead's frame to a teammate's): drawn edge to edge, redrawn when either one moves
 // a page in a card is laid out at desktop width and shrunk to the card (a narrow card would get the phone layout)
@@ -2174,7 +2181,7 @@ function cvItemEl(it){
     cvNoteSize(it,el);
     if(it.card){}
     else if(it.color==='none'){el.classList.add('plain');if(it.fill){el.classList.add('filled');f.style.background=cvBack(it.fill);}
-      if(it.doc){el.classList.add('doc');el.dataset.doc=it.doc.toUpperCase();f.dataset.what=it.doc==='md'?'Markdown':'PDF';}}
+      if(it.doc){el.classList.add('doc');f.dataset.what=it.doc==='md'?'Markdown':'PDF';el.insertAdjacentHTML('afterbegin',`<div class="mbar"><span class="ext">${it.doc}</span><span class="nm">New ${it.doc==='md'?'Markdown':'PDF'} document</span></div>`);}}
     else{el.style.setProperty('--fold-c',cvFold(it.color));   // in dark every note is a dark card (the stylesheet): only the fold keeps its colour
       if(it.color&&!cvDarkUI()){f.style.background=it.color;f.style.borderColor='transparent';if(cvIsDark(it.color))f.style.color='#fff';}}
     f.addEventListener('input',()=>{it.text=f.textContent;delete it._fresh;if(!it.card)cvReadMarks(f,it);cvFitText(it,el);cvSave();});
@@ -2585,12 +2592,12 @@ function cvTextResize(e,it,el,c,hx,hy){   // corners scale the type (Miro); the 
 }
 // click = a title that grows as you type; w (a dragged width) = a paragraph box that wraps
 function cvPlaceDoc(p){   // the text tool with Paste as .md or PDF: a page-shaped placeholder; what is pasted or typed into it becomes that file
-  const u=cvUnit(),it=cvAddItem({type:'note',color:'none',text:'',fs:14*u,lines:true,doc:CV_TEXT.paste,x:p.x-310*u,y:p.y-60*u,w:620*u,h:800*u});it._fresh=true;
+  const u=cvUnit(),it=cvAddItem({type:'note',color:'none',text:'',fs:13*u,lines:true,doc:CV_TEXT.paste,x:p.x-130*u,y:p.y-60*u,w:260*u,h:340*u});it._fresh=true;
   const el=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`);if(el)cvEditNote(el.querySelector('.frame'));
 }
 async function cvDocConvert(it,text){   // the placeholder's words become the file it promised, in its place
   const kind=it.doc,fake={text},name=cvFileName(text.split('\n').find(l=>l.trim())||'','Document').slice(0,60)+'.'+kind;
-  const doc=await cvUploadFile(new File([kind==='md'?cvToMarkdown(fake):cvToPdf(fake)],name,{type:kind==='md'?'text/markdown':'application/pdf'}),{x:it.x+130*cvUnit(),y:it.y+60*cvUnit()});
+  const doc=await cvUploadFile(new File([kind==='md'?cvToMarkdown(fake):cvToPdf(fake)],name,{type:kind==='md'?'text/markdown':'application/pdf'}),{x:it.x+130*cvUnit(),y:it.y+60*cvUnit()},{card:true,preview:text.slice(0,600)});
   if(doc&&cvBoard&&cvBoard.items.includes(it))cvDrop([it.id]);
 }
 function cvPlaceText(p,w){
@@ -2619,7 +2626,7 @@ function cvAddFrame(x,y,w,h,behind){   // a frame you make yourself, like the on
 }
 function cvEditFrameTitle(it,el){   // the title is the frame's handle: double-click it (or place a new frame) to type its name
   const t=el.querySelector('.ftitle');if(!t||t.isContentEditable)return;
-  t.textContent=it.text||'';t.classList.remove('empty');t.contentEditable='plaintext-only';t.focus();
+  t.textContent=it.text||'';t.classList.remove('empty');t.contentEditable='plaintext-only';t.focus({preventScroll:true});
   const r=document.createRange();r.selectNodeContents(t);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);
   const done=()=>{t.contentEditable='false';it.text=t.textContent.trim().slice(0,200);t.textContent=it.text||'Frame';t.classList.toggle('empty',!it.text);cvSave();};
   t.addEventListener('blur',done,{once:true});
@@ -2862,7 +2869,7 @@ function cvAddFiles(files,p){
     const c=p||cvCenter();cvUploadFile(f,{x:c.x+(i%4)*520,y:c.y+Math.floor(i/4)*360});   // several at once: side by side, 4 to a row
   });
 }
-async function cvUploadFile(file,p){
+async function cvUploadFile(file,p,opts={}){   // opts.card: a PDF stays a file card (badge, name, first lines) instead of becoming its first page's picture
   const boardId=cvBoardId,c=p||cvCenter();
   const k=cvUnit(),it=cvAddItem({type:'file',label:file.name,size:file.size,uploading:true,x:c.x-130*k,y:c.y-60*k,w:260*k,h:120*k},true);
   const bar=()=>$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"] .upbar i`);
@@ -2876,7 +2883,8 @@ async function cvUploadFile(file,p){
     }
     const r=await api('uploads/'+up+'/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name})});
     delete it.uploading;
-    if(r.kind==='pdf'&&r.src){   // like a PDF imported from Miro: its first page, a click opens the PDF
+    if(r.kind==='pdf'&&opts.card){Object.assign(it,{src:r.url,size:r.size,mime:'application/pdf',preview:opts.preview||'',h:340*k});}   // a document made here keeps its header (2026-11-04)
+    else if(r.kind==='pdf'&&r.src){   // like a PDF imported from Miro: its first page, a click opens the PDF
       Object.assign(it,{type:'img',src:r.src,url:r.url,label:file.name});delete it.size;
       const im=new Image();im.onload=()=>{it.w=320*k;it.h=Math.round(320*k*im.naturalHeight/im.naturalWidth);if(cvBoardId===boardId){cvSettle(it);cvRender();cvSave();}};im.src=r.src;
     }else if(r.kind==='video'||r.kind==='audio'){
@@ -2930,7 +2938,7 @@ function cvToPdf(it){   // a plain Letter-size PDF in Helvetica (the browser mea
 async function cvNoteToDoc(it,kind){
   const name=cvFileName(String(it.text||'').split('\n').find(l=>l.trim())||'','Note').slice(0,60)+'.'+kind;
   const file=new File([kind==='md'?cvToMarkdown(it):cvToPdf(it)],name,{type:kind==='md'?'text/markdown':'application/pdf'});
-  const doc=await cvUploadFile(file,{x:it.x+Math.min(it.w,260)/2,y:it.y+60});
+  const doc=await cvUploadFile(file,{x:it.x+Math.min(it.w,260)/2,y:it.y+60},{card:true,preview:String(it.text||'').slice(0,600)});
   if(doc&&cvBoard&&cvBoard.items.includes(it))cvDrop([it.id]);   // the document takes the note's place
 }
 

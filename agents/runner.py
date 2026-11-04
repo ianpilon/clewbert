@@ -364,7 +364,7 @@ def board_unit(board):
         if i.get('type') == 'note':
             if i.get('color') != 'none':
                 return 200
-            return 300 if i.get('card') else 620 if (i.get('doc') or i.get('grow') == 'h' or i.get('lines')) else 260
+            return 300 if i.get('card') else 260 if i.get('doc') else 620 if (i.get('grow') == 'h' or i.get('lines')) else 260
         return {'file': 260, 'link': 300, 'media': 440, 'img': 440, 'emoji': 80, 'shot': 440}.get(i.get('type'), 300)
     its = [i for i in (board.get('items') or []) if i.get('type') not in ('area', 'arrow', 'ink') and float(i.get('w') or 0) > 0]
     hand = [i for i in its if not i.get('agent')]   # what the user put there by hand sets the scale; earlier oversized agent work does not
