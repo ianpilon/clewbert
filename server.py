@@ -298,6 +298,33 @@ def board_path(bid):
 PRIVATE_NET = re.compile(r'^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|::1$|fc|fd|fe80)')
 
 
+def fetch_image(url):
+    """The bytes of a picture at a web address, as JPEG or PNG (anything else is converted with sips); refuses your own
+    network, pages that are not pictures, and anything over 25 MB. Chrome's "Copy image" and a picture dragged from
+    another tab give the board only the address (2026-11-04)."""
+    host = urllib.parse.urlsplit(url).hostname or ''
+    if not re.match(r'^https?://', url) or not host or any(PRIVATE_NET.match(a[4][0]) for a in socket.getaddrinfo(host, None)):
+        raise ValueError
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+                                               '(KHTML, like Gecko) Chrome/130.0 Safari/537.36', 'Accept': 'image/*,*/*;q=0.5',
+                                               'Referer': 'https://%s/' % host})
+    with urllib.request.urlopen(req, timeout=15) as f:
+        data = f.read(25 * 1024 ** 2 + 1)
+    if len(data) > 25 * 1024 ** 2:
+        raise ValueError
+    if data[:3] == b'\xff\xd8\xff' or data[:8] == b'\x89PNG\r\n\x1a\n':
+        return data
+    if not (data[:4] in (b'RIFF', b'GIF8') or data[4:12] in (b'ftypavif', b'ftypheic') or data[:2] == b'BM' or b'<svg' in data[:600].lower()):
+        raise ValueError   # not a picture
+    with tempfile.TemporaryDirectory() as tmp:
+        src, out = os.path.join(tmp, 'in'), os.path.join(tmp, 'out.jpg')
+        with open(src, 'wb') as f:
+            f.write(data)
+        subprocess.run(['sips', '-s', 'format', 'jpeg', '-s', 'formatOptions', '85', src, '--out', out], check=True, capture_output=True, timeout=60)
+        with open(out, 'rb') as f:
+            return f.read()
+
+
 def unfurl(url):
     """{title, desc, img, pub} of a web page from its og:/twitter: tags and <title>; refuses addresses on your own network."""
     host = urllib.parse.urlsplit(url).hostname or ''
@@ -1061,6 +1088,21 @@ class Handler(BaseHTTPRequestHandler):
                 sp['spaces'].append(space)
                 write_json(SPACES, sp)
             return self.reply(201, space)
+        if parts == ['api', 'images', 'fetch']:   # a picture copied or dragged out of another web page arrives as its address: get it here
+            url = str(json.loads(self.read_body() or b'{}').get('url') or '')[:2000]
+            try:
+                data = fetch_image(url)
+            except (OSError, ValueError, subprocess.CalledProcessError):
+                return self.reply(422, {'error': 'That picture could not be fetched.'})
+            name = hashlib.sha256(data).hexdigest() + ('.png' if data[:8] == b'\x89PNG\r\n\x1a\n' else '.jpg')
+            path = os.path.join(IMAGES, name)
+            with LOCK:
+                if not os.path.exists(path):
+                    with open(path + '.tmp', 'wb') as f:
+                        f.write(data)
+                    os.replace(path + '.tmp', path)
+            READER.add(name)
+            return self.reply(201, {'src': 'api/images/' + name})
         if parts == ['api', 'images']:
             data = self.read_body()
             if data[:3] == b'\xff\xd8\xff':
@@ -2046,7 +2088,7 @@ def run_pending(a, why=None):
 
     def put(board):
         items = board.get('items') or []
-        unit = 1 / max(((board.get('view') or {}).get('s') or 1), 1e-4) if items else 1.0
+        unit = agents.board_unit(board) if items else 1.0   # the size of what is already there, not the zoom (see board_unit)
         pad, gap, w, link_h, cols = 28 * unit, 18 * unit, 240 * unit, 70 * unit, min(3, len(made))
         x = (max(i['x'] + i['w'] for i in items) + 160 * unit) if items else 100.0
         y = min(i['y'] for i in items) if items else 100.0
@@ -2150,6 +2192,11 @@ def builtins_frame():
         ('Org chart', 'Nov 1', ['Where: above the team\'s work, when a team is set up',
             'Shows: each teammate, why they are on the team, when their part is done, and how it is going']),
         ('After each job', 'Nov 2', ['A card: What got in the way (blocked sites, pages read with Lightpanda, free steps)']),
+        ('Quotes', 'Nov 4', ['Quote marks mean word for word: a note, card or text whose quote is on no page or board item that agent read itself is refused, and the quote is named',
+            'Counts as read: pages, search results and board items the agent opened with its own tools',
+            'Never counts: the brief it was given, or what a teammate handed back (an invented quote once travelled that way)',
+            'Shortened quotes: a quote with ... in it is checked piece by piece',
+            'Not checked: anything without quote marks; the agent can still describe a page in its own words']),
         ('Watchdog', 'Nov 3', ['Looks: every minute, at every team',
             'Stuck: no progress for %d minutes gets one push to you and a line in the team\'s frame' % router.STALL_MIN,
             'Stopped early: a team that ends unfinished or with an error is started again once, from its frame',

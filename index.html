@@ -235,6 +235,7 @@
   .cv-stage.space{cursor:grab}
   .cv-stage.t-pen{cursor:crosshair}
   .cv-stage.t-note,.cv-stage.t-text{cursor:cell}
+  .cv-stage.t-frame,.cv-stage.t-frame .cv-item{cursor:crosshair}
   .cv-stage.t-pen .cv-item,.cv-stage.t-pen .cv-ink .hit{cursor:crosshair}
   .cv-stage.t-note .cv-item,.cv-stage.t-text .cv-item{cursor:cell}
   /* left tool bar (Miro style): select, sticky note, text, marker, stickers */
@@ -452,6 +453,10 @@
   .cv-item .rsz.me{right:calc(-4px / var(--zs,1))}
   .cv-item .rsz.mw{right:auto;left:calc(-4px / var(--zs,1))}
   .cv-item .rsz.sl{right:auto;left:calc(-4px / var(--zs,1))}
+  /* a sticky note's top and bottom handles: drag to make it taller or shorter only, the text keeps its size */
+  .cv-item .rsz.st,.cv-item .rsz.sb{left:50%;right:auto;width:calc(22px / var(--zs,1));height:calc(8px / var(--zs,1));transform:translateX(-50%);cursor:ns-resize}
+  .cv-item .rsz.st{top:calc(-4px / var(--zs,1));bottom:auto}
+  .cv-item .rsz.sb{bottom:calc(-4px / var(--zs,1))}
   .cv-item:hover .rsz,.cv-item.sel .rsz{display:block}
   .cv-note.plain .frame{background:transparent;border-color:transparent;box-shadow:none}
   .cv-note.plain.filled .frame{padding:.4em .6em;border-radius:.25em}   /* text with a fill colour: a little room around the words */
@@ -464,6 +469,7 @@
   .cv-area{pointer-events:none}
   .cv-area .frame{border-radius:4px;box-shadow:none;border:1px solid var(--hair)}
   .cv-area .ftitle,.cv-area .cv-more,.cv-area .rsz,.cv-area .fedge{pointer-events:auto}
+  .cv-area.sel .frame{pointer-events:auto;cursor:move}   /* a selected frame drags by its body too, not only its title or edge */
   /* a frame is grabbed by its title or a thin band just inside its border, 10 px on screen at any zoom (Miro); a press
      anywhere else inside it still pans the board or draws a selection box over what is in it */
   .cv-area .fedge{position:absolute;cursor:move;--e:calc(10px / var(--zs,1))}
@@ -1104,7 +1110,7 @@
     <div class="pill cv-help cv-rec" id="cvRec" hidden></div>
     <div class="pill cv-help" id="cvHelp" hidden><b>Shortcuts and tips</b><ul>
       <li><kbd>⌘V</kbd> paste screenshots and links · drag in any file</li><li>Drag empty space to select · <kbd>Space</kbd>+drag, two-finger scroll or middle button to pan · <kbd>⌘</kbd>-scroll to zoom</li>
-      <li>Tools: <kbd>V</kbd> select · <kbd>N</kbd> note · <kbd>T</kbd> text · <kbd>P</kbd> marker · <kbd>A</kbd> agent task</li><li>Double-click for a note, or a note to edit it · hold <kbd>⌥</kbd> while resizing to grow from the centre</li>
+      <li>Tools: <kbd>V</kbd> select · <kbd>N</kbd> note · <kbd>T</kbd> text · <kbd>F</kbd> frame · <kbd>P</kbd> marker · <kbd>A</kbd> agent task</li><li>Double-click for a note, or a note to edit it · hold <kbd>⌥</kbd> while resizing to grow from the centre</li>
       <li><kbd>⌘Z</kbd> undo · <kbd>⇧⌘Z</kbd> redo</li><li>Voice: <kbd>M</kbd> mutes the mic · <kbd>Esc</kbd> closes what is open</li></ul></div>
   </div>
   <div class="cv-stage" id="cvStage">
@@ -1129,12 +1135,14 @@
       <button data-tool="select" title="Select (V)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 3l14 8-6 1.5L10 19z"/></svg></button>
       <button data-tool="note" draggable="true" title="Sticky note (N): click the board to place it, or drag it there"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 4h16v10l-6 6H4z"/><path d="M14 20v-6h6"/></svg></button>
       <button data-tool="text" draggable="true" title="Text (T): click for a title, drag a box for a paragraph"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 5h14M12 5v15"/></svg></button>
+      <button data-tool="frame" draggable="true" title="Frame (F): click the board to place one, drag the area it should cover, or drag this onto the board; double-click its title to name it"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="1.5"/><path d="M3 4h8" stroke-linecap="round"/></svg></button>
       <button data-tool="pen" title="Marker (P): draw on the board"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4l5 5L9 20H4v-5z"/><path d="M12.5 6.5l5 5"/></svg></button>
       <button data-tool="emoji" title="Stickers: click one to add it, or drag it onto the board"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 14.5c1.8 2 5.2 2 7 0"/><circle cx="9.2" cy="10" r=".6" fill="currentColor"/><circle cx="14.8" cy="10" r=".6" fill="currentColor"/></svg></button>
       <button class="tbfold" id="tbFold" title="Hide the tools (the voice stays)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg></button>
     </div>
     <div class="cv-fly" id="cvTextFly" hidden><div class="row" id="cvTextStyles"></div><div class="row" id="cvTextFonts" style="margin-top:7px"></div><div class="row" id="cvTextFills" style="margin-top:9px"></div></div>
     <div class="cv-fly" id="cvNoteFly" hidden><div class="row" id="cvNoteColors"></div></div>
+    <div class="cv-fly" id="cvFrameFly" hidden><div class="row" id="cvFrameFills"></div></div>
     <div class="cv-fly" id="cvPenFly" hidden><div class="row" id="cvPenColors"></div><div class="row" id="cvPenSizes" style="margin-top:7px"></div></div>
     <div class="cv-fly ag-fly" id="agFly" hidden><div class="ag-h">Agent task</div><div class="row ag-mode" id="agMode"><button class="tx on" data-m="team">Team</button><button class="tx" data-m="one">One agent</button><span class="hint" id="agWho"></span></div><textarea id="agTask" placeholder="What should the agent do? For example: find three brokers in Nova Scotia and put each on a note."></textarea><div class="row"><span class="hint" id="agCtx"></span><button class="go" id="agStart">Start</button></div></div>
     <div class="cv-fly" id="cvEmojiFly" hidden><div class="cv-emojis" id="cvEmojis"></div></div>
@@ -1611,7 +1619,8 @@ function cvHistGo(back){
 document.addEventListener('keydown',e=>{
   if(!cvOpenNow()||!(e.metaKey||e.ctrlKey))return;
   const k=e.key.toLowerCase(),ae=document.activeElement;
-  if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA|SELECT/.test(ae.tagName)))return;   // typing: the text's own undo
+  if(ae&&ae.isContentEditable&&k==='z'&&!e.shiftKey&&!ae.textContent.trim()&&ae.closest('.cv-item')){ae.blur();}   // ⌘Z before typing anything in a new note or frame title: undo the board step that made it (the frame came in and ⌘Z did nothing, 2026-11-04)
+  else if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA|SELECT/.test(ae.tagName)))return;   // typing: the text's own undo
   if(k==='z'){e.preventDefault();cvHistGo(!e.shiftKey);}else if(k==='y'){e.preventDefault();cvHistGo(false);}
 });
 
@@ -1691,8 +1700,13 @@ function cvSharpen(){   // on screen: the 400 px copy from 16 px wide, the full 
       else if(img.dataset.thumb){img.src=img.dataset.thumb;delete img.dataset.thumb;}});},250);
 }
 let cvZoomT=0;
+// how far out you may zoom: 0.2%, or half of "everything fits" when the board is wider than that
+function cvMinScale(){const xs=cvBoard&&cvBoard.items;if(!xs||!xs.length)return .002;
+  const minX=Math.min(...xs.map(i=>i.x)),minY=Math.min(...xs.map(i=>i.y)),maxX=Math.max(...xs.map(i=>i.x+i.w)),maxY=Math.max(...xs.map(i=>i.y+i.h));
+  const r=$('#cvStage').getBoundingClientRect(),fit=Math.min(r.width/Math.max(1,maxX-minX),r.height/Math.max(1,maxY-minY));
+  return Math.min(.002,fit/2);}
 function cvApplyView(save=true){cvSharpen();clearTimeout(cvZoomT);cvZoomT=setTimeout(cvArrowsFollow,180);   // lines keep clear of the frame labels, which stay one size on screen
-  $('#cvWorld').style.transform=`translate(${cvView.x}px,${cvView.y}px) scale(${cvView.s})`;$('#cvWorld').style.setProperty('--zs',cvView.s);if(CV_CROP)cvCropPaint();document.querySelectorAll('#cvWorld .cv-area').forEach(el=>{const w=parseFloat(el.style.width)*cvView.s;el.classList.toggle('tiny',w<140);el.classList.toggle('small',w<520);});$('#cvZoomPct').textContent=(cvView.s<.1?(cvView.s*100).toFixed(1):Math.round(cvView.s*100))+'%';if(cvBoard&&save){cvBoard.view={x:cvView.x,y:cvView.y,s:cvView.s};cvSave();}}
+  $('#cvWorld').style.transform=`translate(${cvView.x}px,${cvView.y}px) scale(${cvView.s})`;$('#cvWorld').style.setProperty('--zs',cvView.s);if(CV_CROP)cvCropPaint();document.querySelectorAll('#cvWorld .cv-area').forEach(el=>{const w=parseFloat(el.style.width)*cvView.s;el.classList.toggle('tiny',w<140);el.classList.toggle('small',w<520);});$('#cvZoomPct').textContent=(cvView.s<.001?(cvView.s*100).toFixed(2):cvView.s<.1?(cvView.s*100).toFixed(1):Math.round(cvView.s*100))+'%';if(cvBoard&&save){cvBoard.view={x:cvView.x,y:cvView.y,s:cvView.s};cvSave();}}
 // adding or deleting touches only those items: a full redraw rebuilds every picture, which flashes white while it reloads
 function cvDrop(ids){
   ids=new Set(ids);cvBoard.items=cvBoard.items.filter(i=>!ids.has(i.id));ids.forEach(id=>cvSel.delete(id));
@@ -1701,14 +1715,15 @@ function cvDrop(ids){
 }
 const CV_PINCH={pts:new Map(),on:false,used:false};
 let CV_CROP=null;   // the picture being cropped, while crop mode is on
-let CV_TOUCHED=0;   // when a finger last touched the board: a phone's double tap is not a double-click   // fingers on the board; used = a pinch happened since the first touch
+let CV_TOOL_DRAG=null,CV_TEXT_DRAG=false;   // a tool button being dragged (where it started), and selected words being dragged out of a note: neither drops a note by accident (2026-11-04)
+let CV_TOUCHED=0,CV_DRAGGED=0;   // when a selection box was last dragged out: a click then a drag is not a double-click (a blank sticky landed by the selection, 2026-11-04)   // when a finger last touched the board: a phone's double tap is not a double-click   // fingers on the board; used = a pinch happened since the first touch
 function cvRender(){
   if(CV_CROP)cvCropEnd(false);
   const w=$('#cvWorld');w.innerHTML='';
   cvBoard.items.forEach(it=>w.appendChild(cvItemEl(it)));
   $('#cvEmpty').style.display=cvBoard.items.length?'none':'grid';
   w.classList.toggle('multi',cvSel.size>1);cvGroupBox();
-  cvApplyView(false);agPaint();
+  cvApplyView(false);agPaint();requestAnimationFrame(agReflow);
 }
 /* Selection (like Miro): click selects one, shift-click adds or removes, dragging on empty space draws a box that
    selects what it touches (a frame only when the box covers all of it). Two or more selected get one group box:
@@ -1730,7 +1745,7 @@ function cvGroupBox(){
 }
 function cvGroupScale(e){
   e.stopPropagation();e.preventDefault();
-  const its=cvBoard.items.filter(i=>cvSel.has(i.id));if(its.length<2)return;
+  const its=cvBoard.items.filter(i=>cvSel.has(i.id)&&i.type!=='arrow');if(its.length<2)return;   // arrows are drawn from their ends, so they follow instead of being scaled as boxes
   const ax=Math.min(...its.map(i=>i.x)),ay=Math.min(...its.map(i=>i.y));   // scale from the top-left corner, like Miro
   const w0=Math.max(...its.map(i=>i.x+i.w))-ax,h0=Math.max(...its.map(i=>i.y+i.h))-ay;
   const start=its.map(i=>({i,x:i.x,y:i.y,w:i.w,h:i.h,fs:i.fs||(i.type==='note'&&i.color!=='none'?13:i.fs),el:$('#cvWorld').querySelector(`.cv-item[data-id="${i.id}"]`)}));
@@ -1744,7 +1759,7 @@ function cvGroupScale(e){
         if(i.type==='note'&&(i.fs||cvAutoNote(i)))cvNoteSize(i,g.el);
         if(i.grow)cvFitText(i,g.el);
         if(i.org){const oc=g.el.querySelector('.oc'),k=i.w/240;if(oc){oc.style.transform=`scale(${k})`;oc.style.height=i.h/k+'px';}}}}   // an org card is drawn at 240 px and scaled
-    cvGroupBox();};
+    cvGroupBox();cvArrowsFollow();};
   const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);cvSave();};
   window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);
 }
@@ -1757,7 +1772,7 @@ function cvClipItems(dt){
   try{const j=JSON.parse(dt.getData('text/x-cv-items')||'null');if(j&&Array.isArray(j.items)&&j.items.length){
     if(CV_CLIP&&CV_CLIP.board===j.board&&JSON.stringify(CV_CLIP.items)===JSON.stringify(j.items))return CV_CLIP;
     return CV_CLIP={text:'',items:j.items,board:j.board,n:0};}}catch(e){}
-  return CV_CLIP&&dt.getData('text/plain')===CV_CLIP.text?CV_CLIP:null;
+  return CV_CLIP&&CV_CLIP.text&&dt.getData('text/plain')===CV_CLIP.text?CV_CLIP:null;   // a copied picture has no text: it is not the last board paste (2026-11-04)
 }
 // on the board it came from each paste steps down and right of the last; on another board it lands in the middle of the view
 function cvPasteItems(clip){
@@ -1813,7 +1828,11 @@ function cvAddItem(it,free){if(free){const p=cvFree(it.x,it.y,it.w,it.h);it.x=p.
 function cvDarkUI(){return document.documentElement.dataset.theme==='dark';}
 const CV_SHOT_V=2;   // part of each board picture's address: raise it when every kept picture must be fetched again (2: Miro lines drawn at their real width)
 const cvShotDark=()=>cvDarkUI()?'-dark':'';
-const cvK=()=>1/(cvView.s||1);   // a new item is sized for the current zoom, so it looks the same size on screen (Miro): big when zoomed out, as on a phone   // board pictures: the dark one in dark mode
+const cvK=()=>1/(cvView.s||1);
+// an agent's frame is sized like what is already on the board, not for the zoom (same rule as the server's board_unit):
+// zoomed right out, a frame sized for the zoom came out many times the size of the board's own items (2026-11-04)
+function cvUnit(){const its=(cvBoard&&cvBoard.items||[]).filter(i=>!['area','arrow','ink'].includes(i.type)&&i.w>0),hand=its.filter(i=>!i.agent),ws=(hand.length>=3?hand:its).map(i=>i.w).sort((a,b)=>a-b);
+  return ws.length?Math.max(.05,Math.min(50,ws[ws.length>>1]/260)):cvK();}   // a new item is sized for the current zoom, so it looks the same size on screen (Miro): big when zoomed out, as on a phone   // board pictures: the dark one in dark mode
 addEventListener('cc-theme',()=>document.querySelectorAll('img.cvprev-shot').forEach(im=>{   // the theme changed: swap the pictures
   im.src=im.src.replace(/\/boardshots\/([0-9a-f]+)(-dark)?\.jpg/,(m,id)=>'/boardshots/'+id+cvShotDark()+'.jpg');}));
 function cvPale(hex){const m=/^#?([0-9a-f]{6})$/i.exec(hex||'');if(!m)return false;const n=parseInt(m[1],16),r=n>>16,g=n>>8&255,b=n&255;
@@ -2007,8 +2026,7 @@ function cvItemEl(it){
       <div class="why">${escapeHtml(o.why||'')}</div>${o.done_when?`<div class="dw"><b>Done when</b> ${escapeHtml(o.done_when)}</div>`:''}
       <div class="now"><span class="st ${escapeAttr(o.cls||'')}">${escapeHtml(o.label||'')}</span><span title="${escapeAttr(o.detail||'')}">${escapeHtml(o.detail||'')}</span></div></div></div>`;
     el.addEventListener('dblclick',e=>{e.stopPropagation();if(o.frame)agReveal(o.frame);});
-    return el;}
-  if(it.type==='img'){
+  }else if(it.type==='img'){   // (the org card falls through to the shared tail below: ⋯ menu and the drag handler, so it moves like any item)
     // big boards (1,300 pictures, 350 MB) would fill the connection for minutes: cvSharpen loads a picture only
     // once it is on screen, as the 400 px copy, and the full one only when it shows large
     const th=it.preview||cvSharp.has(it.src)?it.src:cvThumb(it.src);
@@ -2097,6 +2115,9 @@ function cvItemEl(it){
   }else if(it.type==='area'){ // backdrop (a frame imported from Miro): moved by its title, clicks on it pan the board
     el.innerHTML=`<div class="frame" style="background:${escapeAttr(cvBack(it.color||'#f4f5f7'))}"></div><span class="ftitle${it.text?'':' empty'}">${escapeHtml(it.text||'Frame')}</span><span class="fedge t"></span><span class="fedge r"></span><span class="fedge b"></span><span class="fedge l"></span>${it.run?'<span class="fstatus"></span>':''}`;
     if(it.run){el.classList.add('run');agStatus(el.querySelector('.fstatus'),it.run);}
+    const t=el.querySelector('.ftitle');
+    t.addEventListener('dblclick',e=>{e.stopPropagation();cvEditFrameTitle(it,el);});
+    t.addEventListener('pointerdown',e=>{if(t.isContentEditable)e.stopPropagation();},true);
   }else{ // note
     el.innerHTML=`<div class="frame" spellcheck="false"></div>`;
     const f=el.querySelector('.frame');
@@ -2122,7 +2143,7 @@ function cvItemEl(it){
     f.addEventListener('pointerdown',e=>{if(f.isContentEditable)e.stopPropagation();}); // typing in it → text selection, not drag
     if(it.ask)agAskForm(el,it);   // an agent's question: answer it right on the note
   }
-  el.insertAdjacentHTML('beforeend',`<button class="cv-more" title="Crop, link, download, delete"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button><span class="rsz" data-c="br"></span><span class="rsz tl" data-c="tl"></span><span class="rsz bl" data-c="bl"></span>${it.type==='note'&&it.color!=='none'&&!it.grow?'<span class="rsz sr" data-c="r" title="Drag to make it wider or narrower"></span><span class="rsz sl" data-c="l" title="Drag to make it wider or narrower"></span>':''}${it.grow?'<span class="rsz r" data-c="r" title="Drag to set the width (the text wraps)"></span>':''}${it.type==='area'||it.type==='web'?['n','s','e','w'].map(d=>`<span class="rsz m${d}" data-c="m${d}" title="Drag to make it ${'ns'.includes(d)?'taller or shorter':'wider or narrower'}"></span>`).join(''):''}`);
+  el.insertAdjacentHTML('beforeend',`<button class="cv-more" title="Crop, link, download, delete"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button><span class="rsz" data-c="br"></span><span class="rsz tl" data-c="tl"></span><span class="rsz bl" data-c="bl"></span>${it.type==='note'&&it.color!=='none'&&!it.grow?'<span class="rsz sr" data-c="r" title="Drag to make it wider or narrower"></span><span class="rsz sl" data-c="l" title="Drag to make it wider or narrower"></span><span class="rsz st" data-c="t" title="Drag to make it taller or shorter"></span><span class="rsz sb" data-c="b" title="Drag to make it taller or shorter"></span>':''}${it.grow?'<span class="rsz r" data-c="r" title="Drag to set the width (the text wraps)"></span>':''}${it.type==='area'||it.type==='web'?['n','s','e','w'].map(d=>`<span class="rsz m${d}" data-c="m${d}" title="Drag to make it ${'ns'.includes(d)?'taller or shorter':'wider or narrower'}"></span>`).join(''):''}`);
   if(cvOpenTarget(it))el.addEventListener('dblclick',e=>{e.stopPropagation();cvOpenTarget(it)();});   // a click selects (Miro); a double-click opens
   const mb=el.querySelector('.cv-more');
   mb.addEventListener('pointerdown',e=>e.stopPropagation());
@@ -2138,7 +2159,7 @@ function cvItemEl(it){
     e.stopPropagation();e.preventDefault();   // no native focus or text selection: this is a drag
     const ae=document.activeElement;if(ae&&ae.isContentEditable&&!el.contains(ae))ae.blur();
     if(e.shiftKey){cvToggle(it.id);return;}   // shift-click adds to or removes from the selection
-    if(!cvSel.has(it.id))cvSelect(it.id);
+    if(!cvSel.has(it.id)&&!cvBoard.items.some(f=>f.type==='area'&&cvSel.has(f.id)&&cvInside(f).includes(it)))cvSelect(it.id);   // a press inside a selected frame drags the whole selection
     const group=cvBoard.items.filter(i=>cvSel.has(i.id)&&i.type!=='arrow');
     for(const f of group.filter(i=>i.type==='area'))   // a frame carries what sits inside it (Miro)
       for(const i of cvInside(f))if(!group.includes(i))group.push(i);
@@ -2179,6 +2200,11 @@ function cvItemEl(it){
     if(sticky&&(h.dataset.c==='r'||h.dataset.c==='l')){   // a side: only the width changes, the text keeps its size
       const mv=ev=>{const nw=Math.max(70,ow+hx*(ev.clientX-sx)/cvView.s);it.w=nw;it.x=hx<0?ox+ow-nw:ox;
         el.style.width=nw+'px';el.style.left=it.x+'px';cvNoteSize(it,el);cvArrowsFollow();};
+      const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);cvSave();};
+      window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);return;}
+    if(sticky&&(h.dataset.c==='t'||h.dataset.c==='b')){   // top or bottom: only the height changes, the text keeps its size
+      const mv=ev=>{const nh=Math.max(56,oh+hy*(ev.clientY-sy)/cvView.s);it.h=nh;it.y=hy<0?oy+oh-nh:oy;
+        el.style.height=nh+'px';el.style.top=it.y+'px';cvNoteSize(it,el);cvArrowsFollow();};
       const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);cvSave();};
       window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);return;}
     const mv=ev=>{const k=ev.altKey?2:1;   // Option held: grow from the centre, all sides at once (Miro, Photoshop)
@@ -2424,21 +2450,22 @@ window.addEventListener('hashchange',()=>{if(CV_CROP)cvCropEnd(true);});
 
 // Left tool bar. Sizes are divided by the zoom so a new note, text, sticker or line looks the same on screen at any zoom.
 let cvTool='select';
-const CV_TOOL_KEYS={v:'select',n:'note',t:'text',p:'pen'};
+const CV_TOOL_KEYS={v:'select',n:'note',t:'text',f:'frame',p:'pen'};
 const CV_PEN={color:'#1f2430',size:3};
 // text: a size style and a font, both from fonts every Mac and iPhone already has
 const CV_TEXT={style:'body',font:'sans',fill:''};   // fill '' = see-through
 const CV_TEXT_STYLES={h1:{label:'Heading 1',fs:40,fw:700},h2:{label:'Heading 2',fs:28,fw:700},body:{label:'Body',fs:18,fw:400},small:{label:'Small',fs:13,fw:400}};
 const CV_FONTS={sans:{label:'Sans',css:'var(--font)'},serif:{label:'Serif',css:'Georgia,"Times New Roman",serif'},mono:{label:'Mono',css:'ui-monospace,Menlo,monospace'},hand:{label:'Handwritten',css:'var(--hand)'}};
+const CV_FRAME_FILLS=[['#f3f6fb','Frame grey'],['#ffffff','White'],['#fafaf7','Off-white'],['#fbf5e6','Cream'],['#f3eee4','Sand'],['#eef0f3','Light grey'],['#eaf2fd','Pale blue'],['#ecf7ec','Pale green'],['#fdf6d8','Pale yellow'],['#fbeaea','Pale pink'],['#f1ecf9','Pale lavender']];const CV_FRAME={color:'#f3f6fb'};
 const CV_TEXT_FILLS=[['','No fill'],['#ffffff','White'],['#fafaf7','Off-white'],['#fbf5e6','Cream'],['#f3eee4','Sand'],['#eef0f3','Light grey'],['#eaf2fd','Pale blue'],['#ecf7ec','Pale green']];
 const CV_NOTE={color:''};   // '' = the usual yellow
 const CV_NOTE_COLORS=['','#ff9f40','#ff746c','#9b63d6','#55c3ec','#a8de4c','#ffffff'];   // the icon's yellow, then bright pad colours: orange, light red, purple, blue, green; white
 const CV_PEN_COLORS=['#1f2430','#e5484d','#2563eb','#16a34a','#f59e0b','#9333ea'];
-const CV_EMOJIS='👍 👎 ❤️ 🔥 ⭐ ✅ ❌ ❓ ❗ 💡 🎯 🚀 📌 📍 🏁 ⚠️ 🔒 💰 📈 📉 📅 ⏰ 🧠 👀 🙌 👏 🎉 😀 😂 😍 🤔 😬 😢 😡 🙏 💪 🤝 ☕ 🚚 ❄️ 🛠️ 📞 ✉️ 🏆 💯 ✏️ 📎 🗂️'.split(' ');
+const CV_EMOJIS='👍 👎 👉 👈 👆 👇 🙌 👏 🙏 💪 🤝 ❤️ 🔥 ⭐ ✅ ❌ ❓ 💡 🎯 🚀 📌 📍 🏁 ⚠️ 🔒 💰 📅 ⏰ 🧠 👀 🎉 😀 😂 😍 🤔 😬 😢 😡 💯'.split(' ');   // hands first, together
 // an option panel sits level with its tool's button, or below the voice panel when that is open, never under it
 function cvPlaceFlys(){
   const st=$('#cvStage').getBoundingClientRect(),vc=$('#vc'),vcBottom=vc.hidden||vc.classList.contains('right')?0:vc.getBoundingClientRect().bottom-st.top+8;
-  for(const [fly,tool] of [['#cvNoteFly','note'],['#cvTextFly','text'],['#cvPenFly','pen'],['#cvEmojiFly','emoji']]){
+  for(const [fly,tool] of [['#cvNoteFly','note'],['#cvTextFly','text'],['#cvFrameFly','frame'],['#cvPenFly','pen'],['#cvEmojiFly','emoji']]){
     const b=$(`#cvTb [data-tool=${tool}]`);$(fly).style.top=Math.max($('#cvTb').offsetTop+b.offsetTop-5,vcBottom)+'px';}
 }
 new ResizeObserver(()=>cvPlaceFlys()).observe($('#vc'));
@@ -2456,8 +2483,8 @@ function cvSetTool(t){
   cvTool=t;$('#cvEmojiFly').hidden=true;
   document.querySelectorAll('#cvTb button[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   cvPlaceFlys();
-  const st=$('#cvStage');st.classList.remove('t-pen','t-note','t-text');if(t!=='select')st.classList.add('t-'+t);
-  $('#cvPenFly').hidden=t!=='pen';$('#cvNoteFly').hidden=t!=='note';$('#cvTextFly').hidden=t!=='text';
+  const st=$('#cvStage');st.classList.remove('t-pen','t-note','t-text','t-frame');if(t!=='select')st.classList.add('t-'+t);
+  $('#cvPenFly').hidden=t!=='pen';$('#cvNoteFly').hidden=t!=='note';$('#cvTextFly').hidden=t!=='text';$('#cvFrameFly').hidden=t!=='frame';
 }
 // Text fits its words. Its w and h are measured from the page (the board uses them for selection, fit and previews).
 // A sticky note's words fill it (Miro): a few words are big, and the type shrinks as you write more, so all of it fits.
@@ -2487,7 +2514,7 @@ function cvNoteSize(it,el){   // set a sticky note's type size from its words
   if(!cvAutoNote(it)){if(it.fs)f.style.fontSize=it.fs+'px';return;}
   const r=cvNoteFs(it);f.style.padding=cvNotePad(it.w||200,it.h||200);f.style.fontSize=r.px+'px';el.classList.toggle('fits',r.fits);
 }
-if(document.fonts)document.fonts.ready.then(()=>{CV_FS.clear();if(cvBoard)cvBoard.items.forEach(i=>{if(cvAutoNote(i))cvNoteSize(i,$('#cvWorld').querySelector(`.cv-item[data-id="${i.id}"]`));});});   // the hand font came late (phones): measure again
+if(document.fonts)document.fonts.ready.then(()=>{CV_FS.clear();if(cvBoard)cvBoard.items.forEach(i=>{if(cvAutoNote(i))cvNoteSize(i,$('#cvWorld').querySelector(`.cv-item[data-id="${i.id}"]`));});agReflow();});   // the hand font came late (phones): measure again
 function cvFitText(it,el){
   if(!it.grow&&el&&cvAutoNote(it))return cvNoteSize(it,el);
   if(!it.grow||!el)return;
@@ -2515,12 +2542,30 @@ function cvPlaceText(p,w){
   const el=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`);
   if(el){cvEditNote(el.querySelector('.frame'));requestAnimationFrame(()=>cvFitText(it,el));}
 }
-function cvPlace(tool,p){   // a sticky note or a text box at p, ready to type in
+function cvPlace(tool,p){   // a sticky note, a text box or a frame at p, ready to type in
   if(tool==='text')return cvPlaceText(p);
+  if(tool==='frame'){const k=cvK();return cvAddFrame(p.x-450*k,p.y-300*k,900*k,600*k);}
   const k=1/cvView.s,it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k,...(CV_NOTE.color?{color:CV_NOTE.color}:{})});
   const f=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(f)cvEditNote(f);
 }
 function cvSticker(ch,p){const k=1/cvView.s,c=p||cvCenter();cvAddItem({type:'emoji',ch,x:c.x-40*k,y:c.y-40*k,w:80*k,h:80*k},!p);}   // dragged to a spot: there; clicked: a free spot
+function cvAddFrame(x,y,w,h,behind){   // a frame you make yourself, like the ones a team's work sits in, named by its title.
+  // Drawn over a group of items (the tool's drag) it goes behind them, on purpose; placed or dropped, it lands on top like anything new
+  const it={type:'area',text:'',color:CV_FRAME.color,x,y,w,h,id:'c'+Date.now().toString(36)+(cvUidN++)};
+  const w0=$('#cvWorld'),el=cvItemEl(it);
+  if(behind){it.z=Math.min(0,...cvBoard.items.map(i=>i.z||0))-1;el.style.zIndex=it.z;cvBoard.items.unshift(it);w0.prepend(el);}
+  else{it.z=++cvBoard.maxZ;el.style.zIndex=it.z;cvBoard.items.push(it);w0.appendChild(el);}
+  $('#cvEmpty').style.display='none';cvSelect(it.id);cvSave();
+  cvEditFrameTitle(it,el);return it;
+}
+function cvEditFrameTitle(it,el){   // the title is the frame's handle: double-click it (or place a new frame) to type its name
+  const t=el.querySelector('.ftitle');if(!t||t.isContentEditable)return;
+  t.textContent=it.text||'';t.classList.remove('empty');t.contentEditable='plaintext-only';t.focus();
+  const r=document.createRange();r.selectNodeContents(t);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);
+  const done=()=>{t.contentEditable='false';it.text=t.textContent.trim().slice(0,200);t.textContent=it.text||'Frame';t.classList.toggle('empty',!it.text);cvSave();};
+  t.addEventListener('blur',done,{once:true});
+  t.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key==='Escape'){e.preventDefault();e.stopPropagation();t.blur();}});
+}
 function cvUseTool(e){
   e.preventDefault();e.stopPropagation();
   if(cvTool==='note'){cvSetTool('select');cvPlace('note',cvPoint(e));return;}
@@ -2532,6 +2577,16 @@ function cvUseTool(e){
     const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);cvSetTool('select');
       if(box){box.remove();cvPlaceText({x:Math.min(p0.x,p1.x),y:Math.min(p0.y,p1.y)},Math.max(Math.abs(p1.x-p0.x),40/cvView.s));}
       else cvPlaceText(p0);};
+    window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);return;
+  }
+  if(cvTool==='frame'){   // click = a frame of a usual size, drag = a frame the size of the drag
+    const stage=$('#cvStage'),r=stage.getBoundingClientRect(),p0=cvPoint(e),sx=e.clientX,sy=e.clientY;let box=null,p1=p0;
+    const mv=ev=>{if(!box&&Math.abs(ev.clientX-sx)+Math.abs(ev.clientY-sy)<6)return;
+      if(!box){box=document.createElement('div');box.className='cv-marquee';stage.appendChild(box);}
+      p1=cvPoint(ev);box.style.cssText=`left:${Math.min(sx,ev.clientX)-r.left}px;top:${Math.min(sy,ev.clientY)-r.top}px;width:${Math.abs(ev.clientX-sx)}px;height:${Math.abs(ev.clientY-sy)}px`;};
+    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);cvSetTool('select');const k=cvK();
+      if(box){box.remove();cvAddFrame(Math.min(p0.x,p1.x),Math.min(p0.y,p1.y),Math.max(Math.abs(p1.x-p0.x),120*k),Math.max(Math.abs(p1.y-p0.y),80*k),true);}
+      else cvAddFrame(p0.x-450*k,p0.y-300*k,900*k,600*k);};
     window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);return;
   }
   if(cvTool!=='pen')return;
@@ -2555,7 +2610,7 @@ function cvUseTool(e){
 (function(){
   document.querySelectorAll('#cvTb button[data-tool]').forEach(b=>{
     b.onclick=()=>cvSetTool(b.dataset.tool===cvTool&&b.dataset.tool!=='emoji'?'select':b.dataset.tool);
-    if(b.draggable)b.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/x-cv-tool',b.dataset.tool);e.dataTransfer.effectAllowed='copy';});
+    if(b.draggable)b.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/x-cv-tool',b.dataset.tool);e.dataTransfer.effectAllowed='copy';CV_TOOL_DRAG={x:e.clientX,y:e.clientY};});
   });
   $('#cvPenColors').innerHTML=CV_PEN_COLORS.map(c=>`<button class="sw${c===CV_PEN.color?' on':''}" data-c="${c}" style="background:${c}" title="Marker colour"></button>`).join('');
   $('#cvPenSizes').innerHTML=[3,8].map(n=>`<button class="sz${n===CV_PEN.size?' on':''}" data-s="${n}" title="${n===3?'Fine':'Thick'} line"><i style="width:${n+2}px;height:${n+2}px"></i></button>`).join('');
@@ -2570,6 +2625,11 @@ function cvUseTool(e){
     if(!sel.length)return;sel.forEach(i=>{if(b.dataset.c)i.fill=b.dataset.c;else delete i.fill;});cvRender();
     sel.forEach(i=>cvFitText(i,$('#cvWorld').querySelector(`.cv-item[data-id="${i.id}"]`)));cvGroupBox();cvSave();};
   $('#cvNoteColors').innerHTML=CV_NOTE_COLORS.map(c=>`<button class="sw${c===CV_NOTE.color?' on':''}" data-c="${c}" style="background:${c||'#fde047'}" title="Sticky note colour"></button>`).join('');
+  $('#cvFrameFills').innerHTML='<span class="lbl">Fill</span>'+CV_FRAME_FILLS.map(([c,n])=>`<button class="sw${c===CV_FRAME.color?' on':''}" data-c="${c}" style="background:${c}" title="${n}"></button>`).join('');
+  $('#cvFrameFills').onclick=e=>{const b=e.target.closest('.sw');if(!b)return;CV_FRAME.color=b.dataset.c;document.querySelectorAll('#cvFrameFills .sw').forEach(x=>x.classList.toggle('on',x===b));
+    // also recolours the frames that are selected now
+    const sel=(cvBoard?cvBoard.items:[]).filter(i=>cvSel.has(i.id)&&i.type==='area');
+    if(!sel.length)return;sel.forEach(i=>{i.color=b.dataset.c;const f=$('#cvWorld').querySelector(`.cv-item[data-id="${i.id}"] .frame`);if(f)f.style.background=cvBack(i.color);});cvSave();};
   $('#cvNoteColors').onclick=e=>{const b=e.target.closest('.sw');if(!b)return;CV_NOTE.color=b.dataset.c;document.querySelectorAll('#cvNoteColors .sw').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvPenColors').onclick=e=>{const b=e.target.closest('.sw');if(!b)return;CV_PEN.color=b.dataset.c;document.querySelectorAll('#cvPenColors .sw').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvPenSizes').onclick=e=>{const b=e.target.closest('.sz');if(!b)return;CV_PEN.size=+b.dataset.s;document.querySelectorAll('#cvPenSizes .sz').forEach(x=>x.classList.toggle('on',x===b));};
@@ -2673,7 +2733,8 @@ function cvAddImage(file,stagger=0,at){
     const c=document.createElement('canvas');
     c.width=Math.max(1,Math.round(img.naturalWidth*k));c.height=Math.max(1,Math.round(img.naturalHeight*k));
     if(cvBoardId!==boardId||!cvBoard)return;
-    const p=at||cvCenter(),dw=Math.min(440,c.width)*cvK(),dh=dw*c.height/c.width;   // shown now, as the photo itself; shrunk and uploaded behind it
+    const ws=cvBoard.items.filter(i=>i.type==='img'&&i.w>0).map(i=>i.w).sort((a,b)=>a-b),ref=ws.length?ws[ws.length>>1]:0;   // the pictures already here: the middle one's width
+    const p=at||cvCenter(),dw=Math.min(Math.min(440,c.width)*cvK(),ref||Infinity),dh=dw*c.height/c.width;   // sized for the zoom, but never much bigger than the pictures already on the board: zoomed out to fit, each new one came out bigger than the last and the fit zoomed out further (2026-11-04)
     const it=cvAddItem({type:'img',src:'',uploading:true,_local:img.src,x:p.x-dw/2+stagger*26,y:p.y-dh/2+stagger*26,w:dw,h:dh},true);
     const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);ctx.drawImage(img,0,0,c.width,c.height);
     c.toBlob(async blob=>{
@@ -2712,9 +2773,21 @@ function cvBarH(el){const b=el.querySelector('.mbar');return (b?b.offsetHeight:3
 function cvSize(n){return n<1024?n+' B':n<1048576?Math.round(n/1024)+' KB':n<1073741824?(n/1048576).toFixed(n<10485760?1:0)+' MB':(n/1073741824).toFixed(1)+' GB';}
 // Images the browser can draw are shrunk like screenshots; everything else is uploaded as it is, in 20 MB pieces
 // (Cloudflare refuses one request over 100 MB), and becomes a PDF page, a player, or a file card.
+// the address of a picture in a paste or a drop: an <img> in the HTML part, or a bare link that ends like a picture file
+function cvPictureUrl(html,txt){
+  const m=/<img\b[^>]*\bsrc\s*=\s*["']?(https?:\/\/[^"'\s>]+)/i.exec(html||'');if(m)return m[1];
+  return /^https?:\/\/\S+\.(png|jpe?g|gif|webp|avif|bmp|svg)(\?\S*)?$/i.test(txt||'')?txt:null;
+}
+async function cvFetchImage(url,p){   // the server fetches it (the page cannot read other sites' pictures), then it joins like a pasted one
+  const boardId=cvBoardId;
+  try{const {src}=await api('images/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const blob=await (await fetch(src)).blob();if(cvBoardId!==boardId)return;
+    cvAddImage(new File([blob],'picture',{type:blob.type||'image/jpeg'}),0,p);}
+  catch(e){cvSaveState('image');}
+}
 function cvAddFiles(files,p){
   files.forEach((f,i)=>{
-    if(/^image\/(jpeg|png|webp|bmp|svg\+xml)$/.test(f.type))return cvAddImage(f,i,p);
+    if(/^image\//.test(f.type))return cvAddImage(f,i,p);   // any picture Chrome can decode (a GIF loses its motion)
     const c=p||cvCenter();cvUploadFile(f,{x:c.x+(i%4)*520,y:c.y+Math.floor(i/4)*360});   // several at once: side by side, 4 to a row
   });
 }
@@ -2818,7 +2891,7 @@ async function cvNoteToDoc(it,kind){
     const box=document.createElement('div');box.className='cv-marquee';let moved=false;
     const mv=ev=>{const x=ev.clientX-r.left,y=ev.clientY-r.top;
       if(!moved&&Math.abs(x-sx)+Math.abs(y-sy)<5)return;
-      if(!moved){moved=true;stage.appendChild(box);}
+      if(!moved){moved=true;CV_DRAGGED=Date.now();stage.appendChild(box);}
       const L=Math.min(sx,x),T=Math.min(sy,y),W=Math.abs(x-sx),H=Math.abs(y-sy);
       box.style.cssText=`left:${L}px;top:${T}px;width:${W}px;height:${H}px`;
       const wx0=(L-cvView.x)/cvView.s,wy0=(T-cvView.y)/cvView.s,wx1=wx0+W/cvView.s,wy1=wy0+H/cvView.s;
@@ -2834,7 +2907,7 @@ async function cvNoteToDoc(it,kind){
   stage.addEventListener('pointerdown',e=>{if(e.pointerType==='touch')CV_TOUCHED=Date.now();});
   // double-click empty space → sticky note
   stage.addEventListener('dblclick',e=>{
-    if(e.target.closest('.cv-item')||Date.now()-CV_TOUCHED<800)return;   // phones add from the ⋯ menu instead
+    if(e.target.closest('.cv-item')||Date.now()-CV_TOUCHED<800||Date.now()-CV_DRAGGED<800)return;   // phones add from the ⋯ menu instead; a selection drag is not a double-click
     const p=cvPoint(e);
     const k=cvK(),it=cvAddItem({type:'note',text:'',fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k});
     const el=stage.querySelector(`.cv-item[data-id="${it.id}"] .frame`);if(el)cvEditNote(el);
@@ -2853,7 +2926,7 @@ async function cvNoteToDoc(it,kind){
     if(!pts.has(e.pointerId))return;
     pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
     if(!CV_PINCH.on||pts.size<2)return;
-    const m=mid(),s2=Math.min(3,Math.max(.002,CV_PINCH.s0*gap()/CV_PINCH.d0));   // the board point under your fingers stays under them
+    const m=mid(),s2=Math.min(3,Math.max(cvMinScale(),CV_PINCH.s0*gap()/CV_PINCH.d0));   // the board point under your fingers stays under them
     cvView.s=s2;cvView.x=m.x-CV_PINCH.wx*s2;cvView.y=m.y-CV_PINCH.wy*s2;cvApplyView();
   },true);
   const lift=e=>{if(!pts.delete(e.pointerId))return;if(pts.size<2)CV_PINCH.on=false;if(!pts.size)setTimeout(()=>{if(!pts.size)CV_PINCH.used=false;},0);};
@@ -2864,7 +2937,7 @@ async function cvNoteToDoc(it,kind){
     e.preventDefault();
     if(e.ctrlKey||e.metaKey){
       const r=stage.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top;
-      const s2=Math.min(3,Math.max(.002,cvView.s*Math.exp(-e.deltaY*.01)));
+      const s2=Math.min(3,Math.max(cvMinScale(),cvView.s*Math.exp(-e.deltaY*.01)));
       cvView.x=px-(px-cvView.x)*(s2/cvView.s);cvView.y=py-(py-cvView.y)*(s2/cvView.s);cvView.s=s2;
     }else{cvView.x-=e.deltaX;cvView.y-=e.deltaY;}
     cvApplyView();
@@ -2873,22 +2946,29 @@ async function cvNoteToDoc(it,kind){
   window.addEventListener('wheel',e=>{if(e.ctrlKey)e.preventDefault();},{passive:false,capture:true});
   // drop images / links / text onto the surface
   stage.addEventListener('dragover',e=>e.preventDefault());
+  document.addEventListener('dragstart',e=>{const f=e.target&&e.target.closest&&e.target.closest('.cv-item .frame');CV_TEXT_DRAG=!!(f&&f.isContentEditable);});   // words dragged out of a note being typed in
+  document.addEventListener('dragend',()=>{CV_TEXT_DRAG=false;CV_TOOL_DRAG=null;});
   stage.addEventListener('drop',e=>{
     e.preventDefault();
     const tool=e.dataTransfer.getData('text/x-cv-tool'),emo=e.dataTransfer.getData('text/x-cv-emoji');
-    if(tool){cvPlace(tool,cvPoint(e));return;}
+    if(tool){   // a sloppy press on the tool button that let go a few pixels away is a click, not a drop (a blank note landed by the toolbar)
+      const d=CV_TOOL_DRAG?Math.hypot(e.clientX-CV_TOOL_DRAG.x,e.clientY-CV_TOOL_DRAG.y):Infinity;CV_TOOL_DRAG=null;
+      if(d<40)return;cvPlace(tool,cvPoint(e));return;}
+    if(CV_TEXT_DRAG){CV_TEXT_DRAG=false;return;}   // words dragged out of the note being typed in: not a new note
     if(emo){cvSticker(emo,cvPoint(e));return;}
     const p=cvPoint(e);
     const files=[...(e.dataTransfer.files||[])];
     if(files.length){cvAddFiles(files,p);return;}
-    const txt=(e.dataTransfer.getData('text/plain')||'').trim();if(!txt)return;
+    const txt=(e.dataTransfer.getData('text/plain')||e.dataTransfer.getData('text/uri-list')||'').trim(),pic=cvPictureUrl(e.dataTransfer.getData('text/html'),txt);
+    if(pic){cvFetchImage(pic,p);return;}   // a picture dragged out of another tab arrives as its address
+    if(!txt)return;
     const u=cvExtractUrl(txt);
     if(u)cvNewLink(u,p.x,p.y);
     else{const k=cvK();cvAddItem({type:'note',text:txt,fs:16*k,x:p.x-100*k,y:p.y-100*k,w:200*k,h:200*k},true);}
   });
   // zoom controls
   const zoomBy=f=>{const r=stage.getBoundingClientRect(),px=r.width/2,py=r.height/2;
-    const s2=Math.min(3,Math.max(.002,cvView.s*f));
+    const s2=Math.min(3,Math.max(cvMinScale(),cvView.s*f));
     cvView.x=px-(px-cvView.x)*(s2/cvView.s);cvView.y=py-(py-cvView.y)*(s2/cvView.s);cvView.s=s2;cvApplyView();};
   $('#cvZoomIn').onclick=()=>zoomBy(1.25);
   $('#cvZoomOut').onclick=()=>zoomBy(.8);
@@ -2898,7 +2978,7 @@ async function cvNoteToDoc(it,kind){
     const minX=Math.min(...xs.map(i=>i.x)),minY=Math.min(...xs.map(i=>i.y));
     const maxX=Math.max(...xs.map(i=>i.x+i.w)),maxY=Math.max(...xs.map(i=>i.y+i.h));
     const r=stage.getBoundingClientRect();
-    const s=Math.min(2,Math.max(.002,Math.min((r.width-80)/Math.max(1,maxX-minX),(r.height-80)/Math.max(1,maxY-minY))));
+    const s=Math.min(2,Math.min((r.width-80)/Math.max(1,maxX-minX),(r.height-80)/Math.max(1,maxY-minY)));   // no floor: Fit always shows everything
     cvView.s=s;cvView.x=(r.width-(maxX-minX)*s)/2-minX*s;cvView.y=(r.height-(maxY-minY)*s)/2-minY*s;cvApplyView();
   };
   $('#cvBack').onclick=()=>{const sp=cvBoard&&spaceOf(cvBoard);location.hash=sp?'s/'+sp:'';};
@@ -2928,11 +3008,13 @@ async function cvNoteToDoc(it,kind){
     if(!cvOpenNow())return;
     const ae=document.activeElement;
     if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA/.test(ae.tagName)))return;
-    const mine=cvClipItems(e.clipboardData);
+    const files=[...(e.clipboardData.files||[])];[...(e.clipboardData.items||[])].forEach(i=>{if(i.kind==='file'){const f=i.getAsFile();if(f&&!files.includes(f))files.push(f);}});
+    const mine=(e.clipboardData.getData('text/x-cv-items')||!files.length)?cvClipItems(e.clipboardData):null;   // a picture on the clipboard is a picture, unless board items really came with it
     if(mine){e.preventDefault();cvPasteItems(mine);return;}
-    const files=[...(e.clipboardData.files||[])];
     if(files.length){e.preventDefault();cvAddFiles(files,null);return;}
-    const txt=(e.clipboardData.getData('text/plain')||'').trim();if(!txt)return;
+    const txt=(e.clipboardData.getData('text/plain')||'').trim(),pic=cvPictureUrl(e.clipboardData.getData('text/html'),txt);
+    if(pic){e.preventDefault();cvFetchImage(pic,null);return;}   // Chrome's "Copy image" on some pages gives only the picture's address
+    if(!txt)return;
     e.preventDefault();
     const p=cvCenter();
     const u=cvExtractUrl(txt);
@@ -3707,7 +3789,7 @@ function vcFocus(ids,close){
   const left=mob?Math.max(0,$('#cvTb').getBoundingClientRect().right-r.left):$('#vc').hidden?0:Math.min(430,r.width/2),   // phones: clear of the toolbar
     right=mob||$('#bp').hidden?0:Math.min(420,r.width/2);   // keep clear of the voice card and the brief
   const room=Math.max(200,r.width-left-right),tall=Math.max(160,r.height-sheet),pad=mob?40:120;
-  const s=Math.min(close?3:1,Math.max(.002,Math.min((room-pad)/Math.max(1,x1-x0),(tall-pad)/Math.max(1,y1-y0))));   // "show me" fills the free space
+  const s=Math.min(close?3:1,Math.max(cvMinScale(),Math.min((room-pad)/Math.max(1,x1-x0),(tall-pad)/Math.max(1,y1-y0))));   // "show me" fills the free space
   cvView.s=s;cvView.x=left+(room-(x1-x0)*s)/2-x0*s;cvView.y=(tall-(y1-y0)*s)/2-y0*s;cvApplyView();
 }
 // speech is queued so a filler finishes before the answer starts; a new question or "stop" cuts everything
@@ -3808,12 +3890,13 @@ async function agPoll(){
   const live=AG.runs.some(r=>r.status==='queued'||r.status==='working');
   AG.timer=setTimeout(agPoll,live?2000:AG.runs.some(r=>r.status==='waiting')?5000:15000);
 }
+function agRunLive(rid){const r=agRun(rid);return !!r&&['queued','working','waiting','team'].includes(r.status);}
 function agMerge(items){   // new agent items join the board without redrawing it (nothing you are typing or dragging is touched)
   const seen=agSeen(cvBoardId),w=$('#cvWorld');let added=false;
   for(const s of items){
     const have=cvBoard.items.find(i=>i.id===s.id);
     if(have){seen.add(s.id);
-      if(s.run&&(s.h>have.h+.5||s.w>have.w+.5)){have.h=Math.max(have.h,s.h);have.w=Math.max(have.w,s.w);   // the frame grew
+      if(s.run&&agRunLive(s.run)&&(s.h>have.h+.5||s.w>have.w+.5)){have.h=Math.max(have.h,s.h);have.w=Math.max(have.w,s.w);   // the frame grew (only while its team is at work: a finished frame keeps the size you scaled it to)
         const el=w.querySelector(`.cv-item[data-id="${s.id}"]`);if(el){el.style.height=have.h+'px';el.style.width=have.w+'px';}}
       if(s.chart&&(s.text!==have.text||s.color!==have.color||JSON.stringify(s.org)!==JSON.stringify(have.org))){have.text=s.text;have.color=s.color;have.org=s.org;   // an org chart card's status moved on
         const el=w.querySelector(`.cv-item[data-id="${s.id}"]`);if(el)el.replaceWith(cvItemEl(have));}
@@ -3823,7 +3906,26 @@ function agMerge(items){   // new agent items join the board without redrawing i
     const el=cvItemEl(s);w.appendChild(el);if(s.grow)cvFitText(s,el);
     added=true;
   }
-  if(added){cvSharpen();cvSave();}
+  if(added){cvSharpen();agReflow();cvSave();}
+}
+function agReflow(){   // an agent's frame: the server guesses how tall each card or text is; the page knows. A row that is really
+  // taller pushes the rows under it down (never up), and the frame grows to hold all of it (content ran out of frames, 2026-11-04)
+  if(!cvBoard)return;const w=$('#cvWorld');let changed=false;
+  for(const f of cvBoard.items){
+    if(f.type!=='area'||!f.agent)continue;
+    const inside=cvBoard.items.filter(i=>i!==f&&i.agent===f.agent&&i.type!=='area'&&i.type!=='arrow'&&i.x>=f.x-1&&i.x<f.x+f.w&&i.y>=f.y-1);
+    if(!inside.length)continue;
+    for(const i of inside){if(!i.grow)continue;const el=w.querySelector(`.cv-item[data-id="${i.id}"]`);if(el&&el.isConnected&&el.offsetHeight>i.h+.5)i.h=el.offsetHeight;}   // the real height of text drawn at its own size
+    const pad=Math.max(1,Math.min(...inside.map(i=>i.y))-f.y),gap=pad*18/28,rows=[];
+    inside.sort((a,b)=>a.y-b.y||a.x-b.x).forEach(i=>{const r=rows[rows.length-1];if(r&&Math.abs(i.y-r.y)<1)r.items.push(i);else rows.push({y:i.y,items:[i]});});
+    let y=rows[0].y;
+    for(const r of rows){
+      if(r.y<y-.5){const dy=y-r.y;r.items.forEach(i=>{i.y+=dy;const el=w.querySelector(`.cv-item[data-id="${i.id}"]`);if(el)el.style.top=i.y+'px';});r.y=y;changed=true;}
+      y=r.y+Math.max(...r.items.map(i=>i.h))+gap;}
+    const h=y-gap+pad-f.y;
+    if(h>f.h+.5){f.h=h;const el=w.querySelector(`.cv-item[data-id="${f.id}"]`);if(el)el.style.height=h+'px';changed=true;}
+  }
+  if(changed){cvArrowsFollow();cvGroupBox();cvSave();}
 }
 function agStatus(box,rid){
   const r=agRun(rid);if(!box)return;
@@ -3955,7 +4057,7 @@ async function agStart(){
     try{await api('runs/'+f.id+'/'+(f.steer?'steer':'follow'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:task})});$('#agTask').value='';agFlyClose();await agPoll();agReveal(f.frame);}
     catch(e){$('#agCtx').textContent='The follow-up did not start. Try again in a moment.';}
     $('#agStart').disabled=false;return;}
-  const its=cvBoard.items.filter(i=>cvSel.has(i.id)),u=1/cvView.s;let anchor;
+  const its=cvBoard.items.filter(i=>cvSel.has(i.id)),u=cvUnit();let anchor;
   if(its.length)anchor={x:Math.max(...its.map(i=>i.x+i.w))+60*u,y:Math.min(...its.map(i=>i.y)),unit:u};
   else{const r=$('#cvStage').getBoundingClientRect();anchor={x:(r.width*.35-cvView.x)*u,y:(r.height*.2-cvView.y)*u,unit:u};}
   $('#agStart').disabled=true;
@@ -3965,7 +4067,7 @@ async function agStart(){
   $('#agStart').disabled=false;
 }
 async function cvStartSuggested(it){   // a task the router suggested on an Incoming card: the user starts it here, the card is its source
-  const u=1/cvView.s,anchor={x:it.x+it.w+60*u,y:it.y,unit:u};
+  const u=cvUnit(),anchor={x:it.x+it.w+60*u,y:it.y,unit:u};
   try{const j=await api('agents/'+cvBoardId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task:it.suggest,selected:[it.id],anchor,mode:'team'})});
     delete it.suggest;cvSave();cvSelect(null);await agPoll();agReveal(j.frame);}
   catch(e){cvSaveState('error');}

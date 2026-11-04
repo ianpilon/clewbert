@@ -62,6 +62,51 @@ REARRANGE = re.compile(r"\b(re-?arrang\w*|restructur\w*|re-?organi[sz]\w*|regrou
                        r"into (?:themes|groups|sections|categories|clusters))", re.I)
 BUILDING = re.compile(r"\b(build|make|create|code|implement|fix|rebuild)\w*\b.{0,80}\b(demo|page|prototype|app|site|tool|it)\b", re.I)   # a part that is to build
 BUILD = re.compile(r"\b(demo|prototype|build|make (?:a|me a|an)|page|site|website|app|tool|interface|screen|ui|ux|dashboard|landing)\b", re.I)
+READ_TOOLS = ('read_web_page', 'read_item', 'search_board', 'web_search', 'read_page_source', 'read_code', 'search_code',
+              'browser_open', 'browser_look', 'browser_click', 'browser_type', 'browser_scroll', 'browser_select', 'browser_back')   # tools whose result is text the agent saw with its own eyes
+
+
+def plain(text):
+    """Text as the gate compares it: letters and digits only, lower case. Punctuation, spacing, curly quotes and dashes
+    differ between a page and a note copied from it; the words do not."""
+    return re.sub(r'[^a-z0-9]', '', str(text or '').lower())
+
+
+def quotes_in(text):
+    """The quoted spans of a note, pairing quote marks in order (a note with several short quotes in a row otherwise
+    pairs a closing mark with the next opening one). Only spans long enough to be a real quote, not a label."""
+    t = str(text or '').replace('\u201c', '"').replace('\u201d', '"')
+    marks = [m.start() for m in re.finditer('"', t)]
+    return [t[a + 1:b] for a, b in zip(marks[::2], marks[1::2]) if len(t[a + 1:b].strip()) >= 25]
+
+
+def read_corpus(r):
+    """Everything this run read for itself: the results of its read tools, as one text. A teammate's hand-back and the
+    task it was given are left out on purpose: that is how an invented quote travelled from a checker, through the
+    Lead's brief, into a reader's 'exact' notes (Anita's board, 2026-11-04)."""
+    names = {}
+    parts = []
+    for m in r.get('messages') or []:
+        if m.get('role') == 'assistant':
+            for tc in m.get('tool_calls') or []:
+                names[tc.get('id')] = (tc.get('function') or {}).get('name')
+        elif m.get('role') == 'tool' and names.get(m.get('tool_call_id')) in READ_TOOLS:
+            c = m.get('content')
+            parts.append(c if isinstance(c, str) else json.dumps(c))
+    return plain('\n'.join(parts))
+
+
+def missing_quote(text, corpus):
+    """The first quoted span in text that is not on any page the run read, or None. A quote with '...' in it is checked
+    piece by piece, so a shortened quote passes as long as every piece is real."""
+    for q in quotes_in(text):
+        for piece in re.split(r'\.\.\.|\u2026', q):
+            key = plain(piece)
+            if len(key) >= 10 and key not in corpus:
+                return q
+    return None
+
+
 GUESS = re.compile(r"\b(likely|probably|possibly|presumably|might (?:be|use|have)|may be|could be|appears to be|seems to be|"
                    r"it is (?:likely|possible) that|you (?:can|could|might) try)\b", re.I)
 ENDED = ('done', 'stopped', 'failed', 'unfinished', 'partial')   # partial: finished, but the final check found gaps   # unfinished: out of steps or stuck, never shown as Done
@@ -250,10 +295,10 @@ TOOLS = [
          'animation and 3D words the file uses. Use it to find out how something on a site works.', {'url': S, 'words': S}, ['url']),
     tool('add_note', 'Put a sticky note in your task frame: ONE short thought, name or idea, at most 120 characters (a sticky '
          'note is a fixed square). Anything longer goes on a card (add_card). source = the web page you READ it on (with read_web_page), or "board" when it comes '
-         'from the board.', {'text': S, 'source': S}),
+         'from the board. Quote marks mean word for word from a page or item you read; a quote that is not there is refused.', {'text': S, 'source': S}),
     tool('add_card', 'Put a card in your task frame for a finding with details: a short title (what it is), then the facts, one '
          'per line as "Label: value" (for example "Asking price: $219,000"). source = the web page you READ it on (with '
-         'read_web_page), or "board".', {'title': S, 'facts': S, 'source': S}, ['title', 'facts', 'source']),
+         'read_web_page), or "board". Quote marks mean word for word from a page or item you read; a quote that is not there is refused.', {'title': S, 'facts': S, 'source': S}, ['title', 'facts', 'source']),
     tool('add_text', 'Put text in your task frame. style "heading" starts a section, "body" is a paragraph.',
          {'text': S, 'style': {'type': 'string', 'enum': ['heading', 'body']}}),
     tool('add_link', 'Put a link card for a web page in your task frame.', {'url': S}),
@@ -307,6 +352,19 @@ ASSIGN = tool('assign', 'Hand parts of the task to teammates. Each part becomes 
                                                           'required': ['teammate', 'task', 'done_when']}}})
 # the Lead plans, hands out and puts the answer together; it has no web tools, so it cannot do the parts itself
 LEAD_TOOLS = [t for t in TOOLS if t['function']['name'] in ('search_board', 'read_item', 'read_frame', 'add_text', 'ask_user', 'finish')] + [ASSIGN]
+
+
+def board_unit(board):
+    """How big new work should be on this board: the size of what is already there, not the zoom. Sized for the zoom,
+    a board viewed zoomed right out got frames many times the size of its own items, and each one pushed the fit
+    further out, so the next team's work came out bigger again (2026-11-04). A card is 220 units at unit 1, a
+    sticky note 200, a picture 440: the middle item's width over 260 keeps new work about the size of its neighbours."""
+    its = [i for i in (board.get('items') or []) if i.get('type') not in ('area', 'arrow', 'ink') and float(i.get('w') or 0) > 0]
+    hand = [i for i in its if not i.get('agent')]   # what the user put there by hand sets the scale; earlier oversized agent work does not
+    ws = sorted(float(i['w']) for i in (hand if len(hand) >= 3 else its))
+    if not ws:
+        return 1 / max(((board.get('view') or {}).get('s') or 1), 1e-4)
+    return max(.05, min(50., ws[len(ws) // 2] / 260))
 
 
 def now_ms():
@@ -440,7 +498,7 @@ class Runner:
 
         def make_frame(board):
             items = board.get('items') or []
-            unit = float((anchor or {}).get('unit') or 1 / max(((board.get('view') or {}).get('s') or 1), 1e-4))
+            unit = float((anchor or {}).get('unit') or board_unit(board))
             if anchor and 'x' in anchor:
                 x, y = float(anchor['x']), float(anchor['y'])
             elif items:
@@ -1090,6 +1148,13 @@ class Runner:
             return self.use_browser(r, name, a)
         if name == 'add_card':   # a card is a note with a title line: the same checks, then drawn as a card
             name, a = 'add_note', dict(a, text=(str(a.get('title') or '').strip() + '\n' + str(a.get('facts') or '').strip()).strip(), card=1)
+        if name in ('add_note', 'add_text'):   # quote marks promise word for word: a quote that is on no page the agent read is turned away
+            bad = missing_quote(a.get('text', ''), read_corpus(r))
+            if bad:
+                self.step(r, 'Turned away a quote that is not on any page it read')
+                return ('Not added: the quote "%s" is not on any page you read, word for word. Quote marks mean the exact words '
+                        'from a page you read with read_web_page or an item you read with read_item. Either quote the real words, '
+                        'or describe it without quote marks and say where it came from.' % bad[:120])
         if name in ('add_note', 'add_text'):   # a guess is sent back once; written again, it goes on the board marked as one
             text = str(a.get('text', ''))
             if GUESS.search(text) and text not in r.setdefault('guesses', []):
@@ -1731,9 +1796,16 @@ class Runner:
             if not frame:
                 r['frame_gone'] = True
                 return None
+            # what is really in the frame so far: the page measures text as it draws it and saves the real heights, which run
+            # longer than the guesses here, so a new row starts under the real bottom, not the guessed one (2026-11-04)
+            mine = [i for i in items if i.get('agent') == r['id'] and i.get('type') not in ('area', 'arrow')
+                    and frame['x'] - 1 <= i['x'] < frame['x'] + frame['w']]
+            real = max([i['y'] + i['h'] for i in mine] + [frame['y'] + L['pad']]) - frame['y'] - L['pad']
             if wide or L['cx'] + w > L['inner'] + 1:   # a new row
                 if L['cx'] > 0:
                     L['cy'] += L['rowH'] + L['gap']
+                if mine:
+                    L['cy'] = max(L['cy'], real + L['gap'])
                 L['cx'], L['rowH'] = 0, 0
             new = dict(item, id='a' + secrets.token_hex(5), agent=r['id'], x=frame['x'] + L['pad'] + L['cx'],
                        y=frame['y'] + L['pad'] + L['cy'], w=w, h=h, z=max([i.get('z', 1) for i in items] + [1]) + 1)
@@ -1747,7 +1819,7 @@ class Runner:
             else:
                 L['cx'] += w + L['gap']
                 L['rowH'] = max(L['rowH'], h)
-            frame['h'] = max(frame['h'], 2 * L['pad'] + L['cy'] + L['rowH'])
+            frame['h'] = max(frame['h'], 2 * L['pad'] + L['cy'] + L['rowH'], real + 2 * L['pad'])
             items.append(new)
             return new
         new = self.store.edit_board(r['board'], put)
