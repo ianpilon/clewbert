@@ -422,7 +422,7 @@ def rules_board():
                      'notes here, and every team reads them before it starts.', 'x': 40, 'y': 40, 'w': 940, 'h': 60, 'z': 0})
     with LOCK:
         write_json(board_path(bid), {'id': bid, 'name': 'Standing rules for agent teams', 'created': t, 'updated': t,
-                                     'items': items, 'view': None, 'space': None})
+                                     'items': items, 'view': None, 'space': None, 'by': 'agent'})
         with open(RULES_FILE, 'w') as f:
             f.write(bid)
     return bid
@@ -1678,11 +1678,48 @@ def named_news():
     return news
 
 
+def made_by(b):
+    """Who made a board: 'agent' (a team's work, the rules board, the router's Incoming), 'assistant' (made from a voice
+    ask), or None for a board the user made. Boards made by code say so ('by'); older ones are judged by what is on
+    them: half or more agent items = an agent's, half or more items added by the assistant or agents = the assistant's.
+    The board list shows a badge for these so they are told apart from the user's own boards (2026-11-04)."""
+    if b.get('by'):
+        return b['by']
+    if b.get('id') in code_boards():
+        return 'agent'
+    items = b.get('items') or []
+    if len(items) < 3:
+        return None
+    agent = sum(1 for i in items if i.get('agent') or (i.get('why') or {}).get('run'))
+    added = sum(1 for i in items if i.get('why') and not i.get('agent'))
+    if agent * 10 >= len(items) * 9:   # nearly all of it is a team's work: a board made for a team, then filled by it
+        return 'agent'
+    if (agent + added) * 10 >= len(items) * 9:
+        return 'assistant'
+    return None
+
+
+CODE_BOARDS = [0.0, set()]
+def code_boards():
+    """The boards the app itself keeps: the rules board and the router's Incoming (their ids live in small files)."""
+    if time.time() - CODE_BOARDS[0] > 30:
+        ids = set()
+        for path in (RULES_FILE, os.path.join(DATA, 'router', 'board')):
+            try:
+                with open(path) as f:
+                    ids.add(f.read().strip())
+            except OSError:
+                pass
+        CODE_BOARDS[:] = [time.time(), ids]
+    return CODE_BOARDS[1]
+
+
 def light(b, keep=150):
     """A board as its card needs it: name, space, dates, item count, the outline of all items, the biggest items."""
     items = b.get('items') or []
     out = {k: b.get(k) for k in ('id', 'name', 'space', 'created', 'updated')}
     out['count'] = len(items)
+    out['by'] = made_by(b)
     if items:
         out['bounds'] = [min(i['x'] for i in items), min(i['y'] for i in items),
                          max(i['x'] + i['w'] for i in items), max(i['y'] + i['h'] for i in items)]
@@ -2033,7 +2070,7 @@ def run_team(a):
                     write_json(SPACES, sp)
                 space = hit['id']
         t = now_ms()
-        board = {'id': secrets.token_hex(6), 'name': a['new_board'], 'created': t, 'updated': t, 'items': [], 'view': None, 'space': space}
+        board = {'id': secrets.token_hex(6), 'name': a['new_board'], 'created': t, 'updated': t, 'items': [], 'view': None, 'space': space, 'by': 'agent'}
         with LOCK:
             write_json(board_path(board['id']), board)
         r = RUNNER.start(board['id'], a['task'], [], None, a['mode'], intent=a.get('intent'))
@@ -2078,7 +2115,7 @@ def run_pending(a, why=None):
     if a.get('new_board'):
         t = now_ms()
         board = {'id': secrets.token_hex(6), 'name': a['new_board'], 'created': t, 'updated': t, 'items': [], 'view': None,
-                 'space': a.get('space')}
+                 'space': a.get('space'), 'by': 'assistant'}
         with LOCK:
             write_json(board_path(board['id']), board)
         bid = board['id']
@@ -2372,7 +2409,7 @@ def incoming_board():
                       'the left. It only records; it never starts, replies or sends.'},
              {'id': 'routerrules', 'type': 'note', 'text': router.FIRST_RULES, 'x': 40, 'y': 140, 'w': 300, 'h': 300, 'z': 2, 'fs': 12}]
     with LOCK:
-        write_json(board_path(bid), {'id': bid, 'name': 'Incoming', 'created': t, 'updated': t, 'items': items, 'view': None, 'space': None})
+        write_json(board_path(bid), {'id': bid, 'name': 'Incoming', 'created': t, 'updated': t, 'items': items, 'view': None, 'space': None, 'by': 'agent'})
         with open(path, 'w') as f:
             f.write(bid)
     return bid

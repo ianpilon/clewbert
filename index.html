@@ -168,6 +168,10 @@
   .cvprev-empty{position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:var(--muted-2);font-style:italic;pointer-events:none}
   .cvprev-badge{position:absolute;right:8px;bottom:6px;font-size:10px;font-weight:700;color:var(--muted);background:var(--glass);border:1px solid var(--border);border-radius:999px;padding:1px 7px;pointer-events:none}
   .cvprev-badge:empty{display:none}
+  /* a board an agent team or the assistant made: a badge on its picture, so it is told apart from the user's own boards */
+  .cvprev-by{position:absolute;left:8px;top:7px;display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;letter-spacing:.02em;color:#fff;background:#3b82f6;border-radius:999px;padding:2px 8px 2px 6px;pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+  .cvprev-by.assistant{background:#7c3aed}
+  .cvprev-by svg{width:12px;height:12px}
   .cvprev-shot{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
   body.shot{background:var(--soft)}body.shot>*:not(#shotBox){display:none!important}   /* ?shot=<id>: the server photographs one preview */
   #shotBox{position:fixed;left:0;top:0;width:320px;height:160px}#shotBox .cvprev-badge{display:none}
@@ -1306,6 +1310,7 @@ function ago(t){const s=(Date.now()-t)/1000;
 /* Spaces: folders for boards (a board is in one space, or none = Unsorted). #s/<id> shows a space, #s/unsorted the
    boards in none, no hash shows all boards. Deleting a space never deletes boards; they become unsorted. */
 const HOME={space:null,spaces:[],boards:[]};
+const CV_BY_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="8" width="15" height="11" rx="3"/><path d="M12 8V4.5"/><circle cx="12" cy="3.6" r="1"/><circle cx="9.3" cy="13.2" r=".8" fill="currentColor"/><circle cx="14.7" cy="13.2" r=".8" fill="currentColor"/></svg>';   // the badge on a board an agent or the assistant made
 const spaceOf=b=>HOME.spaces.some(x=>x.id===b.space)?b.space:null;
 /* A sub-space has "parent" = a top-level space (one level only). Nav order: each top-level space, then its sub-spaces. */
 const subsOf=id=>HOME.spaces.filter(x=>x.parent===id);
@@ -1324,7 +1329,7 @@ async function showHome(space){
   try{[boards]=await Promise.all([api('boards?light=1'),loadSpaces()]);}
   catch(e){if(!HOME.boards)grid.innerHTML='<div class="home-msg">Could not load your boards. Reload the page to try again.</div>';return;}
   if(location.hash&&!location.hash.startsWith('#s/'))return;   // a board opened while the list was loading
-  const sig=x=>x.map(b=>b.id+':'+b.updated+':'+b.space+':'+b.name).join('|')+'#'+HOME.spaces.map(x=>x.id+x.name).join();
+  const sig=x=>x.map(b=>b.id+':'+b.updated+':'+b.space+':'+b.name+':'+(b.by||'')).join('|')+'#'+HOME.spaces.map(x=>x.id+x.name).join();
   const same=HOME.boards&&sig(HOME.boards)===sig(boards)&&HOME.drawn===HOME.space+sig(boards);
   HOME.boards=boards;
   if(!same)homePaint();
@@ -1358,7 +1363,8 @@ function homePaint(){
   shown.forEach(b=>{
     const card=document.createElement('div');card.className='bcard';card.draggable=true;
     const n=b.count??b.items.length,sp=spaceOf(b)&&spaceOf(b)!==HOME.space?' · '+escapeHtml(spaceName(spaceOf(b))):'';   // in a parent space: which sub-space it is in
-    card.innerHTML=`<div class="cvprev">${n?`<img class="cvprev-shot" alt="" loading="lazy" decoding="async" src="api/boardshots/${b.id}${cvShotDark()}.jpg?u=${b.updated}&v=${CV_SHOT_V}">`:''}<div class="cvprev-inner"></div><span class="cvprev-badge"></span></div>
+    const by=b.by==='agent'?'<span class="cvprev-by" title="Made by an agent team">'+CV_BY_ICON+'Agent</span>':b.by==='assistant'?'<span class="cvprev-by assistant" title="Made by your assistant">'+CV_BY_ICON+'Assistant</span>':'';
+    card.innerHTML=`<div class="cvprev">${n?`<img class="cvprev-shot" alt="" loading="lazy" decoding="async" src="api/boardshots/${b.id}${cvShotDark()}.jpg?u=${b.updated}&v=${CV_SHOT_V}">`:''}<div class="cvprev-inner"></div><span class="cvprev-badge"></span>${by}</div>
       <div class="bmeta"><span class="bname">${escapeHtml(b.name)}</span><span class="bsub">${n} item${n===1?'':'s'} · edited ${ago(b.updated)}${sp}</span></div>
       <button class="bmore" title="Move or delete">⋯</button>`;
     card.onclick=()=>{location.hash=b.id;};
