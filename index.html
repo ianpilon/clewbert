@@ -100,20 +100,21 @@
   .sp-add{margin-top:6px;text-align:left;border:none;background:none;padding:8px 10px;font-size:13px;font-weight:600;color:var(--muted);border-radius:8px}
   .sp-add:hover{background:var(--hover);color:var(--ink)}
   .sp-gap{height:10px}
+  #spaceNav h3.sp-arch{margin-top:14px}
   .space-select{display:none}
   body.nav-off .spaces{display:none}   /* hidden for a screen recording: space names stay off screen */
   .nav-toggle.on{background:var(--ink);color:var(--on-primary)}
   .home-head .mic.nav-toggle{margin-left:0}   /* the header's round buttons push right; this one stays at the left edge */
-  .menu{position:fixed;z-index:96;min-width:200px;max-width:280px;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(16,20,28,.2);padding:6px;display:flex;flex-direction:column}
+  .menu{position:fixed;z-index:96;min-width:200px;max-width:280px;max-height:calc(100vh - 16px);overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(16,20,28,.2);padding:6px;display:flex;flex-direction:column}
   .menu[hidden]{display:none}
   .menu .mh{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-2);padding:6px 10px 4px}
-  .menu button{text-align:left;border:none;background:none;padding:8px 10px;border-radius:7px;font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .menu button{flex:none;text-align:left;border:none;background:none;padding:8px 10px;border-radius:7px;font-size:13px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .menu button:hover{background:var(--hover)}
   .menu button.cur{font-weight:700}
   .menu button.cur::after{content:" ✓";color:var(--muted)}
   .menu button.danger{color:var(--lost)}
   .menu button:disabled{opacity:.45;pointer-events:none}
-  .menu hr{border:none;border-top:1px solid var(--border);margin:5px 0}
+  .menu hr{flex:none;border:none;border-top:1px solid var(--border);margin:5px 0}
   .menu .mlink{display:flex;gap:6px;padding:4px 6px}   /* the link box in the phone's add menu */
   .menu .mlink input{flex:1;min-width:0;border:1px solid var(--border-strong);border-radius:7px;padding:8px 9px;font:inherit;font-size:16px}
   .menu .mlink .go{flex:none;background:var(--primary);color:var(--on-primary);font-weight:600;text-align:center}
@@ -218,7 +219,27 @@
   .cv-vt{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
   .cv-vnote p{margin:0;font-size:13.5px;line-height:1.45}
   .cv-vmeta{margin:0;color:var(--muted)}
-  .cv-rec .cv-rheard{margin:8px 0 10px;min-height:2.9em;font-size:13.5px;line-height:1.45;color:var(--ink)}
+  .cv-rec .cv-rheard{margin:8px 0 10px;min-height:2.9em;max-height:7.3em;overflow-y:auto;font-size:13.5px;line-height:1.45;color:var(--ink)}   /* about five lines: a long reason scrolls inside the box, so Done and Cancel stay on the screen (phones, 2026-11-05) */
+  .cv-vnote .cv-vh{display:flex;align-items:center;gap:8px}
+  /* Recording is modal: a scrim blocks the board, the search bar and the menus until Done or Cancel (2026-11-05). On a phone
+     the box is a bottom sheet; on a wide screen it keeps its place at the top right. Taps on the scrim do nothing: a stray
+     tap must not throw a recording away. */
+  .cv-scrim{position:fixed;inset:0;z-index:40;background:rgba(16,20,28,.45)}
+  #cvRec{z-index:41}
+  @media (max-width:760px){#cvRec{position:fixed;left:0;right:0;bottom:0;top:auto;width:auto;max-width:none;border-radius:16px 16px 0 0;border-bottom:none;
+    padding:14px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -6px 24px rgba(16,20,28,.18)}
+    #cvRec::before{content:'';display:block;width:36px;height:4px;border-radius:2px;background:var(--border);margin:0 auto 12px}}
+  /* "Why is this here?" (also what Done opens after a recording): on a phone the same bottom sheet, at most two thirds of the
+     screen, header and Copy and player fixed, the words scroll; Close or a tap on the scrim puts it away (2026-11-05) */
+  .cv-whyhead{display:flex;align-items:center;gap:8px}
+  .cv-wclose{margin-left:auto;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--ink);font-size:12px;cursor:pointer}
+  @media (max-width:760px){#cvWhy{position:fixed;left:0;right:0;bottom:0;top:auto;width:auto;max-width:none;max-height:66vh;display:flex;flex-direction:column;z-index:41;
+    border-radius:16px 16px 0 0;border-bottom:none;padding:14px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -6px 24px rgba(16,20,28,.18)}
+    #cvWhy[hidden]{display:none}
+    #cvWhy::before{content:'';display:block;flex:none;width:36px;height:4px;border-radius:2px;background:var(--border);margin:0 auto 12px}
+    .cv-whybody{overflow-y:auto;min-height:0;-webkit-overflow-scrolling:touch}
+    .cv-vnote p{max-height:30vh;overflow-y:auto}}
+  .cv-vcopy{margin-left:auto;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--ink);font-size:12px;cursor:pointer}
   .cv-rec .cv-rrow{display:flex;align-items:center;gap:8px}
   .cv-rec .cv-rdot{width:10px;height:10px;border-radius:50%;background:#e5484d;animation:cvRecDot 1s ease-in-out infinite alternate}
   @keyframes cvRecDot{to{opacity:.3}}
@@ -356,6 +377,11 @@
   .cv-link .lfoot{display:flex;align-items:center;gap:.62em;margin-top:auto;padding-top:.15em}
   .cv-link .dom2{font-size:.81em;font-weight:600;color:var(--muted-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cv-link .lfoot a{margin-left:auto;margin-top:0;white-space:nowrap;font-size:.846em}
+  .cv-link .lfoot .cv-pub{margin-left:auto;font:inherit;font-size:.846em;font-weight:600;padding:.25em .7em;border-radius:999px;border:1px solid var(--blue);background:var(--blue);color:#fff;cursor:pointer}
+  .cv-link .lfoot .cv-pub:disabled{opacity:.6;cursor:default}
+  .cv-link .lfoot .cv-pub+a{margin-left:0}
+  .menu .mnote{font-size:12.5px;color:var(--muted);padding:2px 10px 8px;white-space:normal;line-height:1.4}
+  .menu .mnote b{color:var(--ink)}
   .cv-media .frame,.cv-file .frame{display:flex;flex-direction:column}
   /* the onboarding team card: scales as a whole (14px at 700px wide); the guide fills it in as you decide */
   .cv-item.cv-team{container-type:inline-size}
@@ -1125,6 +1151,7 @@
     <div class="cv-right"><button class="pill pill-btn" id="cvAgBtn" title="Agent task (A): give an agent a job on this board, or on what you selected"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="8" width="15" height="11" rx="3"/><path d="M12 8V4.5"/><circle cx="12" cy="3.6" r="1"/><circle cx="9.3" cy="13.2" r=".9" fill="currentColor"/><circle cx="14.7" cy="13.2" r=".9" fill="currentColor"/><path d="M2.5 12.5v2.5M21.5 12.5v2.5"/></svg></button><button class="pill pill-btn" id="cvMenuBtn" title="More">⋯</button></div>
     <div class="pill cv-menu" id="cvMenu" hidden><button class="cv-mview" data-add="photo">Take a photo</button><button class="cv-mview" data-add="library">Upload from your photos</button><button class="cv-mview" data-add="link">Paste a link</button><button class="cv-mview" data-add="note">Sticky note</button><button class="cv-mview" id="cvMAgent">Agent task</button><hr class="cv-mview"><button class="cv-mwait" id="cvMTasks" hidden>Waiting on you</button><hr class="cv-mview"><button class="cv-brief" id="cvBriefBtn">Board brief</button><button id="cvHistBtn">Download the history</button><button id="cvHelpBtn">Shortcuts and tips</button><button id="cvThemeBtn"></button><button id="cvStgBtn">Settings: models and keys</button></div>
     <div class="pill cv-help cv-why" id="cvWhy" hidden></div>
+    <div class="cv-scrim" id="cvScrim" hidden></div>
     <div class="pill cv-help cv-rec" id="cvRec" hidden></div>
     <div class="pill cv-help" id="cvHelp" hidden><b>Shortcuts and tips</b><ul>
       <li><kbd>⌘V</kbd> paste screenshots and links · drag in any file</li><li>Drag empty space to select · <kbd>Space</kbd>+drag, two-finger scroll or middle button to pan · <kbd>⌘</kbd>-scroll to zoom</li>
@@ -1232,6 +1259,8 @@
 
 <script>
 const $=s=>document.querySelector(s);
+function cvAppLink(u){u=String(u||'').trim();return /^[a-z][a-z0-9+.-]*:\/\//i.test(u)&&!/^(https?|javascript|data|vbscript|file|blob|about|chrome[\w-]*):/i.test(u);}   // a link that opens an app on this computer (opengranola://...), not a web page
+function cvTarget(u){return cvAppLink(u)?'':'target="_blank" ';}   // api/... = a file kept by this app (a PDF on the board)
 function safeUrl(u){u=(u||'').trim();if(!u)return '';return /^https?:\/\//i.test(u)||/^api\//.test(u)?u:'https://'+u;}   // api/... = a file kept by this app (a PDF on the board)
 function cvFileName(s,fallback){return String(s||'').replace(/[\\/:*?"<>|\n\r\t]+/g,' ').replace(/\s+/g,' ').trim().slice(0,80)||fallback;}
 // what the download button on an item saves, under a readable name: its file, or its words as a .txt (null = nothing to save)
@@ -1277,7 +1306,7 @@ const CV_LIVE={client:Math.random().toString(36).slice(2,10),es:null,board:null,
   device:/iPhone|Android.*Mobile|Mobile/.test(navigator.userAgent)?'phone':/iPad|Android/.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&/Mac/.test(navigator.userAgent))?'tablet':'computer'};
 const putJson=body=>({method:'PUT',headers:{'Content-Type':'application/json','X-Client':CV_LIVE.client},body});
 function boardBody(b){const ids=new Set(b.items.map(i=>i.id));   // agent items this page removed: the server keeps the ones it has not seen yet
-  return JSON.stringify({name:b.name,items:b.items.filter(i=>!i.uploading).map(({pending,_local,...i})=>i),view:b.view,deleted:[...agSeen(b.id)].filter(id=>!ids.has(id))});}
+  return JSON.stringify({name:b.name,items:b.items.filter(i=>!i.uploading).map(({pending,_local,...i})=>i),view:b.view,deleted:[...agSeen(b.id)].filter(id=>!ids.has(id)),base:b.updated||0});}   // base: what this copy was built on; the server keeps items added since
 
 let cvBoard=null, cvBoardId=null, cvSel=new Set(), cvUidN=1, cvDropN=0, cvSpace=false;   // cvSel: the selected item ids
 const cvView={x:60,y:40,s:1};
@@ -1325,7 +1354,11 @@ const subsOf=id=>HOME.spaces.filter(x=>x.parent===id);
 const spaceTree=()=>HOME.spaces.filter(x=>!x.parent||!HOME.spaces.some(p=>p.id===x.parent)).flatMap(x=>[x,...subsOf(x.id)]);
 const inSpace=(b,id)=>{const s=spaceOf(b);return s===id||subsOf(id).some(c=>c.id===s);};   // a parent space rolls up its sub-spaces' boards
 const siblingsOf=x=>HOME.spaces.filter(y=>(y.parent||null)===(x.parent||null));
-const spaceName=id=>id==='unsorted'?'Unsorted':(HOME.spaces.find(x=>x.id===id)||{}).name||'';
+const spaceName=id=>id==='unsorted'?'Unsorted':id==='archived'?'Archived boards':(HOME.spaces.find(x=>x.id===id)||{}).name||'';
+// Archived (2026-11-04): a space or board the user put away. It stays, opens, and is found by typing; it leaves All boards, the counts and the voice.
+const spaceArchived=id=>{const x=HOME.spaces.find(y=>y.id===id);return !!(x&&(x.archived||(x.parent&&(HOME.spaces.find(p=>p.id===x.parent)||{}).archived)));};
+const boardArchived=b=>!!b.archived||spaceArchived(spaceOf(b));
+const liveBoards=()=>HOME.boards.filter(b=>!boardArchived(b));
 async function loadSpaces(){try{HOME.spaces=(await api('spaces')).spaces||[];}catch(e){}}   // in the user's order (drag to change)
 async function showHome(space){
   $('#cv').classList.remove('open');$('#home').hidden=false;bpClose();
@@ -1337,7 +1370,7 @@ async function showHome(space){
   try{[boards]=await Promise.all([api('boards?light=1'),loadSpaces()]);}
   catch(e){if(!HOME.boards)grid.innerHTML='<div class="home-msg">Could not load your boards. Reload the page to try again.</div>';return;}
   if(location.hash&&!location.hash.startsWith('#s/'))return;   // a board opened while the list was loading
-  const sig=x=>x.map(b=>b.id+':'+b.updated+':'+b.space+':'+b.name+':'+(b.by||'')).join('|')+'#'+HOME.spaces.map(x=>x.id+x.name).join();
+  const sig=x=>x.map(b=>b.id+':'+b.updated+':'+b.space+':'+b.name+':'+(b.by||'')+(b.archived?':a':'')).join('|')+'#'+HOME.spaces.map(x=>x.id+x.name+(x.archived?'a':'')).join();
   const same=HOME.boards&&sig(HOME.boards)===sig(boards)&&HOME.drawn===HOME.space+sig(boards);
   HOME.boards=boards;
   if(!same)homePaint();
@@ -1345,15 +1378,15 @@ async function showHome(space){
 }
 function homePaint(){
   const grid=$('#boardGrid'),boards=HOME.boards;
-  if(HOME.space&&HOME.space!=='unsorted'&&!HOME.spaces.some(x=>x.id===HOME.space)){location.hash='';return;}   // deleted space
-  HOME.drawn=HOME.space+boards.map(b=>b.id+':'+b.updated+':'+b.space+':'+b.name).join('|')+'#'+HOME.spaces.map(x=>x.id+x.name).join();
+  if(HOME.space&&HOME.space!=='unsorted'&&HOME.space!=='archived'&&!HOME.spaces.some(x=>x.id===HOME.space)){location.hash='';return;}   // deleted space
+  HOME.drawn=HOME.space+boards.map(b=>b.id+':'+b.updated+':'+b.space+':'+b.name+(b.archived?':a':'')).join('|')+'#'+HOME.spaces.map(x=>x.id+x.name+(x.archived?'a':'')).join();
   const title=HOME.space?spaceName(HOME.space):'All boards';
   $('#homeTitle').textContent=title;document.title=(HOME.space?title+' · ':'')+'Clewbert';
   $('#micHome').title=HOME.space?'Talk to the boards in '+title:'Talk to your boards';
   renderSpaces();vcTitle();
   const subs=HOME.space&&HOME.space!=='unsorted'?subsOf(HOME.space):[];
   // a space with sub-spaces shows those first, as cards of their boards' pictures, then the boards that sit directly in it (2026-11-04)
-  const shown=boards.filter(b=>!HOME.space||(HOME.space==='unsorted'?!spaceOf(b):subs.length?spaceOf(b)===HOME.space:inSpace(b,HOME.space)));
+  const shown=boards.filter(b=>HOME.space==='archived'?b.archived&&!spaceArchived(spaceOf(b)):!HOME.space?!boardArchived(b):(HOME.space==='unsorted'?!spaceOf(b)&&!b.archived:(subs.length?spaceOf(b)===HOME.space:inSpace(b,HOME.space))&&!b.archived));
   grid.innerHTML='';
   subs.forEach(x=>{
     const bs=boards.filter(b=>spaceOf(b)===x.id).sort((a,b)=>(b.updated||0)-(a.updated||0)),latest=bs[0]&&bs[0].updated;
@@ -1391,7 +1424,7 @@ function homePaint(){
   });
 }
 function renderSpaces(){
-  const nav=$('#spaceNav'),count=id=>HOME.boards.filter(b=>id==='unsorted'?!spaceOf(b):inSpace(b,id)).length;
+  const nav=$('#spaceNav'),count=id=>HOME.boards.filter(b=>id==='unsorted'?!spaceOf(b)&&!b.archived:id==='archived'?b.archived&&!spaceArchived(spaceOf(b)):inSpace(b,id)&&(spaceArchived(id)||!b.archived)).length;
   nav.innerHTML='<h3>Spaces</h3>';
   let shut;try{shut=new Set(JSON.parse(localStorage.getItem('cc_spaces_shut')||'[]'));}catch(e){shut=new Set();}   // parents folded on this device
   const row=(id,name,n,more,sub)=>{const el=document.createElement('div');el.className='sp'+(sub?' sub':'')+((HOME.space||null)===id?' on':'');el.dataset.id=id||'';
@@ -1416,15 +1449,24 @@ function renderSpaces(){
         const sid=e.dataTransfer.getData('text/x-space');if(sid&&real&&sid!==id)reorderSpace(sid,id,half(e));});   // reorderSpace keeps sub-spaces among their siblings
     }
     nav.appendChild(el);return el;};
-  row(null,'All boards',HOME.boards.length,false);
+  row(null,'All boards',liveBoards().length,false);
   nav.insertAdjacentHTML('beforeend','<div class="sp-gap"></div>');
-  spaceTree().filter(x=>!x.parent||!shut.has(x.parent)).forEach(x=>row(x.id,x.name,count(x.id),true,!!x.parent));
+  spaceTree().filter(x=>!spaceArchived(x.id)&&(!x.parent||!shut.has(x.parent))).forEach(x=>row(x.id,x.name,count(x.id),true,!!x.parent));
   if(count('unsorted')&&HOME.spaces.length)row('unsorted','Unsorted',count('unsorted'),false);
   const add=document.createElement('button');add.className='sp-add';add.textContent='+ New space';add.onclick=()=>newSpace(add);nav.appendChild(add);
+  const put=spaceTree().filter(x=>spaceArchived(x.id)&&(!x.parent||!shut.has(x.parent)));
+  if(put.length||count('archived')){   // what is put away: still here, out of All boards and out of the voice
+    nav.insertAdjacentHTML('beforeend','<h3 class="sp-arch">Archived</h3>');
+    put.forEach(x=>row(x.id,x.name,count(x.id),true,!!x.parent));
+    if(count('archived'))row('archived','Archived boards',count('archived'),false);
+  }
   // phone: the same choices in a menu at the top
   const sel=$('#spaceSelect');
-  sel.innerHTML=`<option value="">All boards (${HOME.boards.length})</option>`+spaceTree().map(x=>`<option value="${escapeAttr(x.id)}">${x.parent?'\u00a0\u00a0\u00a0\u00a0':''}${escapeHtml(x.name)} (${count(x.id)})</option>`).join('')
-    +(count('unsorted')&&HOME.spaces.length?`<option value="unsorted">Unsorted (${count('unsorted')})</option>`:'')+'<option value="+">+ New space…</option>';
+  const opt=x=>`<option value="${escapeAttr(x.id)}">${x.parent?'\u00a0\u00a0\u00a0\u00a0':''}${escapeHtml(x.name)} (${count(x.id)})</option>`;
+  sel.innerHTML=`<option value="">All boards (${liveBoards().length})</option>`+spaceTree().filter(x=>!spaceArchived(x.id)).map(opt).join('')
+    +(count('unsorted')&&HOME.spaces.length?`<option value="unsorted">Unsorted (${count('unsorted')})</option>`:'')
+    +(spaceTree().some(x=>spaceArchived(x.id))||count('archived')?'<optgroup label="Archived">'+spaceTree().filter(x=>spaceArchived(x.id)).map(opt).join('')+(count('archived')?`<option value="archived">Archived boards (${count('archived')})</option>`:'')+'</optgroup>':'')
+    +'<option value="+">+ New space…</option>';
   sel.value=HOME.space||'';
   $('#hbTitle').textContent=HOME.space?spaceName(HOME.space)||'Boards':'All boards';
 }
@@ -1469,9 +1511,14 @@ function menuClose(){$('#menu').hidden=true;}
 document.addEventListener('pointerdown',e=>{if(!$('#menu').hidden&&!e.target.closest('#menu')&&!e.target.closest('.bmore,.sp-more,.vc-more,.cv-more'))menuClose();});
 function boardMenu(b,anchor){
   const cur=spaceOf(b);
-  menuOpen(anchor,`<div class="mh">Move to</div>${spaceTree().map(x=>`<button data-to="${escapeAttr(x.id)}"${x.id===cur?' class="cur"':''}>${x.parent?'\u00a0\u00a0\u00a0\u00a0':''}${escapeHtml(x.name)}</button>`).join('')}
-    <button data-to=""${cur?'':' class="cur"'}>Unsorted (no space)</button><hr><button class="danger" data-del="1">Delete board</button>`,m=>{
+  // the menu scrolls when the space list runs past the screen, so Delete at the bottom stays reachable (2026-11-04)
+  menuOpen(anchor,`<div class="mh">Move to</div>${spaceTree().filter(x=>!spaceArchived(x.id)||x.id===cur).map(x=>`<button data-to="${escapeAttr(x.id)}"${x.id===cur?' class="cur"':''}>${x.parent?'\u00a0\u00a0\u00a0\u00a0':''}${escapeHtml(x.name)}</button>`).join('')}
+    <button data-to=""${cur?'':' class="cur"'}>Unsorted (no space)</button><hr><button data-arch="${b.archived?'0':'1'}">${b.archived?'Unarchive board':'Archive board'}</button><button class="danger" data-del="1">Delete board</button>`,m=>{
     m.querySelectorAll('[data-to]').forEach(x=>x.onclick=()=>{menuClose();const to=x.dataset.to||null;if(to!==cur)moveBoard(b.id,to);});
+    m.querySelector('[data-arch]').onclick=async()=>{menuClose();
+      try{await api('boards/'+b.id+'/archive',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({archived:!b.archived})});}
+      catch(e){alert('The board was not changed. Reload the page and try again.');return;}
+      showHome(HOME.space);};
     m.querySelector('[data-del]').onclick=async()=>{
       menuClose();if(!confirm(`Delete the board "${b.name}"?`))return;
       try{await api('boards/'+b.id,{method:'DELETE'});showHome(HOME.space);}catch(err){alert('The board was not deleted. Reload the page and try again.');}
@@ -1481,7 +1528,12 @@ function boardMenu(b,anchor){
 function spaceMenu(id,rowEl,anchor){
   const x=HOME.spaces.find(s=>s.id===id);if(!x)return;
   const sibs=siblingsOf(x),i=sibs.indexOf(x),last=sibs.length-1;   // up/down moves it among its siblings
-  menuOpen(anchor,`<button data-a="rename">Rename</button>${x.parent?'':'<button data-a="sub">New sub-space</button>'}${i>0?'<button data-a="up">Move up</button>':''}${i<last?'<button data-a="down">Move down</button>':''}<hr><button class="danger" data-a="delete">Delete space</button>`,m=>{
+  menuOpen(anchor,`<button data-a="rename">Rename</button>${x.parent?'':'<button data-a="sub">New sub-space</button>'}${i>0?'<button data-a="up">Move up</button>':''}${i<last?'<button data-a="down">Move down</button>':''}${x.parent?'':`<hr><button data-a="arch">${x.archived?'Unarchive space':'Archive space'}</button>`}<hr><button class="danger" data-a="delete">Delete space</button>`,m=>{
+    const arch=m.querySelector('[data-a=arch]');
+    if(arch)arch.onclick=async()=>{menuClose();
+      try{await api('spaces/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({archived:!x.archived})});}
+      catch(e){alert('The space was not changed. Reload the page and try again.');return;}
+      showHome(HOME.space);};
     m.querySelectorAll('[data-a=up],[data-a=down]').forEach(b=>b.onclick=()=>{menuClose();const other=sibs[b.dataset.a==='up'?i-1:i+1],a=HOME.spaces.indexOf(x),o=HOME.spaces.indexOf(other);HOME.spaces[a]=other;HOME.spaces[o]=x;saveSpaceOrder();});
     const sub=m.querySelector('[data-a=sub]');
     if(sub)sub.onclick=()=>{menuClose();const slot=document.createElement('div'),kids=subsOf(id);   // the name box goes under its parent's last sub-space
@@ -1506,14 +1558,15 @@ function newSpacePrompt(){const name=(prompt('Name the new space')||'').trim();i
 function hbOpen(){hbPaint();$('#hb').hidden=false;}
 function hbClose(){$('#hb').hidden=true;}
 function hbPaint(){
-  const boards=HOME.boards||[],count=id=>boards.filter(b=>id==='unsorted'?!spaceOf(b):inSpace(b,id)).length,on=HOME.space||null,n=NEWS.waiting.length;
+  const boards=HOME.boards||[],count=id=>boards.filter(b=>id==='unsorted'?!spaceOf(b)&&!b.archived:id==='archived'?b.archived&&!spaceArchived(spaceOf(b)):inSpace(b,id)&&(spaceArchived(id)||!b.archived)).length,on=HOME.space||null,n=NEWS.waiting.length;
   const ic=d=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   const sp=(id,name,sub)=>`<button class="hb-r${sub?' sub':''}${on===id?' on':''}" data-space="${escapeAttr(id||'')}"><span class="nm">${escapeHtml(name)}</span><span class="n">${count(id)}</span></button>`;
   $('#hbBody').innerHTML=`<button class="hb-r" data-act="agents">${AG_BOT}<span class="nm">Agents</span>${n?`<span class="n wait">${n} waiting</span>`:''}</button>
     <button class="hb-r" data-act="blank">${ic('<path d="M12 5v14M5 12h14"/>')}<span class="nm">New board</span></button>
     <button class="hb-r" data-act="miro">${ic('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>')}<span class="nm">Import from Miro</span></button><hr><h4>Spaces</h4>
-    <button class="hb-r${on===null?' on':''}" data-space=""><span class="nm">All boards</span><span class="n">${boards.length}</span></button>
-    ${spaceTree().map(x=>sp(x.id,x.name,!!x.parent)).join('')}${count('unsorted')&&HOME.spaces.length?sp('unsorted','Unsorted'):''}
+    <button class="hb-r${on===null?' on':''}" data-space=""><span class="nm">All boards</span><span class="n">${liveBoards().length}</span></button>
+    ${spaceTree().filter(x=>!spaceArchived(x.id)).map(x=>sp(x.id,x.name,!!x.parent)).join('')}${count('unsorted')&&HOME.spaces.length?sp('unsorted','Unsorted'):''}
+    ${spaceTree().some(x=>spaceArchived(x.id))||count('archived')?'<h4>Archived</h4>'+spaceTree().filter(x=>spaceArchived(x.id)).map(x=>sp(x.id,x.name,!!x.parent)).join('')+(count('archived')?sp('archived','Archived boards'):''):''}
     <button class="hb-r" data-act="space">${ic('<path d="M12 5v14M5 12h14"/>')}<span class="nm">New space</span></button><hr>
     <button class="hb-r" data-act="settings">${ic('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>')}<span class="nm">Settings</span></button>
     <button class="hb-r" data-act="theme">${ic('<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>')}<span class="nm">${themeLabel()}</span></button>`;
@@ -2097,8 +2150,9 @@ function cvItemEl(it){
         <div class="lbody">
           <span class="ltitle">${escapeHtml(u.title||dom)}</span>
           ${u.desc?`<span class="ldesc">${escapeHtml(u.desc)}</span>`:''}
-          <span class="lfoot"><span class="dom2">${escapeHtml(u.pub||dom)}</span><a href="${escapeAttr(safeUrl(it.url))}" target="_blank" rel="noopener">Open ↗</a></span>
+          <span class="lfoot"><span class="dom2">${escapeHtml(u.pub||dom)}</span>${it.sub&&it.sub.state==='draft'?'<button class="cv-pub" title="Goes live only after you choose how, on the next step">Publish…</button>':''}<a href="${escapeAttr(safeUrl(it.url))}" ${cvTarget(it.url)}rel="noopener">Open ↗</a></span>
         </div></div>`;
+      const pb=el.querySelector('.cv-pub');if(pb){pb.addEventListener('pointerdown',e=>e.stopPropagation());pb.onclick=e=>{e.stopPropagation();cvSubstackPublishAsk(it,pb);};}
     }else{
       el.innerHTML=`<div class="frame"><span class="dom">${escapeHtml(dom)}</span><span class="url">${escapeHtml(it.url)}</span>${it.pending?'<span class="fetching">fetching preview…</span>':''}<a href="${escapeAttr(safeUrl(it.url))}" target="_blank" rel="noopener">Open ↗</a></div>`;
     }
@@ -2160,7 +2214,7 @@ function cvItemEl(it){
   }else if(it.type==='arrow'){ // a hand-off between two frames: drawn from where the frames are now
     el.classList.add('cv-arrow');cvArrowDraw(it,el);
   }else if(it.type==='area'){ // backdrop (a frame imported from Miro): moved by its title, clicks on it pan the board
-    el.innerHTML=`<div class="frame" style="background:${escapeAttr(cvBack(it.color||'#f4f5f7'))}"></div><span class="ftitle${it.text?'':' empty'}">${escapeHtml(it.text||'Frame')}</span><span class="fedge t"></span><span class="fedge r"></span><span class="fedge b"></span><span class="fedge l"></span>${it.run?'<span class="fstatus"></span>':''}`;
+    el.innerHTML=`<div class="frame" style="background:${escapeAttr(cvFrameBg(it.color))}"></div><span class="ftitle${it.text?'':' empty'}">${escapeHtml(it.text||'Frame')}</span><span class="fedge t"></span><span class="fedge r"></span><span class="fedge b"></span><span class="fedge l"></span>${it.run?'<span class="fstatus"></span>':''}`;
     if(it.run){el.classList.add('run');agStatus(el.querySelector('.fstatus'),it.run);}
     const t=el.querySelector('.ftitle');
     t.addEventListener('dblclick',e=>{e.stopPropagation();cvEditFrameTitle(it,el);});
@@ -2288,7 +2342,7 @@ function cvItemMenu(it,el,btn){
     <button data-a="agent">${ico('agent')}Agent task on this ${what}</button>
     <button data-a="why">${ico('why')}Why is this here?</button>
     <button data-a="voice">${ico('mic')}${it.voice?'Record your reason again':'Record why you added this'}</button>
-    ${it.type==='note'&&!it.card&&!it.ask&&String(it.text||'').trim()?`<button data-a="md">${ico('doc')}Turn into a .md document</button><button data-a="pdf">${ico('doc')}Turn into a PDF document</button>`:''}
+    ${it.type==='note'&&!it.card&&!it.ask&&String(it.text||'').trim()?`<button data-a="md">${ico('doc')}Turn into a .md document</button><button data-a="pdf">${ico('doc')}Turn into a PDF document</button><button data-a="sub">${ico('open')}Post on Substack (draft first)</button>`:''}
     ${dl?`<button data-a="dl">${ico('dl')}Download this ${what}</button>`:''}
     <button class="danger" data-a="del">${ico('del')}Delete this ${what}</button>`,mm=>{
     mm.classList.add('cv-itemmenu');mm.dataset.item=it.id;
@@ -2304,6 +2358,7 @@ function cvItemMenu(it,el,btn){
     on('voice',()=>cvVoiceWhy(it));
     on('md',()=>cvNoteToDoc(it,'md'));
     on('pdf',()=>cvNoteToDoc(it,'pdf'));
+    on('sub',()=>cvSubstackDraft(it));
   });
 }
 /* ---------------- Why is this here: the record an item carries when the Assistant or an agent put it on the board ---------------- */
@@ -2322,22 +2377,29 @@ function cvWhyRows(w){   // [label, words, link?] for one record
   if(src.title||src.url)rows.push(['From',src.title||src.url,src.url]);
   return rows;
 }
+function cvWhyShow(p){   // header with Close, a scrolling body; on a phone the scrim goes up behind the sheet
+  p.innerHTML='<div class="cv-whyhead"><b>Why is this here?</b><button class="cv-wclose" type="button">Close</button></div><div class="cv-whybody">'+p.innerHTML.replace('<b>Why is this here?</b>','')+'</div>';
+  p.querySelector('.cv-wclose').onclick=()=>{p.hidden=true;if(!CV_REC.on)$('#cvScrim').hidden=true;};
+  $('#cvMenu').hidden=true;$('#cvHelp').hidden=true;p.hidden=false;if(matchMedia('(max-width:760px)').matches)$('#cvScrim').hidden=false;
+}
 function cvWhyOpen(it){
   const p=$('#cvWhy');
-  const vn=it.voice?`<div class="cv-vnote"><div class="cv-vh">Your reason, ${escapeHtml(cvWhen(it.voice.when))}</div>${it.voice.src?`<div class="cv-vplay"><button class="cv-vpb" title="Play">▶</button><input type="range" min="0" max="1000" value="0" aria-label="Where in the recording"><span class="cv-vt">0:00</span><audio preload="metadata" src="${escapeAttr(it.voice.src)}"></audio></div>`:''}<p>${it.voice.text?'“'+escapeHtml(it.voice.text)+'”':'<i>No words were heard in the recording.</i>'}</p></div>`:'';
-  if(!it.why&&vn){p.innerHTML='<b>Why is this here?</b>'+vn+(it.added?`<p class="cv-vmeta">You added this on ${escapeHtml(cvWhen(it.added))}.</p>`:'');$('#cvMenu').hidden=true;$('#cvHelp').hidden=true;p.hidden=false;cvVPlayer(p);return;}
+  const vn=it.voice?`<div class="cv-vnote"><div class="cv-vh">Your reason, ${escapeHtml(cvWhen(it.voice.when))}${it.voice.text?`<button class="cv-vcopy" data-text="${escapeAttr(it.voice.text)}">Copy</button>`:''}</div>${it.voice.src?`<div class="cv-vplay"><button class="cv-vpb" title="Play">▶</button><input type="range" min="0" max="1000" value="0" aria-label="Where in the recording"><span class="cv-vt">0:00</span><audio preload="metadata" src="${escapeAttr(it.voice.src)}"></audio></div>`:''}<p>${it.voice.text?'“'+escapeHtml(it.voice.text)+'”':'<i>No words were heard in the recording.</i>'}</p></div>`:'';
+  if(!it.why&&vn){p.innerHTML='<b>Why is this here?</b>'+vn+(it.added?`<p class="cv-vmeta">You added this on ${escapeHtml(cvWhen(it.added))}.</p>`:'');cvWhyShow(p);cvVPlayer(p);return;}
   if(!it.why){   // no record: added by hand (dated since records began), or from before Oct 31, 2026
     p.innerHTML='<b>Why is this here?</b><p style="margin:8px 0 0">'+(it.added
       ?`You added this yourself on ${escapeHtml(cvWhen(it.added))}. Only what the Assistant or an agent adds carries a record of why.`
       :'There\'s no record for this one. It was added before October 31, 2026, when these records started.')+'</p>';
-    $('#cvMenu').hidden=true;$('#cvHelp').hidden=true;p.hidden=false;return;}
+    cvWhyShow(p);return;}
   setTimeout(()=>cvVPlayer(p));p.innerHTML='<b>Why is this here?</b>'+vn+'<dl>'+cvWhyRows(it.why).map(([k,v,u])=>`<dt>${escapeHtml(k)}</dt><dd>${u?`<a href="${escapeAttr(safeUrl(u))}" target="_blank" rel="noopener">${escapeHtml(v)}</a>`:escapeHtml(v)}</dd>`).join('')+'</dl>';
-  $('#cvMenu').hidden=true;$('#cvHelp').hidden=true;p.hidden=false;
+  cvWhyShow(p);
 }
 /* Record why you added something (from its ⋯ menu): your voice is kept as a sound file and written down by the app's
    own ears (in the local voice mode; the other modes keep the sound only); both stay on the item as it.voice, show under "Why is this here?", and the
    Assistant and agents read the words with the item. */
 function cvVPlayer(p){   // our own small player: the browser's one squeezes a volume slider into the same bar in a narrow box
+  const c=p.querySelector('.cv-vcopy');if(c)c.onclick=()=>{const say=t=>{c.textContent=t;setTimeout(()=>c.textContent='Copy',1500);};
+    navigator.clipboard.writeText(c.dataset.text).then(()=>say('Copied'),()=>say('Not copied'));};   // the words of the reason, to paste elsewhere
   const w=p.querySelector('.cv-vplay');if(!w)return;
   const a=w.querySelector('audio'),b=w.querySelector('.cv-vpb'),r=w.querySelector('input'),t=w.querySelector('.cv-vt');
   const mm=x=>isFinite(x)?Math.floor(x/60)+':'+String(Math.floor(x%60)).padStart(2,'0'):'0:00';
@@ -2352,12 +2414,12 @@ function cvVPlayer(p){   // our own small player: the browser's one squeezes a v
 const CV_REC={};
 async function cvVoiceWhy(it){
   if(CV_REC.on)return;
-  const p=$('#cvRec');p.hidden=false;$('#cvWhy').hidden=true;
+  const p=$('#cvRec');p.hidden=false;$('#cvScrim').hidden=false;$('#cvWhy').hidden=true;$('#cvMenu').hidden=true;
   p.innerHTML='<b>Say why you are adding this</b><p class="cv-rheard" id="cvRecHeard">Opening the microphone…</p><div class="cv-rrow"><span class="cv-rdot"></span><span id="cvRecT">0:00</span><span style="flex:1"></span><button class="tx" id="cvRecX">Cancel</button><button class="go" id="cvRecOk">Done</button></div>';
   Object.assign(CV_REC,{on:true,it,board:cvBoardId,finals:[],partial:'',t0:Date.now()});
   const end=()=>{CV_REC.on=false;clearInterval(CV_REC.tick);try{CV_REC.node&&CV_REC.node.disconnect();CV_REC.src&&CV_REC.src.disconnect();}catch(e){}
     if(CV_REC.stream)CV_REC.stream.getTracks().forEach(t=>t.stop());try{CV_REC.ws&&CV_REC.ws.close();}catch(e){}Object.assign(CV_REC,{node:null,src:null,stream:null,ws:null});};
-  $('#cvRecX').onclick=()=>{CV_REC.cancel=true;try{CV_REC.mr&&CV_REC.mr.state!=='inactive'&&CV_REC.mr.stop();}catch(e){}end();p.hidden=true;};
+  $('#cvRecX').onclick=()=>{CV_REC.cancel=true;try{CV_REC.mr&&CV_REC.mr.state!=='inactive'&&CV_REC.mr.stop();}catch(e){}end();p.hidden=true;$('#cvScrim').hidden=true;};
   try{
     CV_REC.stream=await navigator.mediaDevices.getUserMedia(VC_MIC);
     const type=['audio/webm;codecs=opus','audio/mp4','audio/webm'].find(t=>window.MediaRecorder&&MediaRecorder.isTypeSupported(t))||'';
@@ -2365,7 +2427,7 @@ async function cvVoiceWhy(it){
     mr.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
     const stopped=new Promise(r=>mr.onstop=r);mr.start(1000);
     const ws=vcMode()==='local'?new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ears?me=0'):{readyState:3,close(){}};ws.binaryType='arraybuffer';CV_REC.ws=ws;   // the words come from the app's own ears
-    const heard=()=>{const t=[...CV_REC.finals,CV_REC.partial].filter(Boolean).join(' ');$('#cvRecHeard').textContent=t?'“'+t+'”':'Listening…';};
+    const heard=()=>{const t=[...CV_REC.finals,CV_REC.partial].filter(Boolean).join(' ');const el=$('#cvRecHeard');el.textContent=t?'“'+t+'”':'Listening…';el.scrollTop=el.scrollHeight;};   // keep the newest words in view
     if(ws.readyState===3)$('#cvRecHeard').textContent='Recording. In this voice mode only the sound is kept, not the words.';
     ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}
       if(m.type==='ready')heard();else if(m.type==='partial'){CV_REC.partial=m.text||'';heard();}
@@ -2385,7 +2447,7 @@ async function cvVoiceWhy(it){
       if(blob.size)try{const {up}=await api('uploads',{method:'POST'});await api('uploads/'+up,{method:'PUT',body:blob});
         const r=await api('uploads/'+up+'/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Why I added this.'+ext})});src=r.src||r.url||'';}
       catch(e){}   // the words are still kept
-      p.hidden=true;
+      p.hidden=true;$('#cvScrim').hidden=true;
       if(cvBoardId!==CV_REC.board||!cvBoard||!cvBoard.items.includes(it))return;
       it.voice={text,src,when:Date.now(),secs};cvSave();cvWhyOpen(it);};
   }catch(e){end();$('#cvRecHeard').textContent='The microphone could not be opened. Allow it for this site, then try again.';$('#cvRecOk').hidden=true;}
@@ -2515,7 +2577,9 @@ const CV_PEN={color:'#1f2430',size:3};
 const CV_TEXT={style:'body',font:'sans',fill:''};   // fill '' = see-through
 const CV_TEXT_STYLES={h1:{label:'Heading 1',fs:40,fw:700},h2:{label:'Heading 2',fs:28,fw:700},body:{label:'Body',fs:18,fw:400},small:{label:'Small',fs:13,fw:400}};
 const CV_FONTS={sans:{label:'Sans',css:'var(--font)'},serif:{label:'Serif',css:'Georgia,"Times New Roman",serif'},mono:{label:'Mono',css:'ui-monospace,Menlo,monospace'},hand:{label:'Handwritten',css:'var(--hand)'}};
-const CV_FRAME_FILLS=[['#f3f6fb','Frame grey'],['#ffffff','White'],['#fafaf7','Off-white'],['#fbf5e6','Cream'],['#f3eee4','Sand'],['#eef0f3','Light grey'],['#eaf2fd','Pale blue'],['#ecf7ec','Pale green'],['#fdf6d8','Pale yellow'],['#fbeaea','Pale pink'],['#f1ecf9','Pale lavender']];const CV_FRAME={color:'#f3f6fb'};
+// a 'tex:' fill is a picture bundled with the app (textures/<name>.jpg), drawn to cover the frame (Ian, 2026-11-04: a chalkboard look)
+const CV_FRAME_FILLS=[['#f3f6fb','Frame grey'],['#ffffff','White'],['#fafaf7','Off-white'],['#fbf5e6','Cream'],['#f3eee4','Sand'],['#eef0f3','Light grey'],['#eaf2fd','Pale blue'],['#ecf7ec','Pale green'],['#fdf6d8','Pale yellow'],['#fbeaea','Pale pink'],['#f1ecf9','Pale lavender'],['tex:chalkboard-green','Chalkboard, green'],['tex:chalkboard-slate','Chalkboard, slate']];const CV_FRAME={color:'#f3f6fb'};
+function cvFrameBg(c){const t=/^tex:([a-z0-9-]{1,40})$/.exec(c||'');return t?`url(textures/${t[1]}.jpg) center/cover`:cvBack(c||'#f4f5f7');}
 const CV_TEXT_FILLS=[['','No fill'],['#ffffff','White'],['#fafaf7','Off-white'],['#fbf5e6','Cream'],['#f3eee4','Sand'],['#eef0f3','Light grey'],['#eaf2fd','Pale blue'],['#ecf7ec','Pale green']];
 const CV_NOTE={color:''};   // '' = the usual yellow
 const CV_NOTE_COLORS=['','#ff9f40','#ff746c','#9b63d6','#55c3ec','#a8de4c','#ffffff'];   // the icon's yellow, then bright pad colours: orange, light red, purple, blue, green; white
@@ -2707,11 +2771,11 @@ function cvUseTool(e){
     if(!sel.length)return;sel.forEach(i=>{if(b.dataset.c)i.fill=b.dataset.c;else delete i.fill;});cvRender();
     sel.forEach(i=>cvFitText(i,$('#cvWorld').querySelector(`.cv-item[data-id="${i.id}"]`)));cvGroupBox();cvSave();};
   $('#cvNoteColors').innerHTML=CV_NOTE_COLORS.map(c=>`<button class="sw${c===CV_NOTE.color?' on':''}" data-c="${c}" style="background:${c||'#fde047'}" title="Sticky note colour"></button>`).join('');
-  $('#cvFrameFills').innerHTML='<span class="lbl">Fill</span>'+CV_FRAME_FILLS.map(([c,n])=>`<button class="sw${c===CV_FRAME.color?' on':''}" data-c="${c}" style="background:${c}" title="${n}"></button>`).join('');
+  $('#cvFrameFills').innerHTML='<span class="lbl">Fill</span>'+CV_FRAME_FILLS.map(([c,n])=>`<button class="sw${c===CV_FRAME.color?' on':''}" data-c="${c}" style="background:${c.startsWith('tex:')?cvFrameBg(c):c}" title="${n}"></button>`).join('');
   $('#cvFrameFills').onclick=e=>{const b=e.target.closest('.sw');if(!b)return;CV_FRAME.color=b.dataset.c;document.querySelectorAll('#cvFrameFills .sw').forEach(x=>x.classList.toggle('on',x===b));
     // also recolours the frames that are selected now
     const sel=(cvBoard?cvBoard.items:[]).filter(i=>cvSel.has(i.id)&&i.type==='area');
-    if(!sel.length)return;sel.forEach(i=>{i.color=b.dataset.c;const f=$('#cvWorld').querySelector(`.cv-item[data-id="${i.id}"] .frame`);if(f)f.style.background=cvBack(i.color);});cvSave();};
+    if(!sel.length)return;sel.forEach(i=>{i.color=b.dataset.c;const f=$('#cvWorld').querySelector(`.cv-item[data-id="${i.id}"] .frame`);if(f)f.style.background=cvFrameBg(i.color);});cvSave();};
   $('#cvNoteColors').onclick=e=>{const b=e.target.closest('.sw');if(!b)return;CV_NOTE.color=b.dataset.c;document.querySelectorAll('#cvNoteColors .sw').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvPenColors').onclick=e=>{const b=e.target.closest('.sw');if(!b)return;CV_PEN.color=b.dataset.c;document.querySelectorAll('#cvPenColors .sw').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvPenSizes').onclick=e=>{const b=e.target.closest('.sz');if(!b)return;CV_PEN.size=+b.dataset.s;document.querySelectorAll('#cvPenSizes .sz').forEach(x=>x.classList.toggle('on',x===b));};
@@ -2946,6 +3010,31 @@ function cvToPdf(it){   // a plain Letter-size PDF in Helvetica (the browser mea
   out+=`xref\n0 ${objs.length+1}\n0000000000 65535 f \n`+at.map(n=>String(n).padStart(10,'0')+' 00000 n \n').join('');
   out+=`trailer\n<< /Size ${objs.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Uint8Array.from(out,ch=>ch.charCodeAt(0));}
+// a note becomes a draft on the connected Substack newsletter (first line = title, the rest = body); the draft's link lands beside the note
+async function cvSubstackDraft(it){
+  const lines=String(it.text||'').split('\n'),i=lines.findIndex(l=>l.trim());if(i<0)return;
+  const title=lines[i].replace(/^#+\s*/,'').trim().slice(0,200),body=lines.slice(i+1).join('\n').trim()||title;
+  let r,j={};try{r=await fetch('api/substack/draft',STG_POST({title,body}));try{j=await r.json();}catch(e){}}catch(e){alert('Substack could not be reached. Check the connection and try again.');return;}
+  if(!r.ok){alert(j.error||'The draft was not saved on Substack.');return;}
+  const k=cvUnit();
+  cvAddItem({type:'link',url:j.url,x:it.x+it.w+24*k,y:it.y,w:300*k,h:132*k,sub:{id:String(j.id),state:'draft',title:j.title,pub:j.publication||'your newsletter'},
+    unfurl:{title:'Substack draft: '+j.title,desc:'Saved as a draft on '+(j.publication||'your newsletter')+'. Not live yet: press Publish… here when it is ready, or open it on Substack to edit it first.',img:'',pub:'substack.com'}},true);
+}
+// the stop point: nothing goes live until one of these is pressed, and each says exactly what it does
+function cvSubstackPublishAsk(it,btn){
+  menuOpen(btn,`<div class="mh">Publish on Substack</div><div class="mnote"><b>${escapeHtml(it.sub.title)}</b> goes live for everyone on ${escapeHtml(it.sub.pub)} the moment you press one of these. An email cannot be called back. Not now keeps it a draft.</div>
+    <button data-pub="email">Publish and email every subscriber</button><button data-pub="web">Publish on the site only, no email</button><hr><button data-pub="no">Not now, keep it a draft</button>`,m=>{
+    m.querySelectorAll('[data-pub]').forEach(b=>b.onclick=e=>{e.stopPropagation();menuClose();if(b.dataset.pub!=='no')cvSubstackPublish(it,b.dataset.pub==='email');});
+  });
+}
+async function cvSubstackPublish(it,send){
+  const el=[...document.querySelectorAll('.cv-item')].find(e=>e.dataset.id===it.id),pb=el&&el.querySelector('.cv-pub');if(pb){pb.disabled=true;pb.textContent='Publishing…';}
+  let r,j={};try{r=await fetch('api/substack/publish',STG_POST({draft_id:it.sub.id,send}));try{j=await r.json();}catch(e){}}catch(e){r=null;}
+  if(!r||!r.ok){if(pb){pb.disabled=false;pb.textContent='Publish…';}alert(j.error||'Substack could not be reached. The post is still a draft. Try again.');return;}
+  it.sub.state='published';it.sub.emailed=!!send;it.url=j.url;
+  it.unfurl={title:'Published on Substack: '+(j.title||it.sub.title),desc:'Live for everyone on '+it.sub.pub+' since '+cvWhen(Date.now())+(send?', and emailed to every subscriber.':', on the site only (no email).'),img:'',pub:'substack.com'};
+  cvRender();cvSave();
+}
 async function cvNoteToDoc(it,kind){
   const name=cvFileName(String(it.text||'').split('\n').find(l=>l.trim())||'','Note').slice(0,60)+'.'+kind;
   const file=new File([kind==='md'?cvToMarkdown(it):cvToPdf(it)],name,{type:kind==='md'?'text/markdown':'application/pdf'});
@@ -3090,6 +3179,7 @@ async function cvNoteToDoc(it,kind){
     if(!cvOpenNow()||!cvSel.size)return;
     const ae=document.activeElement;
     if(ae&&(ae.isContentEditable||/INPUT|TEXTAREA/.test(ae.tagName)))return;
+    const ts=window.getSelection();if(ts&&!ts.isCollapsed&&String(ts).trim())return;   // words highlighted on the page (the Why popup, a reason): the browser copies them, not the selected item (2026-11-04)
     const items=JSON.parse(JSON.stringify(cvWithContents(cvSel)));
     const text=items.map(i=>i.text||i.title||i.url||'').filter(Boolean).join('\n\n')||items.length+' item'+(items.length===1?'':'s')+' from Clewbert';
     CV_CLIP={text,items,board:cvBoardId,n:0};
@@ -3188,9 +3278,15 @@ function stgAppsPaint(msg,bad){
       ${stgGoogleGuide(back,okAddr)}
       <div class="oe-row"><input id="stgGId" placeholder="Client ID" value="${escapeAttr(g.client_id||'')}" autocomplete="off" spellcheck="false"></div>
       <div class="oe-row"><input id="stgGSec" type="password" autocomplete="new-password" spellcheck="false" placeholder="${g.has_secret?'Client secret saved':'Client secret'}"><button class="go" id="stgGGo">Connect Google</button></div>`;
+  const sb=a.substack||{};
+  const substack=sb.connected
+    ?`<div class="oe-row"><span class="stg-sv"><b>Substack</b>: connected as ${escapeHtml(sb.name||'your account')}. Drafts go to ${escapeHtml(sb.publication||sb.subdomain)}${sb.others&&sb.others.length?' (your other newsletter'+(sb.others.length>1?'s':'')+', '+escapeHtml(sb.others.join(', '))+', not used)':''}. Nothing is published until you press Publish on Substack.</span><button class="oe-cx" id="stgSOff" title="Forget the Substack session cookie on this server">Disconnect</button></div>`
+    :`<div class="stg-jn"><b>Substack</b>Draft first, then publish from the canvas: a note's menu gets "Post on Substack (draft first)", and the draft card's Publish button asks you how before anything goes live. Substack has no sign-in for apps, so this uses the session cookie your browser holds for substack.com. In Chrome, signed in at substack.com: press Option+Command+I, open the Application tab, then Cookies, then https://substack.com, and copy the Value of <code>connect.sid</code> (older accounts: <code>substack.sid</code>). It is kept on this server only and stays good for months unless you sign out of Substack.</div>
+      <div class="oe-row"><input id="stgSCookie" type="password" autocomplete="new-password" spellcheck="false" placeholder="Session cookie value (starts with s%3A)"><button class="go" id="stgSGo">Connect Substack</button></div>`;
   const servers=a.servers.map(x=>`<div class="oe-row" data-sid="${x.id}"><span class="stg-sv" title="${escapeAttr(x.url)}"><b>${escapeHtml(x.name)}</b> ${escapeHtml(x.url)}${x.has_key?' · key saved':''}</span><button class="oe-cx stg-ats">Test</button><button class="oe-cx stg-arm">Remove</button></div>`).join('');
   const board=a.board?`<label class="stg-on"><input type="checkbox" id="stgAOn"${a.board.on?' checked':''}> Agents on this board can use connected apps</label>`:'';
   $('#stgApps').innerHTML=`<div class="stg-app">${google}</div>
+    <div class="stg-app">${substack}</div>
     <div class="stg-app"><div class="stg-jn"><b>Your own tool servers</b>MCP servers, by address. Add a key only if the server asks for one.</div>${servers}
       <div class="oe-row"><input id="stgAName" placeholder="Name, like GitHub" style="flex:none;width:130px" autocomplete="off" spellcheck="false"><input id="stgAUrl" placeholder="Address, like http://192.168.1.20:3000/mcp" autocomplete="off" spellcheck="false"></div>
       <div class="oe-row"><input id="stgAKey" type="password" placeholder="Key (optional)" autocomplete="new-password" spellcheck="false"><button class="oe-cx" id="stgAAdd">Add</button></div></div>
@@ -3203,6 +3299,12 @@ function stgAppsPaint(msg,bad){
   else $('#stgGGo').onclick=async()=>{const id=$('#stgGId').value.trim(),sec=$('#stgGSec').value.trim();
     if(!id||(!sec&&!g.has_secret)){stgAppsPaint('Paste the client ID and the client secret first.',true);return;}
     if(await send({google:{client_id:id,client_secret:sec}},'Opening Google…'))location.href='api/integrations/google/start';};
+  if(sb.connected)$('#stgSOff').onclick=()=>send({substack_disconnect:true},'Substack disconnected. The cookie is gone from this server.');
+  else $('#stgSGo').onclick=async()=>{const c=$('#stgSCookie').value.trim();if(!c){stgAppsPaint('Paste the session cookie first.',true);return;}
+    stgAppsPaint('Checking the cookie with Substack…');
+    let r,j={};try{r=await fetch('api/integrations',STG_POST({substack:{cookie:c}}));try{j=await r.json();}catch(e){}}catch(e){stgAppsPaint('Substack could not be reached. Try again.',true);return;}
+    if(!r.ok){stgAppsPaint(j.error||'Substack could not be reached. Try again.',true);$('#stgSCookie').value=c;return;}   // the paste stays, for a second try
+    STG.apps=j;stgAppsPaint('Substack connected. Drafts go to '+(j.substack.publication||j.substack.subdomain)+'.');};
   $('#stgAAdd').onclick=async()=>{const url=$('#stgAUrl').value.trim();if(!url)return;
     const before=new Set(STG.apps.servers.map(x=>x.id));
     if(!await send({add_server:{name:$('#stgAName').value.trim(),url,key:$('#stgAKey').value.trim()}},'Added. Checking it…'))return;
@@ -3923,17 +4025,29 @@ async function vcPlay(text,seq){
         to_speech_ms:Math.round(t0-VC.tAnswer),first_sound_ms:Math.round(now-t0),total_ms:Math.round(now-(VC.tHeard||VC.tAsked))});}
     p.push(value);}}catch(e){}
   p.end();await p.done;
+  if(p.stats.chunks){const st=p.stats;console.log(`[voice] playback: ${st.chunks} pieces, ${st.audio.toFixed(1)} s of sound, ${st.late} late (${Math.round(st.gap*1000)} ms of gaps)`);
+    if(st.late)vcLog('playback',{q:text.slice(0,40),chunks:st.chunks,audio_s:+st.audio.toFixed(1),late:st.late,gap_ms:Math.round(st.gap*1000),device:CV_LIVE.device});}
 }
 function vcStopSpeaking(){VC.ctls.forEach(c=>{try{c.abort();}catch(e){}});VC.players.forEach(p=>p.stop());VC.ctls=[];VC.players=[];VC.chain=Promise.resolve();}
 function vcPlayer(sr){
+  // The speech arrives as raw sound in pieces of a third of a second and plays as it comes. A piece that arrives after
+  // the last one has finished leaves a gap (a stutter, mid-word); stats counts those. A phone's path is slower and
+  // jumpier than a computer's, so it starts with more sound in hand, and after a late piece it holds back a little
+  // more before going on (Ian heard garbled speech on the phone, 2026-11-04).
   const ac=vcAudio();let next=0,carry=null,live=0,ended=false,stopped=false,res;const done=new Promise(r=>res=r),srcs=[];
+  const lead=CV_LIVE.device==='phone'?0.6:0.15,stats={chunks:0,late:0,gap:0,audio:0};
   const check=()=>{if(ended&&live===0&&!stopped){stopped=true;res();}};
-  return {
+  return {stats,
     push(u8){if(stopped)return;let b=u8;if(carry){const m=new Uint8Array(carry.length+u8.length);m.set(carry);m.set(u8,carry.length);b=m;carry=null;}
       const n=b.length>>1;if(b.length&1)carry=b.slice(n*2);if(!n)return;
       const i16=new Int16Array(b.slice(0,n*2).buffer),f=new Float32Array(n);for(let i=0;i<n;i++)f[i]=i16[i]/32768;
       const buf=ac.createBuffer(1,n,sr);buf.copyToChannel(f,0);const src=ac.createBufferSource();src.buffer=buf;src.connect(vcOut());
-      const t=Math.max(next,ac.currentTime+(next?0.02:0.15));src.start(t);next=t+buf.duration;live++;srcs.push(src);src.onended=()=>{live--;check();};},
+      const now=ac.currentTime;let t;
+      if(!next)t=now+lead;
+      else if(next<now+0.02){stats.late++;stats.gap+=now+0.02-next;t=now+0.02+Math.min(0.3*stats.late,1);}   // late: a gap, then more in hand
+      else t=next;
+      stats.chunks++;stats.audio+=buf.duration;
+      src.start(t);next=t+buf.duration;live++;srcs.push(src);src.onended=()=>{live--;check();};},
     end(){ended=true;check();},
     stop(){stopped=true;srcs.forEach(x=>{try{x.stop();}catch(e){}});res();},
     done};
@@ -4219,7 +4333,7 @@ $('#cvMenuBtn').onclick=e=>{e.stopPropagation();$('#cvHelp').hidden=true;viewMar
 $('#cvStgBtn').onclick=e=>{e.stopPropagation();$('#cvMenu').hidden=true;stgOpen();};
 $('#cvHistBtn').onclick=e=>{e.stopPropagation();cvHistoryDownload();};
 $('#cvHelpBtn').onclick=e=>{e.stopPropagation();$('#cvMenu').hidden=true;$('#cvHelp').hidden=false;};
-document.addEventListener('pointerdown',e=>{if(!e.target.closest('#cvMenu,#cvMenuBtn,#cvHelp,#cvWhy,#menu')){$('#cvMenu').hidden=true;$('#cvHelp').hidden=true;$('#cvWhy').hidden=true;}});
+document.addEventListener('pointerdown',e=>{if(!e.target.closest('#cvMenu,#cvMenuBtn,#cvHelp,#cvWhy,#menu')){$('#cvMenu').hidden=true;$('#cvHelp').hidden=true;$('#cvWhy').hidden=true;if(!CV_REC.on)$('#cvScrim').hidden=true;}});
 // every task on the board, grouped the way you act on them; a teammate's part sits under its Lead's task
 function tkpOpen(){sideClose('tkp');oeClose();$('#tkp').hidden=false;tkpPaint();viewMark();}
 function tkpClose(){$('#tkp').hidden=true;viewMark();}
@@ -4435,7 +4549,7 @@ function sbPaint(){
   const where=cvBoardId?'this board':HOME.space?'the boards in '+spaceName(HOME.space):'all your boards';
   row(`<span class="sb-ask"><span class="sb-q">Ask: <b>${escapeHtml(q)}</b></span>${sbTouch()?'':'<i>Enter</i>'}</span><span class="sb-sub">A written answer from ${escapeHtml(where)}</span>`,()=>sbAsk(q),'ask');
   if(r){
-    if(r.boards.length){head('Boards');r.boards.forEach(b=>row(`<b>${sbMark(b.name,r.words)}</b><span class="sb-sub">${escapeHtml(b.space?spaceName(b.space)||'Board':'Not in a space')}</span>`,()=>{sbClose();$('#sbInput').blur();location.hash=b.id;}));}
+    if(r.boards.length){head('Boards');r.boards.forEach(b=>row(`<b>${sbMark(b.name,r.words)}</b><span class="sb-sub">${escapeHtml(b.space?spaceName(b.space)||'Board':'Not in a space')}${(HOME.boards||[]).some(x=>x.id===b.id&&boardArchived(x))?' · Archived':''}</span>`,()=>{sbClose();$('#sbInput').blur();location.hash=b.id;}));}
     const here=r.items.filter(i=>i.board===cvBoardId),other=r.items.filter(i=>i.board!==cvBoardId);
     const item=i=>row(`<span class="sb-snip">${sbMark(i.snippet,r.words)}</span><span class="sb-sub">${escapeHtml(SB_KINDS[i.kind]||i.kind)}${i.board===cvBoardId?'':' · '+escapeHtml(i.boardName)}${i.frame?' · '+escapeHtml(i.frame):''}</span>`,()=>{sbClose();$('#sbInput').blur();vcGo(i);});
     if(here.length){head('On this board');here.forEach(item);}
@@ -4761,10 +4875,13 @@ $('#obStart').onclick=async()=>{
   await vcVoices();
   vcSay("Hi, I'm Clewbert. This is the Start here board. Ask me anything about it, or say: show me around.",VC.askSeq);
 };
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)widgetHint();});   // the widget resumed the app: do what its tap asked
-async function widgetHint(){
-  let j;try{j=await api('widget/hint');}catch(e){return;}
-  if(!j||!j.hint)return;
+let awayAt=0;
+document.addEventListener('visibilitychange',()=>{if(document.hidden){awayAt=Date.now();return;}widgetHint(awayAt&&Date.now()-awayAt>120000);});   // the widget resumed the app: do what its tap asked
+async function widgetHint(opened){   // opened: the app was just started, or comes back after a couple of minutes away
+  let j;try{j=await api('widget/hint');}catch(e){j=null;}
+  if(!j||!j.hint){   // the icon opened the app: it starts on All boards, never on the Agents screen it was left on (2026-11-04); only the widget's Agents tap goes there
+    if(opened&&location.hash.startsWith('#agents')&&matchMedia('(display-mode: standalone)').matches)location.hash='';
+    return;}
   if(j.hint==='agents'){if(location.hash!=='#agents')location.hash='agents';return;}
   if(cvBoardId)location.hash='';   // the search box and the voice live on the boards page
   setTimeout(()=>{if(j.hint==='voice'){if(!VC.on)vcOpen();}else{const i=$('#sbInput');if(i){i.value='';i.focus();}}},cvBoardId?500:150);
@@ -4774,7 +4891,7 @@ async function widgetHint(){
   let s=null;try{s=await api('setup');}catch(e){}
   if(s){VC.speech=s.speech;if(!s.ready){obPick('xai');$('#ob').hidden=false;$('#obKey').focus();return;}}
   route();
-  widgetParams();widgetHint();
+  widgetParams();widgetHint(true);
   newsPoll();
   pushInit();
 })();

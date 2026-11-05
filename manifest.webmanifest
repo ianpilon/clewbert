@@ -3,7 +3,7 @@
   "name": "Clewbert",
   "short_name": "Clewbert",
   "description": "Your boards and the agents working on them.",
-  "start_url": "/#agents",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",

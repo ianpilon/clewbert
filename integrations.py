@@ -1,4 +1,4 @@
-"""Connected apps the agents can use: Google (Gmail, Drive, Calendar) and your own MCP servers.
+"""Connected apps the agents can use: Google (Gmail, Drive, Calendar), Substack (drafts) and your own MCP servers.
 
 No middleman: Google is reached straight from this server with a sign-in app registered in your own Google Cloud
 account, and an MCP server is any address you add (one on your own machines, or a service's own). Everything is kept
@@ -61,15 +61,18 @@ def names():
     """What is connected, in words, without asking any server (for the voice's quick check)."""
     s = load()
     out = ['Gmail, Google Calendar and Google Drive'] if (s.get('google') or {}).get('refresh_token') else []
+    out += ['Substack'] if (s.get('substack') or {}).get('cookie') else []
     return out + [x['name'] for x in s.get('servers', [])]
 
 
 def public(bid=None):
     """What the Settings card shows. No secret leaves the server: only whether one is set."""
     s = load()
-    g = s.get('google') or {}
+    g, sub = s.get('google') or {}, s.get('substack') or {}
     out = {'google': {'client_id': g.get('client_id', ''), 'has_secret': bool(g.get('client_secret')),
                       'connected': bool(g.get('refresh_token')), 'email': g.get('email', '')},
+           'substack': {'connected': bool(sub.get('cookie')), 'name': sub.get('name', ''), 'publication': sub.get('publication', ''),
+                        'subdomain': sub.get('subdomain', ''), 'others': sub.get('others', [])},
            'servers': [{'id': x['id'], 'name': x['name'], 'url': x['url'], 'has_key': bool(x.get('key'))} for x in s.get('servers', [])]}
     if bid:
         out['board'] = {'id': bid, 'on': board_on(bid)}
@@ -78,7 +81,14 @@ def public(bid=None):
 
 def change(req):
     """One change from the Settings card (see index.html stgApps*)."""
+    sub = req.get('substack')
+    checked = substack_check(str(sub.get('cookie') or '')) if isinstance(sub, dict) else None   # asks Substack first; a bad cookie stores nothing
+
     def do(s):
+        if checked:
+            s['substack'] = checked
+        if req.get('substack_disconnect'):
+            s['substack'] = {}
         g = req.get('google')
         if isinstance(g, dict):
             cid, sec = str(g.get('client_id') or '').strip(), str(g.get('client_secret') or '').strip()
@@ -481,6 +491,127 @@ GOOGLE = {
 }
 
 
+# ---------------- Substack: your own session cookie, straight to Substack ----------------
+# Substack has no sign-in for apps and no key program: the web app's own cookie is the only way in. These are the
+# same calls the Substack editor makes (unofficial, so they can change). A draft is saved first; publishing is a second,
+# separate step that the person confirms on the canvas (or, for an agent, with a yes to ask_user).
+
+def _substack(method, url, body=None, cookie=None):
+    cookie = cookie or (load().get('substack') or {}).get('cookie')
+    if not cookie:
+        raise OSError('Substack is not connected. Connect it in Settings.')
+    req = urllib.request.Request(url, method=method, data=json.dumps(body).encode() if body is not None else None,
+                                 headers={'Cookie': 'connect.sid=%s; substack.sid=%s' % (cookie, cookie), 'User-Agent': 'Mozilla/5.0',
+                                          'Content-Type': 'application/json', 'Accept': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as f:
+            return json.loads(f.read(2 * 1024 * 1024) or b'{}')
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise OSError('Substack did not accept the session cookie (signed out, or copied wrong). Connect Substack again in Settings.')
+        try:
+            j = json.load(e)
+            msg = str(j.get('error') or j.get('message') or '') if isinstance(j, dict) else ''
+        except ValueError:
+            msg = ''
+        raise OSError('Substack answered %d%s' % (e.code, ': ' + msg[:200] if msg else ''))
+    except urllib.error.URLError as e:
+        raise OSError('Substack could not be reached: %s' % str(e.reason)[:160])
+    except ValueError:
+        raise OSError('Substack answered with something that is not data (a sign-in page, most likely). Connect Substack again in Settings.')
+
+
+def substack_check(cookie):
+    """The account and newsletter behind a pasted cookie, from Substack itself: what gets stored."""
+    cookie = re.sub(r'^\s*(connect|substack)\.sid\s*=\s*', '', cookie).strip().strip(';').strip()   # "connect.sid=..." pasted whole is fine
+    if not cookie:
+        raise ValueError('Substack: paste the session cookie first.')
+    p = _substack('GET', 'https://substack.com/api/v1/user/profile/self', cookie=cookie[:2000])
+    pubs = [x for x in p.get('publicationUsers') or [] if isinstance(x, dict) and isinstance(x.get('publication'), dict)
+            and x['publication'].get('subdomain') and x.get('role') in ('admin', 'owner', 'contributor', None)]
+    if not pubs:
+        raise ValueError('Substack: this account has no newsletter yet. Create one on substack.com (Start writing: a name and an address), then press Connect Substack again.')
+    pu = next((x for x in pubs if x.get('is_primary')), pubs[0])
+    return {'cookie': cookie[:2000], 'user_id': p.get('id'), 'name': str(p.get('name') or p.get('handle') or '')[:80], 'pub_user_id': pu.get('id'),
+            'publication': str(pu['publication'].get('name') or pu['publication']['subdomain'])[:80], 'subdomain': pu['publication']['subdomain'],
+            'others': [str(x['publication'].get('name') or x['publication']['subdomain'])[:80] for x in pubs if x is not pu]}
+
+
+def _substack_body(text):
+    """Plain text to the editor's own document form: one paragraph per line, a line starting with # a heading."""
+    doc = []
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r'^(#{1,3})\s+(.+)$', line)
+        if m:
+            doc.append({'type': 'heading', 'attrs': {'level': len(m.group(1)) + 1}, 'content': [{'type': 'text', 'text': m.group(2)}]})
+        else:
+            doc.append({'type': 'paragraph', 'content': [{'type': 'text', 'text': line}]})
+    return json.dumps({'type': 'doc', 'content': doc or [{'type': 'paragraph'}]})
+
+
+def substack_draft(a):
+    """Save a draft on the connected newsletter. Returns its id, title and the editor address; never publishes."""
+    s = load().get('substack') or {}
+    if not s.get('cookie'):
+        raise OSError('Substack is not connected. Connect it in Settings.')
+    title = re.sub(r'\s+', ' ', str(a.get('title') or '')).strip()[:200]
+    body = str(a.get('body') or '').strip()[:200000]
+    if not title or not body:
+        raise OSError('A draft needs a title and a body.')
+    r = _substack('POST', 'https://%s.substack.com/api/v1/drafts' % s['subdomain'], {
+        'draft_title': title, 'draft_subtitle': re.sub(r'\s+', ' ', str(a.get('subtitle') or '')).strip()[:200],
+        'draft_body': _substack_body(body), 'type': 'newsletter', 'audience': 'everyone',
+        'draft_bylines': [{'id': s.get('user_id'), 'publicationUserId': s.get('pub_user_id'), 'is_guest': False}]})
+    if not isinstance(r, dict) or not r.get('id'):
+        raise OSError('Substack did not say it saved the draft.')
+    return {'id': r['id'], 'title': title, 'publication': s.get('publication', ''),
+            'url': 'https://%s.substack.com/publish/post/%s' % (s['subdomain'], r['id'])}
+
+
+def substack_publish(a):
+    """Publish a saved draft to everyone. send true also emails every subscriber. Substack's own pre-flight check runs first."""
+    s = load().get('substack') or {}
+    if not s.get('cookie'):
+        raise OSError('Substack is not connected. Connect it in Settings.')
+    did = str(a.get('draft_id') or '').strip()
+    if not re.match(r'^[0-9]{1,20}$', did):
+        raise OSError('Which draft? Give the draft id that substack_draft returned.')
+    base = 'https://%s.substack.com/api/v1/drafts/%s' % (s['subdomain'], did)
+    pre = _substack('GET', base + '/prepublish')
+    errs = [str(e.get('msg') or e.get('message') or e) if isinstance(e, dict) else str(e) for e in ((pre or {}).get('errors') or [])] if isinstance(pre, dict) else []
+    if errs:
+        raise OSError('Substack will not publish this draft yet: ' + '; '.join(errs)[:300])
+    r = _substack('POST', base + '/publish', {'send': bool(a.get('send')), 'share_automatically': False})   # POST: PUT gets a 404 (seen 2026-11-04)
+    if not isinstance(r, dict) or not (r.get('slug') or r.get('id')):
+        raise OSError('Substack did not say it published the post.')
+    url = 'https://%s.substack.com/p/%s' % (s['subdomain'], r.get('slug') or r.get('id'))
+    return {'id': r.get('id'), 'slug': r.get('slug', ''), 'title': str(r.get('title') or r.get('draft_title') or '')[:200], 'url': url,
+            'emailed': bool(a.get('send')), 'publication': s.get('publication', '')}
+
+
+def substack_publish_tool(a):
+    d = substack_publish(a)
+    return 'Published on Substack%s: "%s" is live for everyone at %s' % (' and emailed to every subscriber' if d['emailed'] else ' (on the site only, no email)', d['title'], d['url'])
+
+
+def substack_draft_tool(a):
+    d = substack_draft(a)
+    return 'Saved on Substack as a draft, not published: "%s" on %s. The person can open it at %s' % (d['title'], d['publication'], d['url'])
+
+
+SUBSTACK = {
+    'substack_draft': ('Save a post as a DRAFT on the person\'s Substack newsletter (nothing is published; they publish it themselves). '
+                       'body is plain text: one paragraph per line, a line starting with "# " is a heading.',
+                       {'title': S, 'subtitle': S, 'body': S}, ['title', 'body'], False, substack_draft_tool),
+    'substack_publish': ('Publish a saved Substack draft (draft_id from substack_draft) so it is live for everyone; send true also emails every '
+                         'subscriber, which cannot be undone. Needs the person\'s yes to exactly this first: say the title and whether it emails.',
+                         {'draft_id': S, 'send': {'type': 'boolean'}, 'confirm': CONFIRM}, ['draft_id'], True, substack_publish_tool),
+}
+
+
 # ---------------- MCP: your own tool servers (Streamable HTTP) ----------------
 
 READ_WORDS = re.compile(r'^(get|list|search|find|read|query|fetch|lookup|look_up|describe|view|show|count|check|retrieve|browse|download)(_|-|$|[A-Z])', re.I)
@@ -596,6 +727,10 @@ def tools(bid):
         for name, (desc, props, req, yes, fn) in GOOGLE.items():
             out.append(({'type': 'function', 'function': {'name': name, 'description': desc, 'parameters': {
                 'type': 'object', 'properties': props, 'required': req}}}, name, yes, fn, 'Google'))
+    if (s.get('substack') or {}).get('cookie'):
+        for name, (desc, props, req, yes, fn) in SUBSTACK.items():
+            out.append(({'type': 'function', 'function': {'name': name, 'description': desc, 'parameters': {
+                'type': 'object', 'properties': props, 'required': req}}}, name, yes, fn, 'Substack'))
     for srv in s.get('servers', []):
         try:
             listed = server_tools(srv)

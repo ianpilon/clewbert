@@ -452,6 +452,24 @@ def all_boards():
     return out
 
 
+# Archived: a space or a board Ian put away (2026-11-04). It stays on disk, opens from its space and the typed search, and
+# is backed up like any other; it leaves the voice's search and board map, the brief writer and the board list, so the
+# voice reads only what he still uses (IOG & Cardano alone was half of all items).
+def archived_spaces(spaces=None):
+    sp = spaces if spaces is not None else read_spaces()['spaces']
+    arch = {x['id'] for x in sp if x.get('archived')}
+    return arch | {x['id'] for x in sp if x.get('parent') in arch}
+
+
+def is_archived(b, arch):
+    return bool(b.get('archived')) or (b.get('space') in arch)
+
+
+def live_boards(spaces=None):
+    arch = archived_spaces(spaces)
+    return [b for b in all_boards() if not is_archived(b, arch)]
+
+
 def read_talk(scope):
     try:
         with open(talk_path(scope)) as f:
@@ -693,6 +711,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(200, f.read(), 'image/png', {'Cache-Control': 'max-age=86400'})
             except FileNotFoundError:
                 return self.reply(404, {'error': 'no such icon'})
+        if len(parts) == 2 and parts[0] == 'textures' and re.match(r'^[a-z0-9-]{1,40}\.jpg$', parts[1]):   # frame fills that are pictures (chalkboards)
+            try:
+                with open(os.path.join(HERE, 'textures', parts[1]), 'rb') as f:
+                    return self.reply(200, f.read(), 'image/jpeg', {'Cache-Control': 'max-age=604800'})
+            except FileNotFoundError:
+                return self.reply(404, {'error': 'no such texture'})
         if len(parts) == 2 and parts[0] == 'fonts' and re.match(r'^[a-z0-9-]{1,40}\.woff2$', parts[1]):   # the sticky notes' hand font
             try:
                 with open(os.path.join(HERE, 'fonts', parts[1]), 'rb') as f:
@@ -948,8 +972,27 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ['api', 'integrations']:   # a change from the Settings card's Connected apps
             try:
                 return self.reply(200, integrations.change(json.loads(self.read_body())))
-            except ValueError:
-                return self.reply(400, {'error': 'That address does not look right. It starts with https:// or http://.'})
+            except ValueError as e:
+                return self.reply(400, {'error': str(e) if str(e).startswith('Substack') else 'That address does not look right. It starts with https:// or http://.'})
+            except OSError as e:   # Substack would not take the cookie (424, not 502: Cloudflare would swap a 502 for its own page)
+                print('%s substack: %s' % (time.strftime('%H:%M:%S'), e))
+                return self.reply(424, {'error': str(e)})
+        if parts == ['api', 'substack', 'draft']:   # a note's "Draft this on Substack": saved as a draft on the newsletter, never published
+            if not (integrations.load().get('substack') or {}).get('cookie'):
+                return self.reply(409, {'error': 'Substack is not connected. Open Settings, Connected apps, and connect it first.'})
+            try:
+                return self.reply(200, integrations.substack_draft(json.loads(self.read_body())))
+            except OSError as e:   # 424, not 502: Cloudflare swaps an origin 502 for its own page and the words would never reach the canvas
+                print('%s substack: %s' % (time.strftime('%H:%M:%S'), e))
+                return self.reply(424, {'error': str(e)})
+        if parts == ['api', 'substack', 'publish']:   # the draft card's Publish, after the person picked email or site-only on the canvas
+            if not (integrations.load().get('substack') or {}).get('cookie'):
+                return self.reply(409, {'error': 'Substack is not connected. Open Settings, Connected apps, and connect it first.'})
+            try:
+                return self.reply(200, integrations.substack_publish(json.loads(self.read_body())))
+            except OSError as e:   # 424, not 502: Cloudflare swaps an origin 502 for its own page and the words would never reach the canvas
+                print('%s substack: %s' % (time.strftime('%H:%M:%S'), e))
+                return self.reply(424, {'error': str(e)})
         if len(parts) == 4 and parts[:3] == ['api', 'integrations', 'test'] and re.match(r'^[0-9a-f]{8}$', parts[3]):
             return self.reply(200, integrations.test_server(parts[3]))
         if parts == ['api', 'settings', 'servers']:   # add or remove one of your own model servers, from the Settings card
@@ -1251,7 +1294,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(404, {'error': 'no such board'})
                 scope = boards[0].get('name') or 'this board'
             elif talk_id == 'all':
-                boards, scope = all_boards(), 'all'
+                boards, scope = live_boards(list(spaces.values())), 'all'
             else:
                 sid = None if space == 'unsorted' else space
                 within = {sid} | {x['id'] for x in spaces.values() if sid and x.get('parent') == sid}   # a parent space includes its sub-spaces' boards
@@ -1287,13 +1330,14 @@ class Handler(BaseHTTPRequestHandler):
                 routing.start()
                 t_ask = time.time()
                 # the map of all spaces and boards goes with every question, so the layout itself can be talked about
-                everything = all_boards()
-                layout = talk.layout_entry(list(spaces.values()), everything, {b['id']: BRIEFER.load(b['id']) for b in everything}, here, detail=not req.get('board'),
+                everything = live_boards(list(spaces.values()))
+                layout = talk.layout_entry([x for x in spaces.values() if x['id'] not in archived_spaces(list(spaces.values()))], everything, {b['id']: BRIEFER.load(b['id']) for b in everything}, here, detail=not req.get('board'),
                                            question=question, history=history)
                 names = {b['id']: b.get('name', '') for b in boards}
                 waiting = [w for w in RUNNER.news()['waiting'] if w['board'] in names]   # questions on the boards in scope
                 tasks = [{'board': t['board'], 'boardName': names.get(t['board'], ''), 'item': t['frame'], 'run': t['id'], 'frame': '',
                           'ended': t.get('ended'), 'text': RUNNER.progress(t)} for t in sorted(RUNNER.recent(set(names)), key=lambda t: t['created'])][-6:]
+                t_call = time.time()
                 result = talk.answer(question, history, boards, scope, READER, {b['id']: BRIEFER.load(b['id']) for b in boards}, layout,
                                      waiting, tasks, RUNNER.team_text(boards[0]['id']) if req.get('board') else '', req.get('seen'), FINDER,
                                      here=here, apps=apps, routed=(routing, early),
@@ -1302,7 +1346,7 @@ class Handler(BaseHTTPRequestHandler):
                                      spaces_text='\n'.join('- %s%s: %s' % (x['name'], ' (inside %s)' % spaces[x['parent']]['name'] if x.get('parent') in spaces else '',
                                                                              ', '.join(b.get('name', '') for b in everything if b.get('space') == x['id'])[:300])
                                                             for x in spaces.values()))
-                print('%s ask %.2fs route=%s %r' % (time.strftime('%Y-%m-%d %H:%M:%S'), time.time() - t_ask, result.get('route'), question[:60]), flush=True)
+                print('%s ask %.2fs route=%s prep=%dms %s %r' % (time.strftime('%Y-%m-%d %H:%M:%S'), time.time() - t_ask, result.get('route'), (t_call - t_ask) * 1000, result.get('timing') or '', question[:60]), flush=True)
                 if result.get('route') in ('yes', 'no') and waiting_on:   # the check heard agreement or a refusal in other words
                     return settle(result['route'])
                 proposal = result.pop('proposal', None)
@@ -1466,17 +1510,39 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, sp)
         sid = self.space_id(parts)
         if sid:
-            name = str(json.loads(self.read_body()).get('name') or '').strip()[:80]
-            if not name:
+            req = json.loads(self.read_body())
+            name = str(req.get('name') or '').strip()[:80]
+            if not name and 'archived' not in req:
                 raise ValueError
             with LOCK:
                 sp = read_spaces()
                 hit = [x for x in sp['spaces'] if x['id'] == sid]
                 if not hit:
                     return self.reply(404, {'error': 'no such space'})
-                hit[0]['name'] = name
+                if name:
+                    hit[0]['name'] = name
+                if 'archived' in req:   # a top-level space only: its sub-spaces go with it
+                    if hit[0].get('parent'):
+                        return self.reply(400, {'error': 'archive the whole space, not a sub-space'})
+                    if req['archived']:
+                        hit[0]['archived'] = True
+                    else:
+                        hit[0].pop('archived', None)
                 write_json(SPACES, sp)
             return self.reply(200, hit[0])
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'archive' and BOARD_ID.match(parts[2]):
+            archived = bool(json.loads(self.read_body()).get('archived'))
+            with LOCK:
+                try:
+                    board = read_board(parts[2])
+                except FileNotFoundError:
+                    return self.reply(404, {'error': 'no such board'})
+                if archived:
+                    board['archived'] = True
+                else:
+                    board.pop('archived', None)
+                write_json(board_path(parts[2]), board)
+            return self.reply(200, {'ok': True})
         if parts == ['api', 'settings']:
             return self.reply(200, dict(models.save(json.loads(self.read_body())), local=local_models(), startup=local_models(False)))
         if len(parts) == 3 and parts[:2] == ['api', 'teams'] and BOARD_ID.match(parts[2]):
@@ -1502,8 +1568,14 @@ class Handler(BaseHTTPRequestHandler):
             sent = {i.get('id'): i for i in req['items'] if isinstance(i, dict)}
             gone = set(req.get('deleted') or [])
             live = {r['id'] for r in RUNNER.view(bid) if r['status'] in agents.ACTIVE}
+            # base: the board's 'updated' this page's copy was built on. An item another copy added after that (its 'added'
+            # stamp is newer) is one this page never saw, so it stays: a phone page left in the background saved an older
+            # copy and wiped a morning's cards (2026-11-05). Pages that send no base keep the old behaviour.
+            base = int(req.get('base') or 0)
             for i in board.get('items') or []:
                 if i.get('agent') and i['id'] not in sent and i['id'] not in gone:
+                    req['items'].append(i)
+                elif base and i['id'] not in sent and i['id'] not in gone and (i.get('added') or 0) > base:
                     req['items'].append(i)
                 elif i.get('run') in live and i.get('type') == 'area' and i['id'] in sent:
                     sent[i['id']]['h'] = max(sent[i['id']].get('h', 0), i.get('h', 0))
@@ -1734,6 +1806,8 @@ def light(b, keep=150):
     """A board as its card needs it: name, space, dates, item count, the outline of all items, the biggest items."""
     items = b.get('items') or []
     out = {k: b.get(k) for k in ('id', 'name', 'space', 'created', 'updated')}
+    if b.get('archived'):
+        out['archived'] = True
     out['count'] = len(items)
     out['by'] = made_by(b)
     if items:
@@ -2214,7 +2288,7 @@ def edit_board(bid, fn):
     return out
 
 
-BRIEFER = briefs.Briefer(DATA, READER, read_board, lambda: [b['id'] for b in sorted(all_boards(), key=lambda b: len(b.get('items') or []))])   # small boards first: they are ready in minutes
+BRIEFER = briefs.Briefer(DATA, READER, read_board, lambda: [b['id'] for b in sorted(live_boards(), key=lambda b: len(b.get('items') or []))])   # small boards first: they are ready in minutes
 
 rules_board()   # made once, with the rules the user has already given
 RUNNER = agents.Runner(DATA, type('Store', (), {'read_board': staticmethod(read_board), 'edit_board': staticmethod(edit_board)}),

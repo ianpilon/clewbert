@@ -34,6 +34,7 @@ class Reader:
 
     def __init__(self, images_dir, text_dir, tool):
         self.images, self.text, self.tool = images_dir, text_dir, tool
+        self.cache = {}   # name -> the words read off it, once read (see words())
         os.makedirs(text_dir, exist_ok=True)
         self.queue = queue.Queue()
         if os.path.exists(tool):
@@ -52,11 +53,20 @@ class Reader:
         return sum(1 for n in names if not os.path.exists(self.path(n)))
 
     def words(self, name):
+        """The words read off a picture or file. Kept in memory once read: a text file is written once and never
+        changes, and a question across the boards reads thousands of them (2026-11-04: 0.6 s of file reads a question)."""
+        hit = self.cache.get(name)
+        if hit is not None:
+            return hit
         try:
             with open(self.path(name)) as f:
-                return f.read()
+                text = f.read()
         except OSError:
             return ''
+        if len(self.cache) > 60000:   # never more than this many: the whole folder is 44,000 files, 181 MB
+            self.cache.clear()
+        self.cache[name] = text
+        return text
 
     def run(self):
         while True:
@@ -257,10 +267,20 @@ def rank(question, history, chunks, total=None, avg=None):
     q = tokens(question)
     q_prev = tokens(history[-1]['q']) if history else []
     terms = set(q) | set(q_prev)
+    # each question word as it stands in text: the word itself or its plural, as a whole word (tokens() strips the s);
+    # counted with one regex per word over the lowercased passage, instead of cutting every passage into tokens
+    # (100,000 passages took 2.5 s a question; 2026-11-04). Passage length = its words, as Finder.read counts them.
+    finds = {w: re.compile(r"(?<![a-z0-9'&.-])" + re.escape(w) + (r"s?" if len(w) > 3 else '') + r"(?![a-z0-9]|['&.-][a-z0-9])") for w in terms}
     docs = []   # (length, {question word: times in the passage})
     for c in chunks:
-        d = tokens(c['text'] + ' ' + c['frame'] + ' ' + c['kind'])
-        docs.append((len(d), {w: d.count(w) for w in terms if w in d}))
+        low = (c['text'] + ' ' + c['frame'] + ' ' + c['kind']).lower()
+        f = {}
+        for w, rx in finds.items():
+            if w in low:
+                k = len(rx.findall(low))
+                if k:
+                    f[w] = k
+        docs.append((len(low.split()), f))
     n = max(len(docs), total or 0) or 1
     avg = avg or sum(l for l, _ in docs) / (len(docs) or 1) or 1
     df = {w: sum(1 for _, f in docs if w in f) for w in terms}
@@ -301,15 +321,12 @@ def candidates(question, history, boards, reader, finder):
         for row in (index.get(b['id']) or {}).get('rows', ()):
             if starts.search(row[4]):
                 keep.add((b['id'], row[0]))
-    try:
-        r = subprocess.run(['grep', '-rliE', '(^|[^a-z0-9])(%s)' % '|'.join(map(re.escape, sorted(terms))), reader.text], capture_output=True, text=True,
-                           timeout=20, env=dict(os.environ, LC_ALL='C'))   # plain bytes: several times faster than a UTF-8 -i
-        read = {os.path.basename(f)[:-4] for f in r.stdout.split('\n') if f.endswith('.txt')}
-    except (OSError, subprocess.SubprocessError):
-        return None
+    # words read off pictures and files: scanned in memory, only the files the boards in scope point at (a grep over the
+    # whole text folder, 44,000 files and 181 MB, took 2 s a question; these boards use 18,000 of them, 27 MB; 2026-11-04)
     for b in boards:
         for it in b.get('items') or []:
-            if text_name(it) in read:
+            name = text_name(it)
+            if name and (b['id'], it['id']) not in keep and starts.search(reader.words(name).lower()):
                 keep.add((b['id'], it['id']))
     return keep
 
@@ -358,9 +375,9 @@ HOW THE APP IS ORGANISED: spaces are folders that hold boards (a board not in an
 items (notes, text, screenshots, PDFs, links, files, stickers, drawings); frames are titled areas that group items on
 a board. the user can talk from the list of all boards, from one space, or from inside one board. The list of all boards
 is the top level and the starting place: it shows every space. the user may call it the meta level, the top level, home,
-the main page or all spaces. The "map of spaces and
-boards" item lists every space and board with item counts, last edit dates and what each board is about, and says
-where the user is now: use it for questions about the spaces and boards themselves (how many, which ones, what is in a
+the main page or all spaces. The MAP OF THE USER'S SPACES AND BOARDS below lists every space with its boards by name;
+the "map of spaces and boards" item says where The user is now and, for the boards the question may be about and the
+ones edited last, their item counts, last edit dates and what each is about: use them for questions about the spaces and boards themselves (how many, which ones, what is in a
 space, which board was edited last) and to point the user to the right space and board when they look for something
 ("That is on the Launch Plan board in the Marketing space, in the Ideas frame"). When the other items
 do not hold what they look for, use the board descriptions in the map to say which board most likely has it, and say
@@ -455,13 +472,13 @@ WHAT THIS APP CAN DO (you control it through "show" and "view"; never say you ca
 Reply with JSON only: {"answer": "<what to say>", "sources": [<item numbers that answer the question, outlined for the user; not ones you mention only to rule them out>], "show": [<item numbers to show, or empty>], "view": null, "open": null, "task": null, "task_mode": "team", "agent_answer": null, "follow_up": null, "web_card": null, "open_item": null, "add_teammate": null, "steer": null, "move_card": null, "sort_frame": null, "undo_edit": null, "card": null}"""
 
 
-def ask_model(question, history, entries, scope):
+def ask_model(question, history, entries, scope, stable=''):
     lines = []
     for n, e in enumerate(entries, 1):
         many = scope == 'all' or scope.startswith('space:')
         where = ' | '.join(x for x in (('space: ' + e['spaceName']) if many and e.get('spaceName') else '', ('board: ' + e['boardName']) if many and e['boardName'] else '', ('in frame: ' + e['frame']) if e['frame'] else '') if x)
         lines.append('[%d] %s%s\n%s' % (n, e['kind'], (' (' + where + ')') if where else '', e['text']))
-    msgs = [{'role': 'system', 'content': SYSTEM + skills.text('assistant')}]
+    msgs = [{'role': 'system', 'content': SYSTEM + skills.text('assistant') + ('\n\nMAP OF IAN\'S SPACES AND BOARDS (every space, with its boards by name):\n' + stable if stable else '')}]
     for h in history[-3:]:
         msgs += [{'role': 'user', 'content': h['q']}, {'role': 'assistant', 'content': json.dumps({'answer': h['a'], **(h.get('did') or {})})}]
     msgs.append({'role': 'user', 'content': '%s\n\nBOARD ITEMS:\n%s\n\nQUESTION: %s' % (scope_line(scope), '\n\n'.join(lines), question)})
@@ -741,28 +758,31 @@ def layout_entry(spaces, boards, briefs, here, detail=True, question='', history
     groups = [(sp['name'], sp['id'], [b for b in boards if b.get('space') == sp['id']]) for sp in spaces]
     inside = {sp['id']: ' (inside the space "%s")' % names[sp['parent']] for sp in spaces if sp.get('parent') in names}
     groups.append(('Unsorted', 'unsorted', [b for b in boards if b.get('space') not in ids]))
-    lines = ['the user has %d spaces and %d boards. the user is now %s.' % (len(spaces), len(boards), here)]
+    # Two parts (2026-11-04). 'stable': every space and board by name, the same text question after question, so the
+    # model server reuses its reading of it (it keeps what it has read of an identical start of a prompt: the same
+    # 32,000-token prompt took 18 s, then 1.3 s). 'text': what changes with the question: where the user is, and the boards
+    # the question may be about or edited last, with item counts, last edit dates and what each is about.
+    stable = ['The user has %d spaces and %d boards.' % (len(spaces), len(boards))]
+    lines = ['The user is now %s.' % here]
     targets, space_of, said_as = {'all boards': {'space': ''}}, {}, {}
     for name, sid, bs in groups:
         if sid == 'unsorted' and not bs:
             continue
         targets[name.lower()] = {'space': sid}
         said_as[name.lower()] = name
-        lines.append('%s "%s"%s: %d board%s' % ('Boards not in any space,' if sid == 'unsorted' else 'Space', name, inside.get(sid, ''), len(bs), '' if len(bs) == 1 else 's'))
-        rest = []   # boards with no "About": one short list per space, not a line each (699 lines were 52,000 characters)
+        where = ('Boards not in any space,' if sid == 'unsorted' else 'Space') + ' "%s"%s' % (name, inside.get(sid, ''))
+        stable.append('%s: %d board%s: %s' % (where, len(bs), '' if len(bs) == 1 else 's', ', '.join('"%s"' % b.get('name', '') for b in sorted(bs, key=lambda b: (b.get('name') or '').lower()))))
         for b in sorted(bs, key=lambda b: -(b.get('updated') or 0)):
             targets.setdefault(b.get('name', '').lower(), {'board': b['id']})
             said_as.setdefault(b.get('name', '').lower(), b.get('name', ''))
             space_of[b['id']] = '' if sid == 'unsorted' else name
-            n, day = len(b.get('items') or []), time.strftime('%Y-%m-%d', time.localtime((b.get('updated') or 0) / 1000))
             if b['id'] in gists:
-                lines.append('- board "%s": %d item%s, last edited %s. About: %s' % (b.get('name', ''), n, '' if n == 1 else 's', day, board_gist(b, briefs.get(b['id']))))
-            else:
-                rest.append('"%s"' % b.get('name', ''))
-        if rest:
-            lines.append('- %sboards: %s' % ('other ' if len(rest) < len(bs) else '', ', '.join(rest)))
+                n, day = len(b.get('items') or []), time.strftime('%Y-%m-%d', time.localtime((b.get('updated') or 0) / 1000))
+                lines.append('- board "%s" (%s): %d item%s, last edited %s. About: %s' % (b.get('name', ''), where, n, '' if n == 1 else 's', day, board_gist(b, briefs.get(b['id']))))
+    if len(lines) > 1:
+        lines.insert(1, 'The boards this question may be about, and the ones edited last (the newest first within each space):')
     return {'board': None, 'boardName': '', 'item': None, 'kind': 'map of spaces and boards', 'frame': '',
-            'text': '\n'.join(lines), 'targets': targets, 'names': said_as, 'spaceOf': space_of}
+            'text': '\n'.join(lines), 'stable': '\n'.join(stable), 'targets': targets, 'names': said_as, 'spaceOf': space_of}
 
 
 def which_answer(given, entries, waiting):
@@ -1284,6 +1304,7 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
             if time.time() - late > 2:
                 break
     route = said.get('route') or 'boards'
+    t_route = time.time()   # stage times go back in 'timing' (ms), for the server log
     if not side.is_alive() and said.get('reply'):
         return {'answer': said['reply'], 'sources': [], 'checked': None, 'ms': int((time.time() - t0) * 1000), 'chat': True, 'route': 'chat'}
     changed = route == 'change' and (pending_raw or {}).get('kind') == 'team'
@@ -1301,6 +1322,7 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
         got = outside(question, history, here, bid=bid, spaces=spaces, waiting=pending_raw if route == 'change' else None)
         return dict(got, checked=None, ms=int((time.time() - t0) * 1000), route='outside')
     search.join()
+    t_search = time.time()
     if 'error' in found:
         raise found['error']
     entries = found['entries']
@@ -1327,19 +1349,21 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
         entries = [layout] + entries
     if not entries:
         return {'answer': 'There is nothing on %s to answer from yet.' % ('this board' if scope != 'all' and not scope.startswith('space:') else 'these boards'), 'sources': [], 'ms': 0}
-    reply = ask_model(question, history, entries, scope)
+    stable = (layout or {}).get('stable', '')
+    reply = ask_model(question, history, entries, scope, stable)
     if history and same_words(reply[0], history[-1]['a']) >= .7:   # Nemotron can read back its last answer: once more, asking for news
-        again = ask_model(question + ' (Say something new: do not repeat your last answer.)', history, entries, scope)
+        again = ask_model(question + ' (Say something new: do not repeat your last answer.)', history, entries, scope, stable)
         if same_words(again[0], history[-1]['a']) < .7:
             reply = again
     if not any(reply[-1].values()) and MOVE_Q.search(question) and any(e['kind'] == 'frame layout' for e in entries):
         # asked to move a card and the reply has no move: once more, without the conversation, which it copies (an earlier
         # "Done" turn with no move in it was read back word for word, retry and all)
         again = ask_model(question + ' (This asks you to move a card: put it in "move_card" with the frame layout\'s item '
-                          'number and the from and to places.)', [], entries, scope)
+                          'number and the from and to places.)', [], entries, scope, stable)
         if any(again[-1].values()):
             reply = again
     said, nums, show_nums, view, go, task, agent_answer, task_mode, follow_up, web_card, add_teammate, steer, open_num, edits = reply
+    t_model = time.time()
 
     def pick(numbers):
         out = []
@@ -1486,7 +1510,8 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
         both_proposal = got.get('proposal')
     LAST_ASK[0] = time.time()
     reading = [briefs[b['id']] for b in boards if (briefs.get(b['id']) or {}).get('state') == 'reading']
-    return {'answer': said, 'checked': checked, 'ms': int((time.time() - t0) * 1000), 'model': (models.choice('voice') or (0, (models.local('voice') or (0, MODEL))[1]))[1],
+    timing = {'route': int((t_route - t0) * 1000), 'search': int((t_search - t_route) * 1000), 'model': int((t_model - t_search) * 1000), 'after': int((time.time() - t_model) * 1000)}
+    return {'answer': said, 'checked': checked, 'ms': int((time.time() - t0) * 1000), 'timing': timing, 'model': (models.choice('voice') or (0, (models.local('voice') or (0, MODEL))[1]))[1],
             'unread': reader.unread(names),
             'show': [{'board': e['board'], 'item': e['item']} for e in shown],
             'open': opened,
@@ -1529,7 +1554,7 @@ class Finder:
                 frame0, w = frame_of(it, areas) if kind != 'frame title' else '', words.split()
                 for start in range(0, len(w), CHUNK_WORDS):
                     npass += 1
-                    ntok += len(tokens(' '.join(w[start:start + CHUNK_WORDS]) + ' ' + frame0 + ' ' + kind))
+                    ntok += len(w[start:start + CHUNK_WORDS]) + len((frame0 + ' ' + kind).split())   # as rank() measures a passage
             words = ' '.join(html.unescape(words).split())[:self.READ_MAX if kind in ('screenshot', 'PDF') else self.TEXT_MAX]
             if not words or words == self.NO_WORDS:
                 continue
