@@ -10,7 +10,7 @@ A team task goes to the Lead, who hands parts to teammates with assign. Each par
 frame, joined to the Lead's frame by an arrow. The Lead waits (status "team") until every part of that round has
 ended, then reads their results and either hands out a next round or writes the final answer in its own frame.
 """
-import base64, json, os, queue, re, secrets, subprocess, threading, time, urllib.error, urllib.request
+import base64, hashlib, json, os, queue, re, secrets, subprocess, threading, time, urllib.error, urllib.request
 import integrations, models, skills, talk
 from . import code, web
 
@@ -55,7 +55,10 @@ def card_text(text):
     return m.group(1).rstrip('.') + '\n' + m.group(2) + text[len(first):] if m else text
 
 
-WRITES = ('add_note', 'add_card', 'add_text', 'add_link', 'finish', 'ask_user', 'assign', 'make_demo', 'group_items')
+ON_THE_BOARD = re.compile(r'\b(paste|the (full|whole|complete|entire|rest of the|end of the|final|last|middle)[^?]{0,40}'
+                          r'(text|words|content|quote|sentence|reason|note|file|transcript)|unverified|cut off|truncat|preview|'
+                          r'send me|share the|provide the|give me the|confirm (the|that|what)|the exact (text|wording))\b', re.I)
+WRITES = ('add_note', 'add_card', 'add_text', 'add_link', 'add_file', 'finish', 'ask_user', 'assign', 'make_demo', 'group_items')
 # a task that asks to rearrange what is on the board (it once ended "Done, restructured" with nothing moved)
 REARRANGE = re.compile(r"\b(re-?arrang\w*|restructur\w*|re-?organi[sz]\w*|regroup\w*|cluster\w*|"
                        r"(?:group|sort|move|organi[sz]e)\w* (?:the |these |those |all |every )?(?:items|notes|stickies|cards|links|content|frame|board|them|it)\b|"
@@ -231,7 +234,9 @@ the board: that frame is where the person looks, there is no chat. Work like thi
   the task or the person gave you: never make up a name, email, phone number or address; ask for it instead.
 - If a search finds nothing useful, try other words or another way before giving up. If you cannot go on without the
   person (a choice only they can make, information only they have), use ask_user with one short question. Never ask
-  for permission to do the task you were given or whether to keep going.
+  for permission to do the task you were given or whether to keep going. Never ask the person for anything that is on
+  the board or on a page you can read: a card's words, a file's text, the end of a long quote. Read it again with
+  read_item or read_frame instead; a repeat read brings the whole text back when the earlier one was cut.
 - When the task is done, call finish with a short summary of what you found and what is still open.
 You cannot send email or messages, call, buy or sign up for anything: never offer to.
 On the board you can add to your frame, read every item of a frame (read_frame) and move existing items into new
@@ -302,6 +307,10 @@ TOOLS = [
     tool('add_text', 'Put text in your task frame. style "heading" starts a section, "body" is a paragraph.',
          {'text': S, 'style': {'type': 'string', 'enum': ['heading', 'body']}}),
     tool('add_link', 'Put a link card for a web page in your task frame.', {'url': S}),
+    tool('add_file', 'Make a real Markdown (.md) file on the board from text you write: it sits in your task frame as a file card '
+         'the person can open, download and share. name = a short file name ending in .md; text = the whole file, in Markdown, '
+         'complete (nothing cut, no "..."). Use it when the job asks for a file, a document or a copy of something as a file.',
+         {'name': S, 'text': S}, ['name', 'text']),
     tool('make_demo', 'Build a working demo: ONE complete HTML page (its CSS in <style>, its JavaScript in <script>, nothing '
          'else needed) that shows what you found or built. It opens as a live card in your frame, and you get back any '
          'JavaScript errors and what the page shows, so you can fix it: call it again with the same title to replace it.',
@@ -351,7 +360,7 @@ ASSIGN = tool('assign', 'Hand parts of the task to teammates. Each part becomes 
               {'assignments': {'type': 'array', 'items': {'type': 'object', 'properties': {'teammate': S, 'task': S, 'done_when': S},
                                                           'required': ['teammate', 'task', 'done_when']}}})
 # the Lead plans, hands out and puts the answer together; it has no web tools, so it cannot do the parts itself
-LEAD_TOOLS = [t for t in TOOLS if t['function']['name'] in ('search_board', 'read_item', 'read_frame', 'add_text', 'ask_user', 'finish')] + [ASSIGN]
+LEAD_TOOLS = [t for t in TOOLS if t['function']['name'] in ('search_board', 'read_item', 'read_frame', 'add_text', 'add_file', 'ask_user', 'finish')] + [ASSIGN]
 
 
 def board_unit(board):
@@ -376,6 +385,63 @@ def board_unit(board):
 
 def now_ms():
     return int(time.time() * 1000)
+
+
+def job_score(runs, root, items=()):
+    """What a whole job cost, read from its saved runs and the board once it ends (the plan critic's measure, 2026-11-05):
+    model calls (one per assistant message), tool calls, web pages read, working time without the waits on the person,
+    members started, items put on the board, questions asked, and how the checks went. runs = id -> run, items = the board's."""
+    team, todo = [root], list(root.get('children') or [])
+    while todo:
+        c = todo.pop()
+        if c in runs and runs[c] not in team:
+            team.append(runs[c])
+            todo += runs[c].get('children') or []
+    ids = {x['id'] for x in team}
+    model = sum(1 for x in team for m in x.get('messages') or [] if m.get('role') == 'assistant')
+    calls = [tc for x in team for m in x.get('messages') or [] for tc in (m.get('tool_calls') or [])]
+    names = [(tc.get('function') or {}).get('name') for tc in calls]
+    end = max([root.get('ended') or 0] + [x.get('ended') or 0 for x in team] + [x['steps'][-1]['t'] for x in team if x.get('steps')])
+    waits = []
+    for x in team:
+        asked = None
+        for s in x.get('steps') or []:
+            if s['text'].startswith('Asked you:'):
+                asked = s['t']
+            elif s['text'].startswith('You answered:') and asked:
+                waits.append((asked, s['t']))
+                asked = None
+        if asked and x['status'] == 'waiting':   # still unanswered: the wait runs to the job's last activity
+            waits.append((asked, end))
+    waits.sort()
+    waited, upto = 0, 0   # the waits as one set of intervals: two members asking at once is one wait
+    for a, b in waits:
+        a = max(a, upto)
+        if b > a:
+            waited += b - a
+            upto = b
+    secs = max(0, (end - root['created'] - waited) // 1000)
+    kinds = {}   # what the team put on the board, counted from its own calls (the items may be deleted later), refused ones left out
+    for x in team:
+        msgs = x.get('messages') or []
+        results = {m.get('tool_call_id'): str(m.get('content') or '') for m in msgs if m.get('role') == 'tool'}
+        for m in msgs:
+            for tc in m.get('tool_calls') or []:
+                name = (tc.get('function') or {}).get('name')
+                if name in ('add_note', 'add_card', 'add_text', 'add_link', 'add_file', 'make_demo') and not results.get(tc.get('id'), '').startswith(('Not added', 'Not done', 'Made the demo again')):
+                    kinds[name[4:] if name.startswith('add_') else 'demo'] = kinds.get(name[4:] if name.startswith('add_') else 'demo', 0) + 1
+    parts = [x for x in team if x is not root and x.get('check')]
+    final = (not root.get('gaps')) if root.get('final_done') else None
+    s = {'model_calls': model, 'tool_calls': len(calls), 'web_pages': names.count('read_web_page'), 'seconds': secs,
+         'members': sum(1 for x in team if x is not root and x.get('member')), 'items': sum(kinds.values()), 'kinds': kinds,
+         'questions': names.count('ask_user'), 'parts_passed': sum(1 for x in parts if x['check'].get('pass')), 'parts_checked': len(parts),
+         'final': final, 'ended': bool(root.get('ended')), 'when': now_ms()}
+    mins = '%d min' % max(1, round(secs / 60)) if secs < 5400 else '%.1f h' % (secs / 3600)
+    check = ('final check passed' if final else 'final check found gaps' if final is False else 'no final check') + (
+        ', parts %d of %d passed' % (s['parts_passed'], s['parts_checked']) if parts else '')
+    s['line'] = '%d model calls · %d tool calls · %d web pages · %s · %d members · %d items · %d question%s · %s' % (
+        model, len(calls), s['web_pages'], mins, s['members'], s['items'], s['questions'], '' if s['questions'] == 1 else 's', check)
+    return s
 
 
 class Runner:
@@ -408,6 +474,9 @@ class Runner:
         for r in list(self.runs.values()):   # a Lead whose teammates all ended while the server was down
             if r['status'] == 'team':
                 self.team_check(r)
+        for r in list(self.runs.values()):   # jobs that ended before scores existed get theirs now (the baseline for the plan critic)
+            if not r.get('parent') and r['status'] in ENDED and not r.get('score'):
+                self.score(r, paint=False)
         for _ in range(WORKERS):
             threading.Thread(target=self.work, daemon=True).start()
 
@@ -485,7 +554,8 @@ class Runner:
                  'demos': ['api/demos/%s.html' % d for d in r.get('demos', {})],
                  'crew': [{k: m.get(k) for k in ('id', 'name', 'color', 'why', 'done_when', 'role')} for m in r['crew']] if r.get('crew') else None,
                  'check': {'pass': bool(r['check'].get('pass')), 'missing': r['check'].get('missing')} if r.get('check') else None,
-                 'retry_of': r.get('retry_of')} for r in sorted(runs, key=lambda r: r['created'])]
+                 'retry_of': r.get('retry_of'), 'score': (r.get('score') or {}).get('line') if r['status'] in ENDED else None, 'critic': (r.get('critic') or {}).get('line')}
+                for r in sorted(runs, key=lambda r: r['created'])]
 
     def steps(self, rid):
         r = self.runs.get(rid)
@@ -715,6 +785,8 @@ class Runner:
             self.team_notes(r)
             self.save(r)
             self.hurdles(r)
+        if not r.get('parent') and r['status'] in ENDED:
+            self.score(r)
         if r.get('chart'):
             self.crew_paint(r)
         p = self.runs.get(r.get('parent'))
@@ -722,6 +794,18 @@ class Runner:
             self.crew_paint(p)
         if p and p['status'] == 'team':
             self.team_check(p)
+
+    def score(self, r, paint=True):
+        """Write the job's score onto its root run and the Lead's card on the board."""
+        try:
+            items = self.store.read_board(r['board']).get('items') or []
+        except (OSError, ValueError, KeyError):
+            items = []
+        with self.lock:
+            r['score'] = job_score(self.runs, r, items)
+        self.save(r)
+        if paint and r.get('chart'):
+            self.crew_paint(r)
 
     def team_check(self, p):
         """When every part of the Lead's current round has ended: check each against its done-when (a part that falls
@@ -951,15 +1035,19 @@ class Runner:
                 except ValueError:
                     args = {}
                 key = name + json.dumps(args, sort_keys=True)
+                tool_at = [i for i, m in enumerate(r['messages']) if m['role'] == 'tool']
+                cut = set(tool_at[:-KEEP_RESULTS]) if len(tool_at) > KEEP_RESULTS else set()
+                stale = name in ('read_item', 'read_frame', 'read_web_page') and r.get('call_at', {}).get(key) in cut   # its earlier result is cut short now: read it whole again
                 if name not in names:   # the model can call tools it was not given (a Lead searching the web): refuse
                     result = 'You do not have a tool called %s. Your tools: %s.' % (name, ', '.join(sorted(names)))
-                elif key in r.setdefault('done_calls', []) and name in ('search_board', 'read_item', 'read_frame', 'web_search', 'read_web_page', 'read_page_source', 'search_code', 'browser_look'):
+                elif key in r.setdefault('done_calls', []) and not stale and name in ('search_board', 'read_item', 'read_frame', 'web_search', 'read_web_page', 'read_page_source', 'search_code', 'browser_look'):
                     result = 'You already did exactly this and its result is above. Do something different.'
                     r['loop_turn'] = True
                 else:
-                    if key in r['done_calls']:   # the same call again (a make_demo with no page, refused and resent 30 times)
+                    if key in r['done_calls'] and not stale:   # the same call again (a make_demo with no page, refused and resent 30 times)
                         r['loop_turn'] = True
                     r['done_calls'].append(key)
+                    r.setdefault('call_at', {})[key] = len(r['messages'])   # where its result will sit: a later repeat may find it cut
                     try:
                         result = self.use(r, name, args if isinstance(args, dict) else {}, c['id'])
                     except Exception as e:   # a tool that breaks (a bad address, a page that will not load) is reported, not fatal
@@ -1153,6 +1241,14 @@ class Runner:
             return found
         if name.startswith('browser_'):
             return self.use_browser(r, name, a)
+        if name == 'add_file':   # a real file on the board, made from the agent's own words (2026-11-05)
+            text = str(a.get('text') or '').strip()
+            if len(text) < 2:
+                return 'Not added: the file needs text.'
+            if '...' in text or '…' in text:
+                return 'Not added: the file text has "..." in it. Write the whole thing, nothing cut.'
+            it = self.add_file(r, str(a.get('name') or ''), text)
+            return ('Made the file %s (%d characters) in your frame. Say its name in your summary.' % (it['label'], len(text))) if it else 'Not added: the frame is gone.'
         if name == 'add_card':   # a card is a note with a title line: the same checks, then drawn as a card
             name, a = 'add_note', dict(a, text=(str(a.get('title') or '').strip() + '\n' + str(a.get('facts') or '').strip()).strip(), card=1)
         if name in ('add_note', 'add_text'):   # quote marks promise word for word: a quote that is on no page the agent read is turned away
@@ -1209,6 +1305,11 @@ class Runner:
             return ('Not asked yet: can a teammate find this out? %s. If so, hand it to them with assign. Ask the person only '
                     'for a choice only they can make, or something only they know; then ask again.'
                     % '; '.join('%s: %s' % (m['name'], m.get('role', '')) for m in team))
+        if name == 'ask_user' and r.get('ask_refused', 0) < 2 and ON_THE_BOARD.search(str(a.get('question') or '')):
+            r['ask_refused'] = r.get('ask_refused', 0) + 1   # a reader and a checker each stalled a job for 40 min asking for a card's own text (2026-11-05)
+            return ('Not asked: that is on the board, not something only the person knows. Read it with read_item (the whole '
+                    'text comes back, also on a repeat read when the earlier one was cut) or read_frame, then go on. If a part '
+                    'truly cannot be read, say so in your frame and finish; ask the person only for a choice only they can make.')
         if name == 'ask_user':
             if r.get('question'):
                 return 'You already asked a question; wait for that answer first.'
@@ -1835,6 +1936,33 @@ class Runner:
             self.changed(r['board'])
         return new
 
+    def add_file(self, r, name, text):
+        """A Markdown file made by an agent: kept content-addressed with the dropped files, its words kept for search, and a
+        file card for it in the run's frame (the same card a dropped .md gets)."""
+        name = re.sub(r'[\\/:*?"<>|]+', '-', ' '.join(name.split())).strip(' .-')[:60] or 'file'
+        if not name.lower().endswith('.md'):
+            name = re.sub(r'\.[a-z0-9]{1,5}$', '', name, flags=re.I) + '.md'
+        data = text.encode()
+        fn = hashlib.sha256(data).hexdigest() + '.md'
+        files = os.path.join(os.path.dirname(self.dir), 'files')
+        os.makedirs(files, exist_ok=True)
+        path = os.path.join(files, fn)
+        if not os.path.exists(path):
+            with open(path + '.tmp', 'wb') as f:
+                f.write(data)
+            os.replace(path + '.tmp', path)
+        try:
+            tp = self.reader.path(fn)
+            if not os.path.exists(tp):
+                with open(tp + '.tmp', 'w') as f:
+                    f.write(text)
+                os.replace(tp + '.tmp', tp)
+        except (OSError, AttributeError):
+            pass
+        u = r['lay']['u']
+        return self.place(r, {'type': 'file', 'label': name, 'src': 'api/files/' + fn, 'mime': 'text/markdown', 'size': len(data),
+                              'preview': re.sub(r'[ \t]+', ' ', text[:600]).strip()}, 260 * u, 340 * u)
+
     def place_note(self, r, text, source=None, card=False):
         """A sticky note holds one short thought: a fixed square that cuts off what does not fit. Anything over 120
         characters (links not counted) is put on a card instead, whatever the agent asked for."""
@@ -1997,6 +2125,19 @@ class Runner:
         if not want:
             self.step(r, "Could not put a team together for this job, so the board's team is working on it")
             return
+        r['critic'] = None
+        if models.flag('critic'):   # the plan critic: the smallest plan that still delivers the intent (switch in Settings, 2026-11-05)
+            try:
+                v = talk.team_critic(r['task'], r.get('intent'), want, notes)
+            except (OSError, ValueError, KeyError):
+                v = None
+            if v:
+                r['critic'] = v
+                want = v['members']
+                self.step(r, 'Plan critic: ' + v['line'])
+            else:
+                r['critic'] = {'skipped': True, 'line': 'its answer could not be used, so the plan runs as designed'}
+                self.step(r, 'Plan critic: its answer could not be used, so the plan runs as designed')
         crew, used = [dict(STARTERS['lead'], id='lead')], set()
         for m in want:
             base = KIND_BASE[m['kind']]
@@ -2013,11 +2154,13 @@ class Runner:
         lines = '\n'.join('- %s: %s Done when: %s' % (m['name'], m['why'], m['done_when'] or '-') for m in crew[1:])
         r['messages'][0]['content'] = (SYSTEM + "\n\nYOUR ROLE: you are the Lead on this job's team. " + STARTERS['lead']['role'] + learned(os.path.dirname(self.dir), 'lead')
                                        + LEAD % (lines, MAX_ROUNDS)
-                                       + '\nThis team was put together for this job; each line says what that teammate is for.'
+                                       + ('\nThe plan critic found you can finish this job alone: there are no teammates. Do it yourself with your '
+                                          'tools (read what is needed, write the result in your frame with add_text) and finish. Do not use assign.'
+                                          if not crew[1:] else '\nThis team was put together for this job; each line says what that teammate is for.')
                                        + ('\nNOTES FROM EARLIER TEAMS ON SIMILAR JOBS (learn from them):\n' + r['team_notes_read']
                                           if r.get('team_notes_read') else ''))
         self.crew_chart(r, crew)
-        self.step(r, 'Put a team together for this job: ' + ', '.join(m['name'] for m in crew[1:]))
+        self.step(r, ('Put a team together for this job: ' + ', '.join(m['name'] for m in crew[1:])) if crew[1:] else 'No team: the Lead does this job alone')
 
     def crew_chart(self, r, crew, above=False):
         """The job's team as an org chart in its own frame ABOVE the team's work, drawn as the org cards the user knows (the
@@ -2122,10 +2265,16 @@ class Runner:
     def crew_now(self, r, m):
         """How one teammate's part of this job is going: (word, style, detail, frame of its latest part)."""
         if m['id'] == 'lead':
-            return {'team': ('Managing', 'working', '', r['frame']), 'working': ('Working', 'working', '', r['frame']),
-                    'queued': ('Starting', '', '', r['frame'])}.get(
+            word, cls, _, frame = {'team': ('Managing', 'working', '', r['frame']), 'working': ('Working', 'working', '', r['frame']),
+                                   'queued': ('Starting', '', '', r['frame'])}.get(
                 r['status'], (('Done, with gaps', 'waiting', '', r['frame']) if r['status'] == 'partial' else
                               ('Done', 'done', '', r['frame']) if r['status'] == 'done' else ('Stopped', '', '', r['frame'])))
+            detail = []   # the plan critic's verdict on this team, and the job's score once it ended (2026-11-05)
+            if (r.get('critic') or {}).get('line'):
+                detail.append('Plan critic: ' + r['critic']['line'])
+            if r['status'] in ENDED and (r.get('score') or {}).get('line'):
+                detail.append('Score: ' + r['score']['line'])
+            return (word, cls, ' '.join(detail), frame)
         parts = [self.runs[c] for c in r.get('children', []) if c in self.runs and (self.runs[c].get('member') or {}).get('id') == m['id']]
         if not parts:
             return ('Not started yet', '', '', None)

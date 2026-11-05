@@ -1007,13 +1007,18 @@ PROPOSE = {'type': 'function', 'function': {'name': 'propose_board_cards', 'desc
 
 INTENT_FIELDS = """ "want": "<what the user wants and why, in one or two plain sentences, spoken to them: 'You want ...'>",
  "deliver": "<what the team will hand back: the one or two that fit best, joined with 'and', only from these kinds:
-             findings with sources, a written plan, a comparison table, a working demo page on the board, drafts for
-             them to send, code changes on a branch for them to review>",
+             findings with sources, a written plan, a comparison table, the content itself written on the board (a copy,
+             a transcript, a file's text, as a card or notes), a Markdown (.md) file on the board, a working demo page on
+             the board, drafts for
+             them to send, code changes on a branch for them to review. Never promise a demo page
+             when the user asked for a copy, a file or words: a demo is only for something they will click and try>",
  "cannot": "<the part of the JOB THE USER ASKED FOR that no team can do, or empty (usually empty). Never name things the user did
             not ask for (the user asked to find practices for sale: buying one or contacting sellers is NOT part of it). A team CAN write code for Clewbert,
             on its own branch that the user reviews. It cannot put anything live (deploy, merge, change the running
             app), cannot store sign-ins, tokens or keys, cannot run the app or its tests, and nothing it makes keeps
-            running after it ends. One short phrase, under 12 words, e.g. 'put the new code live'>",
+            running after it ends. It can make a Markdown (.md) file on the board, but not a PDF, a Word file or a
+            spreadsheet: 'drop it back as a PDF' -> cannot: 'make a PDF; it makes a .md file'.
+            One short phrase, under 12 words, e.g. 'put the new code live'>",
  "acts": true or false (true only when the job means sending messages, posting, or spending money)"""
 INTENT = """The user is about to give a job to a team of AI agents on their Clewbert boards. Say plainly what the
 team will and will not hand back. Reply with JSON only:
@@ -1125,6 +1130,98 @@ def team_design(task, intent=None, extra_kinds='', notes=''):
                             'does': ' '.join(str(m.get('does') or '').split())[:300],
                             'done_when': ' '.join(str(m.get('done_when') or '').split())[:300]})
     return members[:5]
+
+
+TEAM_CRITIC = """A team of AI agents is about to start a job on the user's Clewbert boards. A designer proposed the team below.
+You are the plan critic: find the SMALLEST plan that still delivers the whole intent. Judge every member against WHAT THE USER ASKED
+FOR, in their own words, and what the team must hand back. Waste is members whose work the ask never mentioned (a study of a
+format when the ask is a copy; a demo when the ask is words or a file; a checker when there is one source to copy), two members
+doing one person's job, and methods bigger than the job (a board-wide search for a card whose id is known). A designer's
+"done when" line is not a reason to keep a member: only the ask and what the team hands back are.
+You may:
+- cut a member whose part the ask never mentioned (say why);
+- merge members whose parts are one person's job into one (say why; its done_when must still cover every merged part);
+- add a one-line "method" note to a member: how to do its part with the least work (not a smaller goal);
+- say "alone": true when the Lead can finish the job itself in one or two steps with only these tools: search the board, read
+  an item or a frame, write text in its own frame, make a Markdown (.md) file, finish. The Lead cannot read web pages or build pages.
+You may NOT change the task, drop anything the team must hand back, weaken a done_when, or add members. When in doubt, keep.
+Members kept keep their exact kind, name and done_when. Reply with JSON only:
+{"members": [{"kind": "...", "name": "...", "does": "...", "done_when": "..."}],
+ "cut": [{"name": "<a proposed member>", "why": "<one short sentence>"}],
+ "merged": [{"into": "<new name, 2 to 4 words>", "from": ["<proposed name>", "..."], "why": "<one short sentence>"}],
+ "method": [{"name": "<a kept member>", "note": "<one line>"}],
+ "alone": false,
+ "reason": "<one sentence: what the smallest full delivery looks like>"}"""
+
+
+def team_critic(task, intent, members, notes='', kinds=TEAM_KINDS):
+    """The plan critic's verdict on a designed team (2026-11-05): a smaller list of members, or the same one, with its reasons.
+    Returns None when the answer cannot be used (then the designer's plan runs as it was). Never changes a done_when except
+    to restore one the critic left out."""
+    if not members:
+        return None
+    it = intent or {}
+    job = 'THE JOB: %s%s%s%s\n\nTHE PROPOSED TEAM:\n%s%s' % (
+        task, '\nWHAT IAN ASKED FOR: %s' % it['want'] if it.get('want') else '',
+        '\nThe team hands back: %s.' % it['deliver'] if it.get('deliver') else '',
+        '\nNo team can do this part, so it is already left out: %s.' % it['cannot'] if it.get('cannot') else '',
+        '\n'.join('- %s (%s): %s Done when: %s' % (m['name'], m['kind'], m.get('does') or '', m.get('done_when') or '-') for m in members),
+        '\n\nNOTES FROM EARLIER TEAMS ON SIMILAR JOBS:\n' + notes if notes else '')
+    out = chat([{'role': 'system', 'content': TEAM_CRITIC}, {'role': 'user', 'content': job}], 900, timeout=90)
+    if not isinstance(out, dict):
+        return None
+    by = {m['name'].lower(): m for m in members}
+    clean = lambda s, n: ' '.join(str(s or '').split())[:n]
+    merged, cut, method = [], [], []
+    for x in out.get('merged') or []:
+        if isinstance(x, dict) and isinstance(x.get('from'), list):
+            src = [by[str(n).lower()] for n in x['from'] if str(n).lower() in by]
+            if len(src) >= 2 and clean(x.get('into'), 40):
+                merged.append({'into': clean(x['into'], 40), 'from': [m['name'] for m in src], 'why': clean(x.get('why'), 200)})
+    into = {x['into'].lower(): x for x in merged}
+    for x in out.get('cut') or []:
+        if isinstance(x, dict) and str(x.get('name', '')).lower() in by:
+            cut.append({'name': by[str(x['name']).lower()]['name'], 'why': clean(x.get('why'), 200)})
+    for x in out.get('method') or []:
+        if isinstance(x, dict) and clean(x.get('note'), 200):
+            method.append({'name': clean(x.get('name'), 40), 'note': clean(x['note'], 200)})
+    kept = []
+    for m in out.get('members') or []:
+        if not isinstance(m, dict):
+            continue
+        name = clean(m.get('name'), 40)
+        if name.lower() in by:   # a kept member: exactly as proposed, plus a method note
+            orig = by[name.lower()]
+            kept.append(dict(orig))
+        elif name.lower() in into:   # a merged member: its done_when must cover every part it took over
+            srcs = [by[n.lower()] for n in into[name.lower()]['from']]
+            kind = str(m.get('kind', '')).lower() if str(m.get('kind', '')).lower() in kinds else srcs[0]['kind']
+            dw = clean(m.get('done_when'), 300) or ' and '.join(s['done_when'] for s in srcs if s.get('done_when'))
+            kept.append({'kind': kind, 'name': name, 'does': clean(m.get('does'), 300) or '; '.join(s.get('does') or '' for s in srcs), 'done_when': dw})
+        else:
+            return None   # a member the designer never proposed: the plan cannot be trusted
+    for m in kept:
+        note = next((x['note'] for x in method if x['name'].lower() == m['name'].lower()), '')
+        if note:
+            m['does'] = (m['does'] + ' Method: ' + note)[:400]
+    alone = bool(out.get('alone')) and not kept
+    if not kept and not alone:
+        return None
+    if len(kept) > len(members):
+        return None
+    gone = {x['name'].lower() for x in cut} | {n.lower() for x in merged for n in x['from']}
+    for m in members:   # a member neither kept nor cut nor merged: the critic forgot it, so it stays
+        if m['name'].lower() not in {k['name'].lower() for k in kept} and m['name'].lower() not in gone and not alone:
+            kept.append(dict(m))
+    words = []
+    if cut:
+        words.append('cut ' + ', '.join(x['name'] for x in cut))
+    for x in merged:
+        words.append('merged %s into %s' % (' + '.join(x['from']), x['into']))
+    line = ('the Lead can do this alone' if alone else 'kept %d of %d' % (len(kept), len(members))) + (' (%s)' % '; '.join(words) if words else '')
+    reason = clean(out.get('reason'), 300)
+    return {'members': kept[:5], 'cut': cut, 'merged': merged, 'method': method, 'alone': alone, 'reason': reason,
+            'before': len(members), 'after': len(kept), 'line': line + (': ' + reason if reason else '')}
 
 
 TEAM_PLAN = """The user wants a team of AI agents to take on a job in their Clewbert app. Work out how to set it up.

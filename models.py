@@ -45,12 +45,20 @@ def load():
     return _cache['data']
 
 
+FLAGS = ('critic',)   # on/off switches: critic = the plan critic reviews every team design before the team starts (off until its experiment is done, 2026-11-05)
+
+
+def flag(name):
+    return bool((load().get('flags') or {}).get(name))
+
+
 def public():
     """What the Settings card shows: the choice per job, and for each key only whether it is set and its last 4 characters."""
     s = load()
     return {'jobs': {j: s.get('jobs', {}).get(j) or {'provider': 'local', 'model': ''} for j in JOBS},
             'keys': {p: ('…' + k[-4:]) if k else '' for p, k in ((p, s.get('keys', {}).get(p)) for p in PROVIDERS)},
-            'providers': {p: v['name'] for p, v in PROVIDERS.items()}, 'servers': s.get('servers') or []}
+            'providers': {p: v['name'] for p, v in PROVIDERS.items()}, 'servers': s.get('servers') or [],
+            'flags': {f: bool((s.get('flags') or {}).get(f)) for f in FLAGS}}
 
 
 def save(change):
@@ -65,6 +73,9 @@ def save(change):
                     s['jobs'][j]['url'] = url[:300]
         if isinstance(change.get('servers'), list):   # more of your own model servers to offer, beyond the startup ones
             s['servers'] = [str(u).strip().rstrip('/')[:300] for u in change['servers'] if str(u).strip().startswith('http')][:20]
+        for f, v in (change.get('flags') or {}).items():
+            if f in FLAGS:
+                s.setdefault('flags', {})[f] = bool(v)
         for p, k in (change.get('keys') or {}).items():
             if p in PROVIDERS:
                 if k is None:

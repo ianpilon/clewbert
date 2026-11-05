@@ -655,6 +655,8 @@
   .stg .stg-job{border:1px solid var(--border);border-radius:10px;padding:9px 10px;margin-top:6px}
   .stg .stg-jn{font-size:12.5px;color:var(--muted);margin-bottom:6px}
   .stg .stg-jn b{color:var(--ink);font-size:13.5px;margin-right:4px}
+  .stg .stg-flag{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;line-height:1.45;color:var(--muted)}
+  .stg .stg-flag input{margin:3px 0 0;flex:none}
   .stg .stg-res{font-size:12px;margin-top:5px;line-height:1.4}
   .stg .stg-res.ok{color:var(--green)}
   .stg .stg-res.bad{color:var(--red)}
@@ -1217,6 +1219,7 @@
   <p class="stg-hint">Pick the model for each job. <b>Your own machines</b> keeps everything at home. With an outside provider, everything that job reads (board text, your questions, screenshots) is sent to that provider.</p>
   <label>Models</label>
   <div id="stgJobs"></div>
+  <div id="stgFlags"></div>
   <label>Your own model servers <span>machines on your network that serve models</span></label>
   <div id="stgSrv"></div>
   <label>Connected apps <span>what the agents can use; sending or changing anything always asks you first</span></label>
@@ -3340,6 +3343,8 @@ function stgPaint(){
   $('#stgJobs').innerHTML=STG_JOBS.map(([j,name,what])=>{const c=d.jobs[j];return `<div class="stg-job" data-job="${j}"><div class="stg-jn"><b>${name}</b>${what}</div>
     <div class="oe-row"><select class="stg-p" title="Who runs this job"><option value="local">Your own machines</option>${provs.map(([p,n])=>`<option value="${p}"${c.provider===p?' selected':''}>${escapeHtml(n)}</option>`).join('')}</select>
     <input class="stg-m" list="stgL-${j}" value="${escapeAttr(c.model||'')}" autocomplete="off" spellcheck="false"><select class="stg-l" title="Which of your own models runs this job" hidden></select><datalist id="stgL-${j}"></datalist><button class="oe-cx stg-test" title="Save, then send this model one tiny question">Test</button></div><div class="stg-res"></div></div>`;}).join('');
+  $('#stgFlags').innerHTML=`<div class="stg-job" data-flag="critic"><div class="stg-jn"><b>Plan critic</b>reviews every new team before it starts</div>
+    <div class="oe-row"><label class="stg-flag"><input type="checkbox" class="stg-f"${d.flags&&d.flags.critic?' checked':''}> On: the critic hands the Lead the smallest team that still delivers the whole job, with a reason for every member it cuts. Off: teams run exactly as designed. Either way every job gets a score when it ends, so the two can be compared on the Agents screen.</label></div></div>`;
   $('#stgKeys').innerHTML=provs.map(([p,n])=>`<div class="oe-row" data-prov="${p}"><span class="stg-kn">${escapeHtml(n)}</span>
     <input type="password" class="stg-k" autocomplete="new-password" spellcheck="false" placeholder="${d.keys[p]?'Saved, ends in '+escapeAttr(d.keys[p].slice(1)):'Paste your '+escapeAttr(n)+' key'}">${d.keys[p]?'<button class="oe-cx stg-rm" title="Delete this key from the server">Remove</button>':''}</div>`).join('');
   document.querySelectorAll('#stgJobs .stg-job').forEach(row=>{
@@ -3417,7 +3422,8 @@ function stgGather(){
 }
 async function stgSave(done){
   const g=stgGather();if(g.problem&&!STG.drop.size){stgMsg(g.problem,true);return false;}
-  try{STG.data=await api('settings',putJson(JSON.stringify({jobs:g.jobs,keys:g.keys})));}catch(e){stgMsg('Not saved. Reload the page and try again.',true);return false;}
+  const flags={};document.querySelectorAll('#stgFlags [data-flag]').forEach(x=>flags[x.dataset.flag]=x.querySelector('.stg-f').checked);
+  try{STG.data=await api('settings',putJson(JSON.stringify({jobs:g.jobs,keys:g.keys,flags})));}catch(e){stgMsg('Not saved. Reload the page and try again.',true);return false;}
   Object.keys(g.keys).forEach(p=>delete STG.lists[p]);STG.drop=new Set();stgPaint();stgMsg(done||'Saved. The next question or task uses these.');return true;
 }
 async function stgTest(row){
@@ -4673,7 +4679,7 @@ function agvProfile(a){   // an agent's page, like a profile: who it is, why it 
     `<span class="agv-res">${escapeHtml(x.status==='task'?'Suggested task':x.status==='note'?'Noted':x.status==='stuck'?'Flagged as stuck':x.status==='restarted'?'Restarted':AG_LABEL[x.status]||x.status||'')}</span> `;
   const job=x=>{const href=x.id?'#agents/'+x.id:x.board?'#'+x.board:'';
     return `<${href?'a href="'+escapeAttr(href)+'"':'div'} class="job"><div class="l">${escapeHtml(x.task)}</div>
-      ${x.madeFor?`<div class="mf">Made for this job as <b>${escapeHtml(x.madeFor)}</b>${x.why?': '+escapeHtml(x.why):''}</div>`:''}
+      ${x.madeFor?`<div class="mf">Made for this job as <b>${escapeHtml(x.madeFor)}</b>${x.why?': '+escapeHtml(x.why):''}</div>`:''}${x.line?`<div class="mf">${escapeHtml(x.line)}</div>`:''}
       <div class="m">${pill(x)}${escapeHtml([x.boardName,x.when?vcAgo(x.when):''].filter(Boolean).join(' · '))}</div></${href?'a':'div'}>`;};
   return `<div class="agv-prof"><div class="hd" style="--c:${escapeAttr(a.color)}">${agvBot(a.color)}<div><h2>${escapeHtml(a.name)}</h2><p>${escapeHtml(a.what)}</p></div></div>
     ${a.facts.length?`<div class="facts">${a.facts.map(([k,v])=>`<div><b>${escapeHtml(v)}</b><span>${escapeHtml(k)}</span></div>`).join('')}</div>`:''}
@@ -4760,6 +4766,8 @@ function agvDetail(r){
     <h2>${escapeHtml(r.task)}</h2><div class="agv-meta">${escapeHtml(who)} · started ${escapeHtml(vcAgo(r.created))}${r.ended?' · ended '+escapeHtml(vcAgo(r.ended)):''}</div></div>
     ${agvWaitingRuns(r).map(w=>`<div class="agv-sec agv-ask"><label>${escapeHtml(w.member?w.member.name:'The agent')} is asking</label><p>${escapeHtml(w.question)}</p>
       <form data-answer="${escapeAttr(w.id)}"><textarea rows="2" placeholder="Your answer"></textarea><button class="pri">Send answer</button></form></div>`).join('')}
+    ${r.critic?`<div class="agv-sec"><label>Plan critic</label><p>${escapeHtml(r.critic)}</p></div>`:''}
+    ${r.score?`<div class="agv-sec"><label>Score</label><p>${escapeHtml(r.score)}</p></div>`:''}
     ${r.summary?`<div class="agv-sec"><label>Result</label><p>${escapeHtml(r.summary)}</p></div>`:''}
     ${r.error?`<div class="agv-sec"><label>Stopped by an error</label><p>${escapeHtml(r.error)}</p></div>`:''}
     ${(r.demos||[]).length?`<div class="agv-sec"><label>Demos</label>${r.demos.map((d,n)=>`<a href="${escapeAttr(d)}" target="_blank" rel="noopener">Open demo${r.demos.length>1?' '+(n+1):''} ↗</a>`).join(' ')}</div>`:''}

@@ -2522,7 +2522,8 @@ def agent_library():
         return ('%s on %s (an outside provider)' % (c[1], c[0])) if c else 'your own machines'
     names = lambda tools: {t['function']['name'] for t in tools}
     uses = {'search_board': 'reads the board', 'add_text': 'writes in its frame', 'ask_user': 'asks you', 'assign': 'hands parts to teammates',
-            'web_search': 'searches and reads the web', 'make_demo': 'builds a demo page and tries it like a person'}
+            'web_search': 'searches and reads the web', 'make_demo': 'builds a demo page and tries it like a person',
+            'add_file': 'makes a Markdown file on the board'}
     google = bool((integrations.load().get('google') or {}).get('refresh_token'))
     rs = ROUTER.state
     c = rs.get('counts') or {}
@@ -2546,15 +2547,19 @@ def agent_library():
         {'name': 'Board brief writer', 'color': '#0f766e', 'what': 'In the background reads each whole board, part by part, and writes '
          'one brief of it, so the Assistant can answer about a board of any size.', 'never': 'Changes a board. It pauses while you are asking.',
          'status': '%d boards have a brief, on %s.' % (briefs, model('voice'))},
+        {'name': 'Plan critic', 'color': '#b45309', 'what': 'Reads the team a Lead designed for a job before anyone starts, and hands back the '
+         'smallest plan that still delivers the whole intent: members cut or merged, each with a reason, or the Lead alone.',
+         'never': 'Changes the task, drops anything the team must hand back, weakens a done-when line, or adds members.',
+         'status': ('On: every new team passes through it, on %s.' % model('agents')) if models.flag('critic') else 'Off (Settings): teams run as designed.'},
     ]
     lead = names(agents.LEAD_TOOLS)
     worker = names(agents.TOOLS)
     team = []
     for key, m in agents.STARTERS.items():
         if key == 'lead':
-            u = [uses[n] for n in ('search_board', 'add_text', 'ask_user', 'assign') if n in lead | {'assign'}]
+            u = [uses[n] for n in ('search_board', 'add_text', 'add_file', 'ask_user', 'assign') if n in lead | {'assign'}]
         else:
-            u = [uses[n] for n in ('search_board', 'add_text', 'web_search', 'ask_user') if n in worker]
+            u = [uses[n] for n in ('search_board', 'add_text', 'add_file', 'web_search', 'ask_user') if n in worker]
             if agents.BROWSER_URL:
                 u.append('clicks, types and fills in forms in the agents\' browser')
             if key.startswith('engineer'):
@@ -2663,7 +2668,10 @@ BUILTIN_WHY = {
               'with code rules first and the model second, and nothing is done without you while it is new.',
     'watchdog': 'Added on Nov 3, 2026, after DeepSeek\'s Super-agent article: teams were left showing "Stopped: didn\'t finish" or '
                 'went quiet with nobody noticing.',
-    'board-brief-writer': 'Added so a question can be answered about a board of any size: a question only sees about 3,000 words of a board at once.'}
+    'board-brief-writer': 'Added so a question can be answered about a board of any size: a question only sees about 3,000 words of a board at once.',
+    'plan-critic': 'Added on Nov 5, 2026, after a five-member team spent 68 model calls and 121 tool calls on a job that was one read and one '
+                   'write (copy a card to a file): the team designer matched the job to its role templates, not to the size of the intent. '
+                   'The critic is one agent with a switch, so it can be tested on the same job with it on and off, and removed without touching the rest.'}
 
 
 # what each kind of question to the Assistant would take a person, in minutes: (label, skill, what one is called, minutes)
@@ -2861,6 +2869,19 @@ def agent_profile(key):
                              'status': 'task' if i.get('router') and i.get('color') == router.COLORS['task'] else 'note'} for i in cards[:100]]
         elif key == 'watchdog':
             a['history'] = list(reversed(WATCHDOG.events[-100:]))
+        elif key == 'plan-critic':
+            names = board_names()
+            jobs = sorted([x for x in RUNNER.view() if not x.get('parent') and x.get('crew')], key=lambda x: -x['created'])
+            seen = [x for x in jobs if x.get('critic')]
+            with RUNNER.lock:
+                full = {x['id']: RUNNER.runs.get(x['id']) or {} for x in jobs}
+            cuts = sum(f.get('critic', {}).get('before', 0) - f.get('critic', {}).get('after', 0) for f in full.values() if f.get('critic') and not f['critic'].get('skipped'))
+            a['facts'] = [['Teams reviewed', str(len(seen))], ['Members cut or merged away', str(cuts)],
+                          ['Jobs scored', str(sum(1 for x in jobs if x.get('score')))]]
+            a['history'] = [{'task': x['task'], 'board': x['board'], 'boardName': names.get(x['board'], ''), 'id': x['id'], 'when': x.get('ended') or x['created'],
+                             'status': x['status'], 'check': {'pass': not full[x['id']].get('gaps')} if full[x['id']].get('final_done') else None,
+                             'line': ' | '.join(l for l in [('Critic: ' + x['critic']) if x.get('critic') else 'Critic off', ('Score: ' + x['score']) if x.get('score') else ''] if l)}
+                            for x in jobs[:100]]
         elif key == 'board-brief-writer':
             d = os.path.join(DATA, 'briefs')
             files = sorted((f for f in os.listdir(d) if f.endswith('.json')), key=lambda f: -os.path.getmtime(os.path.join(d, f))) if os.path.isdir(d) else []
@@ -2903,6 +2924,12 @@ def agent_how(key, a):
                         'To change what it does, edit the rules note on the Incoming board.', 'link': a.get('link'), 'model': 'your own machines only'}
     if key == 'watchdog':
         return {'prompt': router.__doc__.split('\n\n')[1].replace('\n', ' '), 'note': 'Plain code, no model: it checks every minute.'}
+    if key == 'plan-critic':
+        return {'prompt': talk.TEAM_CRITIC, 'model': a.get('model') or (models.choice('agents') or (None, 'your own machines'))[1],
+                'note': 'One model call per team, after the team designer and before any member starts. Code checks its answer: a member it '
+                        'names that the designer never proposed, or an empty plan, means the designer\'s plan runs unchanged. Every job\'s score '
+                        '(model calls, tool calls, web pages, time, members, items, questions, checks) is read from the saved runs after it ends, '
+                        'critic or not, so on and off can be compared on the same job. The switch is in Settings.'}
     if key == 'board-brief-writer':
         return {'prompt': ' '.join(briefs.__doc__.split('\n\n')[1].split()), 'note': 'Runs on %s.' % ('an outside provider' if models.choice('voice') else 'your own machines')}
     if key == 'assistant':
