@@ -305,7 +305,8 @@ the board: that frame is where the person looks, there is no chat. Work like thi
 - When the task is done, call finish with a short summary of what you found and what is still open.
 You cannot send email or messages, call, buy or sign up for anything: never offer to.
 On the board you can add to your frame, read every item of a frame (read_frame) and move existing items into new
-titled groups in your frame (group_items). Read the items your task names and your teammates' frames; the other frames
+titled groups in your frame (group_items). Never redraw, sketch or recreate a picture that is on the board: name it by
+its id (pictures go into a post by id). Read the items your task names and your teammates' frames; the other frames
 on the board are earlier work (old runs, tests), so read one only when your task names it or what you need is not in
 the items you were given. You cannot edit, delete or recolour items, or move frames: never say you did.
 Never fill a gap with what is typical or likely ("it probably uses React", "you could try their contact form"): if you
@@ -1527,7 +1528,8 @@ class Runner:
         if name == 'assign' and r.get('lead'):
             return self.assign(r, a.get('assignments'), call_id)
         if name == 'finish' and r.get('parent') and BUILDING.search(r['task']) and not r.get('built') and not r.get('lead') \
-                and r.get('nudged_build', 0) < 3 and BROWSER_URL is not None:
+                and r.get('nudged_build', 0) < 3 and BROWSER_URL is not None \
+                and (r.get('member') or {}).get('kind') not in ('write', 'distill', 'research', 'check', 'analyze'):   # "build the post from..." is not a demo (2026-11-06: a writer drew the dogs)
             r['nudged_build'] = r.get('nudged_build', 0) + 1
             return 'Not finished: your part is to build a working demo, and none is built yet. Build it with make_demo first.'
         if name == 'finish':
@@ -1636,10 +1638,15 @@ class Runner:
             a = dict(a, _board=r['board'], _selected=r.get('selected') or [])
             d = integrations.substack_draft(a)
             try:
+<<<<<<< clewbert
                 self.substack_cards(r, d)   # what the post will look like, and the Publish button, on the board (2026-11-06)
+=======
+                self.substack_cards(r, d)   # what the post will look like, and the Publish button, on the board (Ian, 2026-11-06)
+                shown = ' The board now shows a preview of the post and its Publish card in your frame: add no card, note or demo about the draft, and never redraw a picture. Finish.'
+>>>>>>> main
             except (OSError, ValueError, KeyError, TypeError):
-                pass
-            return integrations.substack_draft_text(d)[:integrations.TOOL_CHARS]
+                shown = ''
+            return (integrations.substack_draft_text(d) + shown)[:integrations.TOOL_CHARS]
         return str(fn(a))[:integrations.TOOL_CHARS]
 
     def substack_cards(self, r, d):
