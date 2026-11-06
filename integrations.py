@@ -614,13 +614,13 @@ def substack_draft(a):
             cover_url = _substack_image(s['subdomain'], cover)[0]
         except OSError:
             cover_url = ''
-    images, missing = {}, []   # pictures from the board inside the post, in the order given (2026-11-06)
+    images, missing, picture_urls = {}, [], {}   # pictures from the board inside the post, in the order given (2026-11-06)
     for pid in [str(x) for x in (a.get('pictures') or []) if str(x).strip()][:12]:
         got = PICTURE(str(a['_board']), pid) if PICTURE and a.get('_board') else None
         if not got:
             missing.append(pid)
             continue
-        images[pid] = _substack_image(s['subdomain'], got[0], got[1])[1]
+        picture_urls[pid], images[pid] = _substack_image(s['subdomain'], got[0], got[1])
     draft = {'draft_title': title, 'draft_subtitle': re.sub(r'\s+', ' ', str(a.get('subtitle') or '')).strip()[:200],
              'draft_body': _substack_body(body, images), 'type': 'newsletter', 'audience': 'everyone',
              'draft_bylines': [{'id': s.get('user_id'), 'publicationUserId': s.get('pub_user_id'), 'is_guest': False}]}
@@ -629,8 +629,9 @@ def substack_draft(a):
     r = _substack('POST', 'https://%s.substack.com/api/v1/drafts' % s['subdomain'], draft)
     if not isinstance(r, dict) or not r.get('id'):
         raise OSError('Substack did not say it saved the draft.')
-    return {'id': r['id'], 'title': title, 'publication': s.get('publication', ''), 'cover': note if cover_url else '',
-            'pictures': len(images), 'missing': missing, 'url': 'https://%s.substack.com/publish/post/%s' % (s['subdomain'], r['id'])}
+    return {'id': r['id'], 'title': title, 'subtitle': draft['draft_subtitle'], 'body': body, 'publication': s.get('publication', ''),
+            'cover': note if cover_url else '', 'cover_url': cover_url, 'pictures': len(images), 'picture_urls': picture_urls, 'missing': missing,
+            'url': 'https://%s.substack.com/publish/post/%s' % (s['subdomain'], r['id'])}
 
 
 def substack_publish(a):
@@ -660,7 +661,11 @@ def substack_publish_tool(a):
 
 
 def substack_draft_tool(a):
-    d = substack_draft(a)
+    return substack_draft_text(substack_draft(a))
+
+
+def substack_draft_text(d):
+    """What the agent is told after substack_draft (the runner also puts the preview and the Publish card on the board)."""
     return 'Saved on Substack as a draft, not published: "%s" on %s. Cover picture: %s. Pictures inside the post: %d%s. The person can open it at %s' % (
         d['title'], d['publication'], d['cover'] or 'none (Substack shows the newsletter logo)', d['pictures'],
         ' (not pictures on this board, left out: %s)' % ', '.join(d['missing']) if d['missing'] else '', d['url'])

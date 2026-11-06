@@ -184,7 +184,10 @@ STARTERS = {
         'Rules: never add a fact, a claim, a name or an opinion that is not in the dump; never paraphrase a point into someone '
         'else\'s voice, keep the speaker\'s sentence where it stands on its own and only trim around it; keep the speaker\'s '
         'tone, swearing included, unless it was filler; keep the order the speaker reached the points in unless two passages '
-        'are clearly one point; an aside is listed, never deleted silently; nothing marked uncertain, no questions back.\n'
+        'are clearly one point; an aside is listed, never deleted silently; nothing marked uncertain, no questions back. '
+        'A word that is plainly a speech-to-text slip ("out of my house onto paper" for head) stays as said in the piece and '
+        'goes on ONE add_note that starts "Heard as:", each slip with the word it probably was, so the speaker can fix it; '
+        'never change it yourself.\n'
         'Deliver with add_file, as a Markdown file named after the dump: a first line "What you\'re getting at:" with the point '
         'in one sentence of the speaker\'s words; then the points as short paragraphs or a list, each in the speaker\'s words; '
         'then "Set aside:" with the asides, one line each. Then add_note with the "What you\'re getting at" sentence alone, '
@@ -302,7 +305,9 @@ the board: that frame is where the person looks, there is no chat. Work like thi
 - When the task is done, call finish with a short summary of what you found and what is still open.
 You cannot send email or messages, call, buy or sign up for anything: never offer to.
 On the board you can add to your frame, read every item of a frame (read_frame) and move existing items into new
-titled groups in your frame (group_items). You cannot edit, delete or recolour items, or move frames: never say you did.
+titled groups in your frame (group_items). Read the items your task names and your teammates' frames; the other frames
+on the board are earlier work (old runs, tests), so read one only when your task names it or what you need is not in
+the items you were given. You cannot edit, delete or recolour items, or move frames: never say you did.
 Never fill a gap with what is typical or likely ("it probably uses React", "you could try their contact form"): if you
 did not find it, say plainly that you did not find it.
 Write plainly, in short sentences. Do not repeat what is already in the frame."""
@@ -325,6 +330,8 @@ How you work:
 - To rearrange, regroup or sort what is on the board, hand that part to a teammate: they read every item of a frame
   (read_frame) and move the items into titled groups (group_items). Tell them which frame. Nothing on the board moves
   unless a teammate does that, so never report the board as rearranged otherwise.
+- Read the selected items and your teammates' frames. The other frames on the board are earlier work (old runs, tests):
+  read one only when the task names it, or a part came back short and the answer may be there.
 - Keep each part SMALL: one thing one teammate can finish in about 12 steps ("the pricing page of ElevenLabs", not
   "pricing for five vendors"). Hand out many small parts rather than a few big ones, up to 8 at once. Give every part
   a done_when: what must be in that teammate's frame for the part to count as done, something a checker can see ("a
@@ -1627,7 +1634,60 @@ class Runner:
         self.step(r, 'Used %s: %s%s' % (name, shown, ' (you said yes)' if needs_yes else ''))
         if name == 'substack_draft':   # the post's cover picture comes from this board and the cards the job was started on
             a = dict(a, _board=r['board'], _selected=r.get('selected') or [])
+            d = integrations.substack_draft(a)
+            try:
+                self.substack_cards(r, d)   # what the post will look like, and the Publish button, on the board (2026-11-06)
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+            return integrations.substack_draft_text(d)[:integrations.TOOL_CHARS]
         return str(fn(a))[:integrations.TOOL_CHARS]
+
+    def substack_cards(self, r, d):
+        """After a teammate saves a Substack draft: a sealed preview page of the post as it will look (cover, title, subtitle,
+        the body with its pictures where they sit) and, beside it, the same draft card the note menu makes, with its
+        Publish button, so the person's yes is one look and one click on the board."""
+        import html as h
+        u = r['lay']['u']
+        paras = []
+        for line in str(d.get('body') or '').split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            p = re.match(r'^\[picture\s+([^\]\s]+)\]$', line, re.I)
+            if p:
+                if d['picture_urls'].get(p.group(1)):
+                    paras.append('<figure><img src="%s" alt=""></figure>' % h.escape(d['picture_urls'][p.group(1)]))
+                continue
+            m = re.match(r'^(#{1,3})\s+(.+)$', line)
+            paras.append('<h%d>%s</h%d>' % (len(m.group(1)) + 1, h.escape(m.group(2)), len(m.group(1)) + 1) if m else '<p>%s</p>' % h.escape(line))
+        placed = set(re.findall(r'^\[picture\s+([^\]\s]+)\]$', str(d.get('body') or ''), re.I | re.M))
+        paras += ['<figure><img src="%s" alt=""></figure>' % h.escape(url) for pid, url in d['picture_urls'].items() if pid not in placed]
+        page = ('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s</title>'
+                '<style>body{margin:0;background:#fff;color:#1a1a1a;font:17px/1.6 Georgia,"Times New Roman",serif}'
+                '.wrap{max-width:680px;margin:0 auto;padding:28px 24px 60px}.tag{font:600 12px/1 system-ui,sans-serif;letter-spacing:.08em;'
+                'text-transform:uppercase;color:#b45309;background:#fff7ed;border:1px solid #fed7aa;border-radius:999px;padding:6px 10px;display:inline-block;margin-bottom:18px}'
+                'h1{font:700 34px/1.15 system-ui,-apple-system,sans-serif;margin:0 0 8px}.sub{font:400 19px/1.4 system-ui,sans-serif;color:#555;margin:0 0 18px}'
+                '.by{font:13px/1.4 system-ui,sans-serif;color:#777;margin:0 0 22px;padding-bottom:18px;border-bottom:1px solid #eee}'
+                'figure{margin:22px 0}img{display:block;max-width:100%%;height:auto;border-radius:6px}p{margin:0 0 18px}h2,h3{font-family:system-ui,sans-serif}</style></head>'
+                '<body><div class="wrap"><span class="tag">Draft, not published</span>%s<h1>%s</h1>%s<div class="by">%s &middot; goes out only after you press Publish on the board</div>%s</div></body></html>') % (
+            h.escape(d['title']), '<figure><img src="%s" alt=""></figure>' % h.escape(d['cover_url']) if d.get('cover_url') else '',
+            h.escape(d['title']), '<p class="sub">%s</p>' % h.escape(d['subtitle']) if d.get('subtitle') else '',
+            h.escape(d.get('publication') or 'your newsletter'), ''.join(paras))
+        did = '%s-substack-preview' % r['id']
+        with open(os.path.join(self.demos, did + '.html.tmp'), 'w') as f:
+            f.write(page)
+        os.replace(os.path.join(self.demos, did + '.html.tmp'), os.path.join(self.demos, did + '.html'))
+        r.setdefault('demos', {})[did] = r.get('demos', {}).get(did, 0) + 1
+        r['demo_v'] = r.get('demo_v', 0) + 1
+        self.place(r, {'type': 'web', 'url': 'api/demos/%s.html' % did, 'demo': True, 'run': r['id'], 'label': 'Substack preview: ' + d['title']},
+                   r['lay']['inner'], 560 * u, wide=True)
+        pub = d.get('publication') or 'your newsletter'
+        self.place(r, {'type': 'link', 'url': d['url'], 'sub': {'id': str(d['id']), 'state': 'draft', 'title': d['title'], 'pub': pub},
+                       'unfurl': {'title': 'Substack draft: ' + d['title'], 'img': d.get('cover_url') or '', 'pub': 'substack.com',
+                                  'desc': 'Saved as a draft on %s by the team.%s Not live yet: press Publish\u2026 here when it is ready, or open it on Substack to edit it first.' % (
+                                      pub, ' Cover picture: %s.' % d['cover'] if d.get('cover') else ' No cover picture: Substack will show the newsletter logo.')}},
+                   300 * u, (270 if d.get('cover_url') else 132) * u)
+        self.step(r, 'Put the post preview and its Publish button on the board')
 
     def use_browser(self, r, name, a):
         cmd = name[len('browser_'):]
