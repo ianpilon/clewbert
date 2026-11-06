@@ -25,7 +25,9 @@ CODE_MODEL_NAMES = {m for _, m in CODE_MODELS}
 VISION_MODEL_URL = os.environ.get('AGENT_VISION_MODEL_URL', '')
 VISION_MODEL = os.environ.get('AGENT_VISION_MODEL', '')
 WORKERS = int(os.environ.get('AGENT_WORKERS', '3'))
+TRANSCRIBE_URL = os.environ.get('TRANSCRIBE_URL', '').rstrip('/')   # a whisper service (see transcribe/serve.py in the private app): empty = no transcriber
 MAX_STEPS = 40
+RETRY_STEPS = 12         # a job the Watchdog starts again gets a short second go, from what it already found (a restarted Lead once ran 46 more steps of the same search, 2026-11-05)
  # a page that turns automated readers away: Cloudflare and the like ("Sorry, you have been blocked", Nov 2: 3 of 6 tries
 # went back to the same blocked site)
 BLOCKED_PAGE = re.compile(r'sorry, you have been blocked|attention required! \| cloudflare|^just a moment\.\.\.|access denied|'
@@ -58,7 +60,7 @@ def card_text(text):
 ON_THE_BOARD = re.compile(r'\b(paste|the (full|whole|complete|entire|rest of the|end of the|final|last|middle)[^?]{0,40}'
                           r'(text|words|content|quote|sentence|reason|note|file|transcript)|unverified|cut off|truncat|preview|'
                           r'send me|share the|provide the|give me the|confirm (the|that|what)|the exact (text|wording))\b', re.I)
-WRITES = ('add_note', 'add_card', 'add_text', 'add_link', 'add_file', 'finish', 'ask_user', 'assign', 'make_demo', 'group_items')
+WRITES = ('add_note', 'add_card', 'add_text', 'add_link', 'add_file', 'transcribe', 'finish', 'ask_user', 'assign', 'make_demo', 'group_items')
 # a task that asks to rearrange what is on the board (it once ended "Done, restructured" with nothing moved)
 REARRANGE = re.compile(r"\b(re-?arrang\w*|restructur\w*|re-?organi[sz]\w*|regroup\w*|cluster\w*|"
                        r"(?:group|sort|move|organi[sz]e)\w* (?:the |these |those |all |every )?(?:items|notes|stickies|cards|links|content|frame|board|them|it)\b|"
@@ -174,6 +176,19 @@ STARTERS = {
         'spacing, contrast, motion); list fixes with exact values.'},
     'checker': {'name': 'Fact-checker', 'color': '#be123c', 'role': 'Checks claims against their sources by reading the pages '
                 'again. Says for each one whether it holds up, and why.'},
+    'distiller': {'name': 'Stream-of-consciousness analyst', 'color': '#b45309', 'role':
+        'Turns a brain dump (a voice note, a transcript, a rambling text) into a structured piece in the speaker\'s own voice. '
+        'Read the whole dump first (read_item; a long one in parts). Three kinds of words are in it: the words carrying the '
+        'idea, the words carrying the speaker to the idea (um, like, so basically, false starts, repeats, "like I said"), and '
+        'asides that wander off the point. Keep the first in the speaker\'s own phrasing, drop the second, set the third aside.\n'
+        'Rules: never add a fact, a claim, a name or an opinion that is not in the dump; never paraphrase a point into someone '
+        'else\'s voice, keep the speaker\'s sentence where it stands on its own and only trim around it; keep the speaker\'s '
+        'tone, swearing included, unless it was filler; keep the order the speaker reached the points in unless two passages '
+        'are clearly one point; an aside is listed, never deleted silently; nothing marked uncertain, no questions back.\n'
+        'Deliver with add_file, as a Markdown file named after the dump: a first line "What you\'re getting at:" with the point '
+        'in one sentence of the speaker\'s words; then the points as short paragraphs or a list, each in the speaker\'s words; '
+        'then "Set aside:" with the asides, one line each. Then add_note with the "What you\'re getting at" sentence alone, '
+        'so it is readable on the board at a glance. Finish with the file name in your summary.'},
 }
 STARTERS['design-lead'] = {'name': 'Design Lead', 'color': '#7c3aed', 'role':
     'Leads design and manages the UX Designer and the UI Designer. Hands the UX part to the UX Designer first, then the UI '
@@ -191,14 +206,61 @@ WHY = {'lead': 'Turns your goal into a plan and owns the final answer', 'enginee
        'researcher': 'Finds the facts the work stands on', 'writer': 'Turns results into words people read',
        'analyst': 'Compares and ranks what the team found', 'checker': 'Makes sure what we say holds up',
        'developer': 'Builds what we show and reads code', 'design-lead': 'One owner for how it works and how it looks',
-       'ux': 'Decides how it works for the person using it', 'ui': 'Decides how it looks, with exact values'}
+       'ux': 'Decides how it works for the person using it', 'ui': 'Decides how it looks, with exact values',
+       'distiller': 'Turns your brain dump into a structured piece, in your own voice'}
 for _k, _v in STARTERS.items():
     _v['why'] = WHY.get(_k, '')
 STARTERS['ux']['under'] = STARTERS['ui']['under'] = 'design-lead'   # who they report to when that role is on the team
 MAX_DEPTH = 3             # Lead, a manager, their reports
 DEFAULT_TEAM = ('lead', 'researcher', 'writer')
 KIND_BASE = {'research': 'researcher', 'analyze': 'analyst', 'check': 'checker', 'write': 'writer', 'ux': 'ux', 'ui': 'ui',
-             'demo': 'developer', 'engineer': 'engineer'}   # a member the team design asks for -> the starter whose know-how it gets
+             'demo': 'developer', 'engineer': 'engineer', 'distill': 'distiller'}   # a member the team design asks for -> the starter whose know-how it gets
+
+
+CUSTOM = {}   # agents the person made by voice (key -> charter), kept in <data>/library/custom_agents.json and registered like starters
+
+
+def custom_path(data):
+    return os.path.join(data, 'library', 'custom_agents.json')
+
+
+def register_custom(a):
+    if a['kind'] in KIND_BASE and KIND_BASE[a['kind']] != a['key']:   # a kind word a starter already uses: this agent gets its own
+        a['kind'] = re.sub(r'[^a-z]', '', a['key'])[:20] or a['key']
+    CUSTOM[a['key']] = a
+    STARTERS[a['key']] = {'name': a['name'], 'color': a.get('color') or '#b45309', 'role': a['role'], 'why': a.get('why') or '', 'custom': True}
+    WHY[a['key']] = a.get('why') or ''
+    KIND_BASE[a['kind']] = a['key']
+
+
+def load_custom(data):
+    try:
+        with open(custom_path(data)) as f:
+            items = json.load(f)
+    except (OSError, ValueError):
+        items = []
+    for a in items:
+        if isinstance(a, dict) and a.get('key') and a.get('kind') and a.get('role'):
+            register_custom(a)
+
+
+def add_custom(data, a):
+    """Save an agent the person asked for by voice, and make it a teammate kind the designer can pick from now on."""
+    os.makedirs(os.path.dirname(custom_path(data)), exist_ok=True)
+    try:
+        with open(custom_path(data)) as f:
+            items = [x for x in json.load(f) if x.get('key') != a['key']]
+    except (OSError, ValueError):
+        items = []
+    with open(custom_path(data) + '.tmp', 'w') as f:
+        json.dump(items + [a], f, indent=1)
+    os.replace(custom_path(data) + '.tmp', custom_path(data))
+    register_custom(a)
+
+
+def custom_kinds_text():
+    """The voice-made kinds, as lines for the team designer's list."""
+    return ''.join('- %s: %s\n' % (a['kind'], a.get('kind_desc') or a.get('why') or '') for a in CUSTOM.values())
 
 
 def boss_of(m):
@@ -284,9 +346,12 @@ def tool(name, desc, props=None, required=None):
 
 
 S = {'type': 'string'}
+N = {'type': 'integer'}
 TOOLS = [
     tool('search_board', 'Search every item on this board (notes, text, words read out of screenshots and PDFs). Returns the best matches with their item ids.', {'query': S}),
-    tool('read_item', 'Read the whole text of one board item by its id.', {'item_id': S}),
+    tool('read_item', 'Read the text of one board item by its id. A long item comes in parts of 2,000 words: the reply says '
+         '"part 1 of N"; ask for part 2, 3... to read on. To COPY an item into a file, do not read it: add_file with from_item does it whole.',
+         {'item_id': S, 'part': N}),
     tool('web_search', 'Search the web. Returns titles, links and short snippets.', {'query': S}),
     tool('read_web_page', 'Read the text of a web page.', {'url': S}),
     tool('read_code', 'Read a stretch of one code file whole, from statement number start (search_code shows the numbers). '
@@ -307,10 +372,15 @@ TOOLS = [
     tool('add_text', 'Put text in your task frame. style "heading" starts a section, "body" is a paragraph.',
          {'text': S, 'style': {'type': 'string', 'enum': ['heading', 'body']}}),
     tool('add_link', 'Put a link card for a web page in your task frame.', {'url': S}),
-    tool('add_file', 'Make a real Markdown (.md) file on the board from text you write: it sits in your task frame as a file card '
-         'the person can open, download and share. name = a short file name ending in .md; text = the whole file, in Markdown, '
-         'complete (nothing cut, no "..."). Use it when the job asks for a file, a document or a copy of something as a file.',
-         {'name': S, 'text': S}, ['name', 'text']),
+    tool('transcribe', 'Get the full transcript of a video or a recording, in ONE call, by a speech recognizer by a speech recognizer (not by '
+         'reading pages or captions): url = a YouTube or other video link, or from_item = the id of a link, video or audio '
+         'card on the board. The whole transcript lands in your frame as a Markdown file with timestamps. An hour of audio '
+         'takes about a minute. Never try to transcribe or fetch captions any other way.', {'url': S, 'from_item': S, 'name': S}),
+    tool('add_file', 'Make a real Markdown (.md) file on the board: it sits in your task frame as a file card the person can open, '
+         'download and share. To COPY a file or card that is on the board, give from_item = its id and leave text out: the '
+         'server copies its whole content, word for word, any size, in this one call (never retype a file yourself). '
+         'Otherwise name = a short file name ending in .md and text = the whole file, in Markdown, complete (nothing cut, no "...").',
+         {'name': S, 'text': S, 'from_item': S}),
     tool('make_demo', 'Build a working demo: ONE complete HTML page (its CSS in <style>, its JavaScript in <script>, nothing '
          'else needed) that shows what you found or built. It opens as a live card in your frame, and you get back any '
          'JavaScript errors and what the page shows, so you can fix it: call it again with the same title to replace it.',
@@ -328,7 +398,6 @@ TOOLS = [
     tool('ask_user', 'Ask the person one short question and wait for the answer. It shows as a note in your frame.', {'question': S}),
     tool('finish', 'End the task with a short summary of what you found and what is still open.', {'summary': S}),
 ]
-N = {'type': 'integer'}
 BROWSER_TOOLS = [
     tool('browser_open', 'Open a web page in your browser. You get the page as numbered things you can use, plus its text.', {'url': S}),
     tool('browser_look', 'Look at the page again (after it changed, or to see the numbers again).'),
@@ -360,7 +429,7 @@ ASSIGN = tool('assign', 'Hand parts of the task to teammates. Each part becomes 
               {'assignments': {'type': 'array', 'items': {'type': 'object', 'properties': {'teammate': S, 'task': S, 'done_when': S},
                                                           'required': ['teammate', 'task', 'done_when']}}})
 # the Lead plans, hands out and puts the answer together; it has no web tools, so it cannot do the parts itself
-LEAD_TOOLS = [t for t in TOOLS if t['function']['name'] in ('search_board', 'read_item', 'read_frame', 'add_text', 'add_file', 'ask_user', 'finish')] + [ASSIGN]
+LEAD_TOOLS = [t for t in TOOLS if t['function']['name'] in ('search_board', 'read_item', 'read_frame', 'add_text', 'add_file', 'transcribe', 'ask_user', 'finish')] + [ASSIGN]
 
 
 def board_unit(board):
@@ -455,6 +524,7 @@ class Runner:
         os.makedirs(self.dir, exist_ok=True)
         os.makedirs(self.teams_dir, exist_ok=True)
         self.store, self.reader, self.brief, self.changed = store, reader, brief, changed
+        load_custom(data_dir)   # agents the person made by voice join the starters
         self.lock = threading.Lock()
         self.runs = {}
         self.apps = {}   # run id -> its connected-app tools this step (see integrations.py)
@@ -834,8 +904,7 @@ class Runner:
                 return
         finally:
             p['checking'] = False
-        parts = [c for c in parts if not any(self.runs.get(x, {}).get('retry_of') == c['id'] for x in p['round'])]   # a part sent back: its second try speaks for it
-        text = '\n\n'.join(self.results_of(c) for c in parts)
+        text = '\n\n'.join(self.results_of(c) for c in parts)   # a part sent back and its second try both speak: the second holds only the missing piece
         gone = self.root(p).get('blocked') or {}
         if gone:   # the Lead once sent a teammate back to a blocked site four rounds running
             text += ('\n\nSITES THAT BLOCK AUTOMATED READERS (for this whole job): %s. Do not send anyone to them again; say in '
@@ -857,7 +926,7 @@ class Runner:
         gaps = []   # a team once said Done while its own notes said the user's spreadsheet was never read
         for x in kids:
             fw = self.frame_words(x)
-            if (x.get('check') or {}).get('pass'):
+            if (x.get('check') or {}).get('pass') or x['id'] in retried:   # a first try whose missing piece came in on the second try counts whole
                 words += '\n\n[%s]\n%s' % ((x.get('member') or {}).get('name', ''), fw)
             elif x['id'] not in retried and x.get('check'):
                 gaps.append('A part never passed its check: %s (missing: %s)' % (x['task'][:200], x['check'].get('missing') or x['check'].get('why')))
@@ -908,10 +977,11 @@ class Runner:
         """Send a part that fell short back once, to the same teammate, for only what is missing."""
         frame = next((i for i in self.board_items(p['board']) if i['id'] == p['frame']), None) or {'x': 0, 'y': 0, 'w': 0}
         u = p['lay']['u']
-        task = '%s\n\nSECOND TRY. Your first try (frame "%s") fell short. Still missing: %s. Read what is already there (read_frame) ' \
-               'and do only what is missing.' % (c['task'], (c.get('member') or {}).get('name', ''), c['check']['missing'] or c['check']['why'])
+        piece = c['check']['missing'] or c['check']['why']
+        task = ('SECOND TRY, ONE PIECE ONLY. Your first try fell short; everything it put in its frame still counts. Do ONLY this '
+                'missing piece now, nothing else, in this frame: %s\n\n(The whole part, for context, was: %s)' % (piece, c['task']))
         x = self.start(p['board'], task, p.get('selected', []), {'x': frame['x'] + frame['w'] + 200 * u, 'y': frame['y'], 'unit': u},
-                       member=c.get('member'), parent=p['id'], done_when=c['done_when'])
+                       member=c.get('member'), parent=p['id'], done_when='this piece is in the frame, complete: %s' % piece)   # a small piece with its own small check (2026-11-05)
         x['retry_of'] = c['id']
         p['children'].append(x['id'])
         self.save(x)
@@ -922,7 +992,14 @@ class Runner:
         out = []
         for it in self.board_items(c['board']):
             if it.get('agent') == c['id'] and it.get('type') != 'area' and not it.get('chart'):
-                out.append(it.get('text') or it.get('url') or it.get('label') or '')
+                if it.get('type') == 'file':   # a file by its words, not its name; a long one by its size and its ends, so a checker never judges a cut view (2026-11-05)
+                    words = talk.item_words(it, self.reader)[1]
+                    if len(words) > 6000:
+                        words = ('FILE %s: %d words, %d characters, complete on the board (the server holds all of it). BEGINS: %s\n[... %d characters not shown ...]\nENDS: %s'
+                                 % (it.get('label') or 'file', len(words.split()), len(words), words[:1500], len(words) - 3000, words[-1500:]))
+                    out.append(words)
+                else:
+                    out.append(it.get('text') or it.get('url') or it.get('label') or '')
         return '\n'.join(x for x in out if x and not x.startswith(('Done when: ', 'Check: ', 'Final check: ', 'Intent\n', 'Team for this job\n')))
 
     def card(self, r, text, color):
@@ -946,7 +1023,8 @@ class Runner:
         verdict = ('\nCheck against its done-when (%s): %s' % (c.get('done_when'), 'PASSED. ' + v['why'] if v['pass'] else
                    'NOT DONE. Missing: ' + (v['missing'] or v['why']))) if v else ''
         return '%s (%s), part: %s%s\nSummary: %s\nIn their frame:\n%s' % (
-            (c.get('member') or {}).get('name', 'Teammate'), c['status'], c['task'], verdict, c.get('summary') or '(none)', body or '(nothing)')
+            (c.get('member') or {}).get('name', 'Teammate') + (' - second try, the missing piece only' if c.get('retry_of') else ''),
+            c['status'], c['task'], verdict, c.get('summary') or '(none)', body or '(nothing)')
 
     # ---------- the loop ----------
     def work(self):
@@ -981,7 +1059,7 @@ class Runner:
                 r['status'] = 'stopped'
                 break
             if sum(1 for m in r['messages'] if m['role'] == 'assistant') - r.get('msg_base', 0) >= (
-                    PART_STEPS if r.get('parent') and not r.get('lead') else MAX_STEPS):
+                    RETRY_STEPS if r.get('watch_retry') else PART_STEPS if r.get('parent') and not r.get('lead') else MAX_STEPS):
                 self.wrap_up(r)   # out of steps: one last turn to write down what it learned, so nothing is lost
                 r['status'] = 'unfinished'   # a Lead that looped to the limit got a green Done with nothing done (Oct 31)
                 break
@@ -1020,6 +1098,9 @@ class Runner:
                 r['nudged_build'] = r.get('nudged_build', 0) + 1   # a build part does not end with words: it builds
                 r['messages'].append({'role': 'user', 'content': 'Your part is to build a working demo. Build it now with make_demo.'})
                 continue
+            if not calls and r.get('team_call'):   # words while its parts are still out: wait for them (a Lead was marked done mid-job and the voice said so, 2026-11-05)
+                r['status'] = 'team'
+                break
             if not calls:   # plain words instead of a tool: they are the result
                 if content:
                     self.place_text(r, content, 'body')
@@ -1035,6 +1116,8 @@ class Runner:
                 except ValueError:
                     args = {}
                 key = name + json.dumps(args, sort_keys=True)
+                if name in ('search_board', 'web_search') and isinstance(args, dict):   # a query that only grows by a few words is the same search (a Lead's query gained a sentence a turn)
+                    key = name + ' '.join(str(args.get('query') or '').lower().split())[:60]
                 tool_at = [i for i, m in enumerate(r['messages']) if m['role'] == 'tool']
                 cut = set(tool_at[:-KEEP_RESULTS]) if len(tool_at) > KEEP_RESULTS else set()
                 stale = name in ('read_item', 'read_frame', 'read_web_page') and r.get('call_at', {}).get(key) in cut   # its earlier result is cut short now: read it whole again
@@ -1166,9 +1249,11 @@ class Runner:
                 1 for x in r['steps'][r.get('step_base', 0):] if x['text'].startswith(('Searched the board', 'Read a'))) >= 5:
             # a manager that keeps looking instead of delegating (a Lead once searched the board 14 times first;
             # this sat below the search itself and never ran, so a Lead searched 25 times on Oct 31)
-            r['loop_turn'] = True   # told and still searching: three of these and it is stopped as Stuck
-            return 'Not done: you have looked enough. Hand the work out now with assign; your reports will dig deeper.'
-        if r.get('lead') and name in ('add_text', 'finish') and not any(
+            if r.get('crew') is None or len(r['crew']) > 1:
+                r['loop_turn'] = True   # told and still searching: three of these and it is stopped as Stuck
+                return 'Not done: you have looked enough. Hand the work out now with assign; your reports will dig deeper.'
+        alone = r.get('lead') and r.get('crew') is not None and len(r['crew']) <= 1   # a Lead with no teammates does the job itself (2026-11-05)
+        if r.get('lead') and not alone and name in ('add_text', 'finish') and not any(
                 x['text'].startswith('Handed out') for x in r['steps'][r.get('step_base', 0):]):
             # a Lead puts teammates' results together; it does not do the work itself (it once pasted code instead of a demo)
             return ('Not done: you are the Lead. Hand this to the teammate whose role fits it (assign) first; you write only '
@@ -1185,8 +1270,13 @@ class Runner:
                 return 'There is no item with that id.'
             kind, words = talk.item_words(it, self.reader)
             r['focus'] = it['id']
-            self.step(r, 'Read a %s on the board' % kind)
-            return '%s: %s' % (kind, ' '.join(words.split()[:2500]) or '(no words)')
+            ws = words.split()
+            per, total = 2000, max(1, -(-len(ws) // 2000))
+            part = min(max(int(a.get('part') or 1), 1), total)
+            self.step(r, 'Read a %s on the board%s' % (kind, ' (part %d of %d)' % (part, total) if total > 1 else ''))
+            head = ('[part %d of %d, words %d-%d of %d%s] ' % (part, total, (part - 1) * per + 1, min(part * per, len(ws)), len(ws),
+                    '; ask for part %d to read on' % (part + 1) if part < total else '; this is the end') if total > 1 else '')
+            return '%s: %s%s' % (kind, head, ' '.join(ws[(part - 1) * per:part * per]) or '(no words)')
         if name == 'read_frame':
             return self.read_frame(r, str(a.get('frame') or ''))
         if name == 'group_items':
@@ -1241,6 +1331,64 @@ class Runner:
             return found
         if name.startswith('browser_'):
             return self.use_browser(r, name, a)
+        if name == 'transcribe':   # a video or recording -> its words, by whisper on your own machine in one call (2026-11-05): no caption scraping
+            url, it = str(a.get('url') or '').strip(), None
+            if a.get('from_item'):
+                it = next((i for i in self.board_items(r['board']) if i['id'] == a.get('from_item')), None)
+                if not it:
+                    return 'Not done: there is no item with that id.'
+                url = str(it.get('url') or '').strip() if it.get('type') in ('link', 'web') else ''
+            if not url and not (it and it.get('type') in ('file', 'media') and it.get('src')):
+                return 'Not done: give url (a video link) or from_item (a link, video or audio card on the board).'
+            if not TRANSCRIBE_URL:
+                return 'Not done: no transcriber is set up on this install (TRANSCRIBE_URL). Say so in your frame and finish.'
+            self.step(r, 'Transcribing %s' % (url[:80] or (it.get('label') or 'a recording')))
+            try:
+                if url:
+                    body, ctype, headers = json.dumps({'url': url}).encode(), 'application/json', {}
+                else:
+                    src = str(it['src']).rsplit('/', 1)[-1]
+                    with open(os.path.join(os.path.dirname(self.dir), 'files', src), 'rb') as f:
+                        body = f.read()
+                    ctype, headers = ('video/mp4' if src.endswith(('mp4', 'mov', 'webm', 'mkv')) else 'audio/x'), {'X-Name': (it.get('label') or src)[:120]}
+                req = urllib.request.Request(TRANSCRIBE_URL + '/transcribe', data=body, headers=dict({'Content-Type': ctype}, **headers), method='POST')
+                with urllib.request.urlopen(req, timeout=3600) as resp:
+                    out = json.loads(resp.read().decode())
+            except urllib.error.HTTPError as e:
+                try:
+                    msg = json.loads(e.read().decode()).get('error', '')
+                except Exception:
+                    msg = str(e)
+                return 'Not done: the transcriber said: %s. Say so in your frame and finish; do not look for captions elsewhere.' % str(msg)[:300]
+            except (OSError, ValueError) as e:
+                return 'Not done: the transcriber could not be reached (%s). Say so in your frame and finish; do not look for captions elsewhere.' % str(e)[:200]
+            title = ' '.join(str(out.get('title') or a.get('name') or 'Transcript').split())[:120]
+            mins = int(out.get('duration_s') or 0) // 60
+            paras, cur, start = [], [], None
+            for s in out.get('segments') or []:   # paragraphs of about a minute, each with where it starts
+                if start is None:
+                    start = s['t0']
+                cur.append(s['text'])
+                if s['t1'] - start >= 60 or s['text'].rstrip().endswith(('.', '?', '!')) and s['t1'] - start >= 40:
+                    paras.append('[%02d:%02d] %s' % (int(start) // 60, int(start) % 60, ' '.join(cur)))
+                    cur, start = [], None
+            if cur:
+                paras.append('[%02d:%02d] %s' % (int(start or 0) // 60, int(start or 0) % 60, ' '.join(cur)))
+            md = '# %s\n\nTranscript, %d min%s. Made by speech recognition (whisper large-v3-turbo), so a few words may be misheard.\n\n%s\n' % (
+                title, mins, ', from %s' % url if url else '', '\n\n'.join(paras) or out.get('text', ''))
+            made = self.add_file(r, str(a.get('name') or '') or title + ' - transcript.md', md)
+            return ('Transcribed "%s" (%d min of audio, %d words) into the file %s in your frame; it is the whole thing. Say its name in your summary.'
+                    % (title, mins, len(out.get('text', '').split()), made['label'])) if made else 'Not done: the frame is gone.'
+        if name == 'add_file' and a.get('from_item'):   # a copy of a board item, made by the server: no model retypes a file (2026-11-05)
+            it = next((i for i in self.board_items(r['board']) if i['id'] == a.get('from_item')), None)
+            if not it:
+                return 'Not added: there is no item with that id.'
+            text, label = self.item_text(it)
+            if len(text) < 2:
+                return 'Not added: that item has no words to copy.'
+            out = self.add_file(r, str(a.get('name') or '') or re.sub(r'\.[a-z0-9]{1,5}$', '', label, flags=re.I) + '.md', text)
+            return ('Copied %s whole into the file %s (%d words) in your frame; nothing is missing from it. Say its name in your '
+                    'summary.' % (it['id'], out['label'], len(text.split()))) if out else 'Not added: the frame is gone.'
         if name == 'add_file':   # a real file on the board, made from the agent's own words (2026-11-05)
             text = str(a.get('text') or '').strip()
             if len(text) < 2:
@@ -1278,10 +1426,10 @@ class Runner:
             if key and any(key == ' '.join(re.findall(r'[a-z0-9]+', (i.get('text') or '').lower())[:8])
                            for i in self.board_items(r['board']) if i.get('agent') == r['id']):
                 return 'Not added: that is already on a note in your frame. Add something new, or finish.'
-            self.place_note(r, text + ('' if src.lower() == 'board' or src in text else '\n\n' + src), src if src.lower() != 'board' else 'board',
-                            card=bool(a.get('card')))
-            self.step(r, 'Added a card' if a.get('card') else 'Added a note')
-            return 'Added.'
+            how = self.place_note(r, text + ('' if src.lower() == 'board' or src in text else '\n\n' + src), src if src.lower() != 'board' else 'board',
+                                  card=bool(a.get('card')))
+            self.step(r, 'Added a text block' if how == 'text' else 'Added a card' if a.get('card') else 'Added a note')
+            return 'Added, as a text block: it is longer than a card holds, so every word is kept.' if how == 'text' else 'Added.'
         if name == 'add_text':
             self.place_text(r, a.get('text', ''), a.get('style') if a.get('style') in ('heading', 'body') else 'body')
             self.step(r, 'Added a heading' if a.get('style') == 'heading' else 'Added text')
@@ -1299,7 +1447,7 @@ class Runner:
             return self.make_demo(r, str(a.get('title') or 'Demo')[:80], str(a.get('html') or ''))
         if name == 'try_demo':
             return self.try_demo(r, str(a.get('title') or ''), a.get('steps') if isinstance(a.get('steps'), list) else [])
-        if name == 'ask_user' and r.get('lead') and not r.get('children') and not r.get('asked_check'):
+        if name == 'ask_user' and r.get('lead') and not r.get('children') and not r.get('asked_check') and (r.get('crew') is None or len(r['crew']) > 1):
             r['asked_check'] = True   # a Lead asks before handing out anything: once, it is pointed at its team
             team = reports_of(self.team(r['board'])['members'], (r.get('member') or {}).get('id', 'lead'))
             return ('Not asked yet: can a teammate find this out? %s. If so, hand it to them with assign. Ask the person only '
@@ -1936,6 +2084,21 @@ class Runner:
             self.changed(r['board'])
         return new
 
+    def item_text(self, it):
+        """An item's whole content as text, for a copy: a text file's bytes as they are, anything else by its words."""
+        label = ' '.join(str(it.get('label') or it.get('type') or 'item').split())
+        src = str(it.get('src') or '').rsplit('/', 1)[-1]
+        if it.get('type') == 'file' and src.rsplit('.', 1)[-1].lower() in ('md', 'txt', 'markdown', 'csv', 'json', 'html', 'htm'):
+            try:
+                with open(os.path.join(os.path.dirname(self.dir), 'files', src), encoding='utf-8', errors='replace') as f:
+                    return f.read().strip(), label
+            except OSError:
+                pass
+        kind, words = talk.item_words(it, self.reader)
+        if it.get('type') == 'file' and words.startswith(label):
+            words = words[len(label):].strip()
+        return words.strip(), label
+
     def add_file(self, r, name, text):
         """A Markdown file made by an agent: kept content-addressed with the dropped files, its words kept for search, and a
         file card for it in the run's frame (the same card a dropped .md gets)."""
@@ -1966,9 +2129,12 @@ class Runner:
     def place_note(self, r, text, source=None, card=False):
         """A sticky note holds one short thought: a fixed square that cuts off what does not fit. Anything over 120
         characters (links not counted) is put on a card instead, whatever the agent asked for."""
-        text = str(text).strip()[:1200]
+        text = str(text).strip()
         if not text:
             return
+        if len(text) > 1200:   # longer than a card holds: a text block keeps every word (a verbatim quote was cut at 1200 and failed its check four times, 2026-11-05)
+            self.place_text(r, text, 'body')
+            return 'text'
         u = r['lay']['u']
         if not card and len(re.sub(r'\s*https?://\S+', '', text).strip()) <= STICKY_MAX:
             self.place(r, {'type': 'note', 'text': text, 'fs': 16 * u, **({'_src': source} if source else {})}, 220 * u, 220 * u)
@@ -2116,19 +2282,23 @@ class Runner:
         try:
             have = code.repos(os.path.dirname(self.dir))
             notes = r['team_notes_read'] = self.notes_for(r['board'], r['task'])
-            want = talk.team_design(r['task'], r.get('intent'), (
+            want = talk.team_design(r['task'], r.get('intent'), ((
                 '- engineer: writes real code in one of these code bases: %s. It works on its own branch, which the user reviews '
                 'before anything goes live: it can read, search, edit, check syntax and commit, but cannot run the app or '
-                'deploy. Say in "does" which code base.\n' % ', '.join(have)) if have else '', notes)
+                'deploy. Say in "does" which code base.\n' % ', '.join(have)) if have else '') + custom_kinds_text(), notes)
         except (OSError, ValueError, KeyError):
             want = []
-        if not want:
+        if want == 'alone':   # the designer: one call does the whole job, no team (a copy of a card is add_file with from_item)
+            want, r['critic'] = [], {'line': 'the designer found one call does this job, so the Lead does it alone', 'before': 0, 'after': 0, 'alone': True, 'cut': [], 'merged': [], 'method': []}
+        elif not want:
             self.step(r, "Could not put a team together for this job, so the board's team is working on it")
             return
-        r['critic'] = None
-        if models.flag('critic'):   # the plan critic: the smallest plan that still delivers the intent (switch in Settings, 2026-11-05)
+        else:
+            r['critic'] = None
+        if want and models.flag('critic'):   # the plan critic: the smallest plan that still delivers the intent (switch in Settings, 2026-11-05)
             try:
-                v = talk.team_critic(r['task'], r.get('intent'), want, notes)
+                v = talk.team_critic(r['task'], r.get('intent'), want, notes, lead_tools=[t['function']['name'] for t in LEAD_TOOLS],
+                                     tools=[(t['function']['name'], t['function']['description'].split('. ')[0]) for t in TOOLS])
             except (OSError, ValueError, KeyError):
                 v = None
             if v:
@@ -2155,7 +2325,7 @@ class Runner:
         r['messages'][0]['content'] = (SYSTEM + "\n\nYOUR ROLE: you are the Lead on this job's team. " + STARTERS['lead']['role'] + learned(os.path.dirname(self.dir), 'lead')
                                        + LEAD % (lines, MAX_ROUNDS)
                                        + ('\nThe plan critic found you can finish this job alone: there are no teammates. Do it yourself with your '
-                                          'tools (read what is needed, write the result in your frame with add_text) and finish. Do not use assign.'
+                                          'tools (a copy of a card or file = one add_file call with from_item; otherwise read what is needed and write the result in your frame with add_text or add_file) and finish. Do not use assign.'
                                           if not crew[1:] else '\nThis team was put together for this job; each line says what that teammate is for.')
                                        + ('\nNOTES FROM EARLIER TEAMS ON SIMILAR JOBS (learn from them):\n' + r['team_notes_read']
                                           if r.get('team_notes_read') else ''))
