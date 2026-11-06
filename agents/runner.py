@@ -1638,12 +1638,8 @@ class Runner:
             a = dict(a, _board=r['board'], _selected=r.get('selected') or [])
             d = integrations.substack_draft(a)
             try:
-<<<<<<< clewbert
                 self.substack_cards(r, d)   # what the post will look like, and the Publish button, on the board (2026-11-06)
-=======
-                self.substack_cards(r, d)   # what the post will look like, and the Publish button, on the board (Ian, 2026-11-06)
                 shown = ' The board now shows a preview of the post and its Publish card in your frame: add no card, note or demo about the draft, and never redraw a picture. Finish.'
->>>>>>> main
             except (OSError, ValueError, KeyError, TypeError):
                 shown = ''
             return (integrations.substack_draft_text(d) + shown)[:integrations.TOOL_CHARS]
