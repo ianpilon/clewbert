@@ -9,7 +9,7 @@
 - Voice in and voice out: with an OpenAI or xAI key, that provider hears and speaks (models.py). Or your own services:
   speech-to-text at /ears (a WebSocket next to the app) and a text-to-speech server at CANVAS_TTS_URL.
 """
-import base64, difflib, hashlib, html, http.client, json, math, os, queue, re, socket, subprocess, sys, threading, time, urllib.parse, urllib.request
+import base64, collections, difflib, hashlib, html, http.client, json, math, os, queue, re, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
 import models, skills
 
 MODEL_URL = os.environ.get('CANVAS_MODEL_URL', '')   # a chat/completions address on your own machine (Ollama, LM Studio, vLLM...), or pick a provider in Settings
@@ -29,14 +29,54 @@ STOP = set('a an the and or but if of to in on at by for with from about into ov
            'please thing things anything something'.split())
 
 
+PICTURE_SAYS = 'What the picture shows: '   # a photo with no words in it is described by the vision model instead (2026-11-06)
+
+
+def describe_picture(path):
+    """Two plain sentences on what a picture shows, from the vision model on your own machine (the model on your own
+    machine reads pictures; an outside provider picked in Settings is not asked). '' when it cannot be had."""
+    if models.choice('voice'):
+        return ''
+    url, model = models.local('voice') or (MODEL_URL, MODEL)
+    small = os.path.join(tempfile.gettempdir(), 'cv-describe-%d.jpg' % threading.get_ident())
+    try:
+        subprocess.run(['sips', '-Z', '1024', '-s', 'format', 'jpeg', path, '--out', small], capture_output=True, timeout=60)
+        with open(small if os.path.exists(small) else path, 'rb') as f:
+            b64 = base64.b64encode(f.read()).decode()
+        content = [{'type': 'text', 'text': 'Describe this picture in two plain sentences: who or what is in it, where, and what is '
+                                            'happening. Say what is visible, never a name or a guess about who people are.'},
+                   {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,' + b64}}]
+        body = json.dumps({'model': model, 'messages': [{'role': 'user', 'content': content}], 'temperature': .2, 'max_tokens': 160,
+                           'chat_template_kwargs': {'enable_thinking': False}}).encode()
+        u = urllib.parse.urlsplit(url)
+        conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=90)
+        try:
+            conn.request('POST', u.path, body, {'Content-Type': 'application/json'})
+            resp = conn.getresponse()
+            if resp.status != 200:
+                return ''
+            text = json.load(resp)['choices'][0]['message']['content'] or ''
+        finally:
+            conn.close()
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.S)
+        return ' '.join(text.split())[:600]
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return ''
+    finally:
+        if os.path.exists(small):
+            os.remove(small)
+
+
 class Reader:
-    """Reads the words out of every image and PDF once and keeps them next to the data."""
+    """Reads the words out of every image and PDF once and keeps them next to the data. A picture with no words in it
+    gets what the vision model sees instead (PICTURE_SAYS), so a photo can be searched, described and captioned."""
 
     def __init__(self, images_dir, text_dir, tool):
         self.images, self.text, self.tool = images_dir, text_dir, tool
         self.cache = {}   # name -> the words read off it, once read (see words())
         os.makedirs(text_dir, exist_ok=True)
         self.queue = queue.Queue()
+        self.slow = collections.deque()   # pictures to describe again when nothing new waits: one every few seconds
         if os.path.exists(tool):
             threading.Thread(target=self.run, daemon=True).start()
             for name in sorted(os.listdir(images_dir)):
@@ -48,6 +88,11 @@ class Reader:
     def add(self, name):
         if IMAGE_REF.search('api/images/' + name) and not os.path.exists(self.path(name)):
             self.queue.put(name)
+
+    def again(self, names):
+        """Pictures read before the vision model was asked (an empty words file): described in the background, newest first."""
+        self.slow.extend(n for n in names if n.endswith(('.jpg', '.png')) and os.path.exists(os.path.join(self.images, n))
+                         and os.path.exists(self.path(n)) and os.path.getsize(self.path(n)) == 0)
 
     def unread(self, names):
         return sum(1 for n in names if not os.path.exists(self.path(n)))
@@ -70,17 +115,27 @@ class Reader:
 
     def run(self):
         while True:
-            name = self.queue.get()
-            if os.path.exists(self.path(name)):
+            try:
+                name, again = self.queue.get(timeout=2), False
+            except queue.Empty:
+                if not self.slow:
+                    continue
+                name, again = self.slow.popleft(), True
+                time.sleep(2)   # a backlog of old photos never crowds out the voice on the same model
+            if os.path.exists(self.path(name)) and not again:
                 continue
             try:
                 r = subprocess.run([self.tool, os.path.join(self.images, name)], capture_output=True, text=True, timeout=300)
                 words = r.stdout.strip() if r.returncode == 0 else ''
             except (OSError, subprocess.TimeoutExpired):
                 words = ''
+            if not words and name.endswith(('.jpg', '.png')):   # no words in it: what the vision model sees
+                seen = describe_picture(os.path.join(self.images, name))
+                words = PICTURE_SAYS + seen if seen else ''
             with open(self.path(name) + '.tmp', 'w') as f:
                 f.write(words)
             os.replace(self.path(name) + '.tmp', self.path(name))
+            self.cache.pop(name, None)
 
 
 def image_name(ref):
@@ -165,7 +220,7 @@ def _item_words(it, reader):
         words = reader.words(image_name(it.get('src')) or '')
         if it.get('url'):
             words += '\nLink on it: ' + it['url']
-        return 'screenshot', words.strip() or (it.get('label') or 'A picture with no words in it.')   # a photo is still findable
+        return ('picture' if words.startswith(PICTURE_SAYS) else 'screenshot'), words.strip() or (it.get('label') or 'A picture with no words in it.')   # a photo is still findable
     if t == 'emoji':
         return 'sticker', it.get('ch') or ''
     if t == 'web':

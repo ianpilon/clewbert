@@ -286,6 +286,30 @@ def run_recrop(job, bid, miro_board, crops):
 
 
 READER = talk.Reader(IMAGES, os.path.join(DATA, 'text'), os.path.join(HERE, 'bin', 'textof'))
+
+
+def describe_old_pictures():
+    """Pictures on the boards that were read before the vision model was asked (no words found): described in the
+    background, newest first, a few seconds apart (2026-11-06)."""
+    time.sleep(30)
+    names = set()
+    for fn in os.listdir(BOARDS):
+        if fn.endswith('.json'):
+            try:
+                for it in read_board(fn[:-5]).get('items') or []:
+                    if it.get('type') == 'img' and talk.image_name(it.get('src')):
+                        names.add(talk.image_name(it['src']))
+            except (OSError, ValueError, KeyError):
+                pass
+    def when(n):
+        try:
+            return os.path.getmtime(os.path.join(IMAGES, n))
+        except OSError:
+            return 0
+    READER.again(sorted(names, key=when, reverse=True))
+
+
+threading.Thread(target=describe_old_pictures, daemon=True).start()
 FINDER = talk.Finder(BOARDS, READER)
 threading.Thread(target=FINDER.fresh, daemon=True).start()   # the first search would wait ~8 s to read every board
 
