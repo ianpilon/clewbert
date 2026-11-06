@@ -60,8 +60,8 @@ class Push:
             with os.fdopen(fd, 'wb') as f:
                 f.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
         with open(pem, 'rb') as f:
-            self.key = serialization.load_pem_private_key(f.read(), None)
-        self.public = b64(raw_public(self.key))
+            self.priv = serialization.load_pem_private_key(f.read(), None)   # priv, not key: key(n, kind) is the method below, and an attribute of the same name hid it, so no push ever went out
+        self.public = b64(raw_public(self.priv))
         self.subs = self.load('subs.json', [])
         sent = self.load('sent.json', None)
         self.sent = sent if sent is not None else self.keys()   # first start: what is already news is not pushed
@@ -122,7 +122,7 @@ class Push:
         u = urllib.parse.urlsplit(endpoint)
         head = b64(json.dumps({'typ': 'JWT', 'alg': 'ES256'}).encode())
         claims = b64(json.dumps({'aud': '%s://%s' % (u.scheme, u.netloc), 'exp': int(time.time()) + 12 * 3600, 'sub': SUBJECT}).encode())
-        r, s = decode_dss_signature(self.key.sign((head + '.' + claims).encode(), ec.ECDSA(hashes.SHA256())))
+        r, s = decode_dss_signature(self.priv.sign((head + '.' + claims).encode(), ec.ECDSA(hashes.SHA256())))
         return 'vapid t=%s.%s.%s, k=%s' % (head, claims, b64(r.to_bytes(32, 'big') + s.to_bytes(32, 'big')), self.public)
 
     def send(self, msg):

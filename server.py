@@ -815,6 +815,8 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 3 and parts[:2] == ['api', 'library'] and re.match(r'^[a-z][a-z0-9-]{0,40}$', parts[2]):   # one agent's profile page
             p = agent_profile(parts[2])
             return self.reply(200, p) if p else self.reply(404, {'error': 'no such agent'})
+        if parts == ['api', 'boards', 'status']:   # the board list's pills: which boards have agents at work, a question, or work not looked at
+            return self.reply(200, {'boards': RUNNER.board_status()})
         if parts == ['api', 'tasks']:   # the phone app's Agents screen: every task on every board
             names = board_names()
             return self.reply(200, {'runs': [dict(r, boardName=names[r['board']]) for r in RUNNER.view() if r['board'] in names]})
@@ -851,6 +853,9 @@ class Handler(BaseHTTPRequestHandler):
                         pass
             if ids == [BOARDSHOT_SEEN[0]] and ids[0] in out:
                 BOARDSHOT_SEEN[1] = True   # the board's picture is being taken, and the page got its items
+            seen = (urllib.parse.parse_qs(self.path.partition('?')[2]).get('seen') or [''])[0]
+            if seen in COVER_SEEN and ids[0] in out:
+                COVER_SEEN[seen] = True   # a cover shot got its board (its own token: the board-picture loop may be shooting another board)
             return self.reply(200, out)
         if self.talk_scope(parts):
             return self.reply(200, read_talk(self.talk_scope(parts)))
@@ -1012,7 +1017,10 @@ class Handler(BaseHTTPRequestHandler):
             if not (integrations.load().get('substack') or {}).get('cookie'):
                 return self.reply(409, {'error': 'Substack is not connected. Open Settings, Connected apps, and connect it first.'})
             try:
-                return self.reply(200, integrations.substack_draft(json.loads(self.read_body())))
+                req = json.loads(self.read_body())
+                if BOARD_ID.match(str(req.get('board') or '')):   # the cover picture comes from the note's board
+                    req.update(_board=req['board'], _selected=[str(x) for x in (req.get('items') or [])][:200])
+                return self.reply(200, integrations.substack_draft(req))
             except OSError as e:   # 424, not 502: Cloudflare swaps an origin 502 for its own page and the words would never reach the canvas
                 print('%s substack: %s' % (time.strftime('%H:%M:%S'), e))
                 return self.reply(424, {'error': str(e)})
@@ -1257,6 +1265,16 @@ class Handler(BaseHTTPRequestHandler):
                 r = RUNNER.start(bid, guide.TASK, files, None, 'team')
                 out['started'] = {'run': r['id'], 'frame': r['frame']}
             return self.reply(200, out)
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'seen' and BOARD_ID.match(parts[2]):   # the board was opened: its ended tasks are looked at
+            return self.reply(200, {'seen': RUNNER.seen(parts[2])})
+        if parts == ['api', 'name-frame']:   # a frame drawn around items asks for its name
+            texts = [str(t) for t in (json.loads(self.read_body()).get('texts') or []) if str(t).strip()][:40]
+            if not texts:
+                raise ValueError
+            try:
+                return self.reply(200, {'title': talk.name_frame(texts)})
+            except Exception as e:
+                return self.reply(424, {'error': 'The model did not answer: %s' % e})
         if parts == ['api', 'ask']:
             req = json.loads(self.read_body())
             question = str(req.get('question') or '').strip()[:500]
@@ -1588,6 +1606,18 @@ class Handler(BaseHTTPRequestHandler):
                     board.pop('archived', None)
                 write_json(board_path(parts[2]), board)
             return self.reply(200, {'ok': True})
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'made-by' and BOARD_ID.match(parts[2]):   # the card's menu: who made this board
+            by = json.loads(self.read_body()).get('by')
+            if by not in ('agent', 'assistant', 'user'):
+                raise ValueError
+            with LOCK:
+                try:
+                    board = read_board(parts[2])
+                except FileNotFoundError:
+                    return self.reply(404, {'error': 'no such board'})
+                board['by'] = by
+                write_json(board_path(parts[2]), board)
+            return self.reply(200, {'ok': True})
         if parts == ['api', 'settings']:
             return self.reply(200, dict(models.save(json.loads(self.read_body())), local=local_models(), startup=local_models(False)))
         if len(parts) == 3 and parts[:2] == ['api', 'teams'] and BOARD_ID.match(parts[2]):
@@ -1817,17 +1847,19 @@ def made_by(b):
     them: half or more agent items = an agent's, half or more items added by the assistant or agents = the assistant's.
     The board list shows a badge for these so they are told apart from the user's own boards (2026-11-04)."""
     if b.get('by'):
-        return b['by']
+        return None if b['by'] == 'user' else b['by']   # 'user': the person set it from the card's menu, whatever the items say
     if b.get('id') in code_boards():
         return 'agent'
-    items = b.get('items') or []
+    items = [i for i in (b.get('items') or []) if i.get('type') != 'arrow']
     if len(items) < 3:
         return None
     agent = sum(1 for i in items if i.get('agent') or (i.get('why') or {}).get('run'))
     added = sum(1 for i in items if i.get('why') and not i.get('agent'))
-    if agent * 10 >= len(items) * 9:   # nearly all of it is a team's work: a board made for a team, then filled by it
+    # one item of the person's own and the board is theirs, however much the teams added to it since: the person made
+    # the board themselves and the teams filled it, and the badge called it an agent's (2026-11-05)
+    if agent == len(items):
         return 'agent'
-    if (agent + added) * 10 >= len(items) * 9:
+    if agent + added == len(items):
         return 'assistant'
     return None
 
@@ -2466,6 +2498,84 @@ def boardshot(bid, mtime, dark=False):
             if os.path.exists(f):
                 os.remove(f)
 
+
+COVER_W, COVER_H = 1456, 816   # Substack's post cover size
+
+
+def covershot(bid, ids):
+    """A post's cover: the chosen items on the board (the whole board when none), photographed off the page at Substack's
+    cover size, dark like the app. JPEG bytes, or None when the page did not get the board."""
+    token = secrets.token_hex(6)
+    png = os.path.join(BOARDSHOTS, 'cover-%s.png' % token)
+    jpg = png[:-4] + '.jpg'
+    COVER_SEEN[token] = False
+    try:
+        subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+                        '--user-data-dir=' + os.path.expanduser('~/Library/Caches/context-canvas-boardshots'),
+                        '--window-size=%d,%d' % (COVER_W, COVER_H), '--virtual-time-budget=20000', '--screenshot=' + png,
+                        'http://127.0.0.1:%d/?shot=%s&dark=1&cover=1&seen=%s&items=%s' % (PORT, bid, token, ','.join(i for i in ids if ITEM_ID_OK.match(i)))],
+                       capture_output=True, timeout=120)
+        subprocess.run(['sips', '-s', 'format', 'jpeg', '-s', 'formatOptions', '85', png, '--out', jpg], capture_output=True, timeout=60)
+        if not COVER_SEEN.get(token):
+            raise OSError('the page did not get the board')
+        with open(jpg, 'rb') as f:
+            return f.read()
+    except (OSError, subprocess.SubprocessError) as e:
+        print('%s cover: no screenshot of %s (%s)' % (time.strftime('%H:%M:%S'), bid, e), flush=True)
+        return None
+    finally:
+        COVER_SEEN.pop(token, None)
+        for f in (png, jpg):
+            if os.path.exists(f):
+                os.remove(f)
+
+
+ITEM_ID_OK = re.compile(r'^[0-9a-zA-Z_-]{1,24}$')
+COVER_SEEN = {}   # cover shot token -> whether its page got the board
+
+
+def cover_for(bid, ids, title, body):
+    """The cover picture of a post made from this board (integrations.COVER): a picture among the chosen items; else the
+    model's pick among the board's pictures when one is about the post; else a screenshot of the chosen items, or of the
+    whole board when none were chosen. Returns (picture bytes or None, what it is in words)."""
+    try:
+        items = {i['id']: i for i in read_board(bid).get('items') or [] if i.get('id')}
+    except (OSError, ValueError, KeyError) as e:
+        print('%s cover: no board %s (%s)' % (time.strftime('%H:%M:%S'), bid, e), flush=True)
+        return None, ''
+
+    def picture(it):   # a picture item's bytes, or None (PDFs and missing files are not covers)
+        name = talk.image_name(it.get('src')) if it.get('type') == 'img' else None
+        if not name or name.endswith('.pdf'):
+            return None
+        try:
+            with open(os.path.join(IMAGES, name), 'rb') as f:
+                return f.read()
+        except OSError:
+            return None
+
+    def said(it):
+        return ' '.join((READER.words(talk.image_name(it.get('src')) or '') or it.get('label') or 'a picture with no words in it').split())
+
+    chosen = [items[i] for i in ids if i in items]
+    pics = [it for it in chosen if picture(it)]
+    if len(pics) == 1:
+        return picture(pics[0]), 'the picture on the board (%s)' % said(pics[0])[:60]
+    cands = pics or [it for it in items.values() if picture(it)]
+    if cands:
+        try:
+            pick = talk.pick_cover(title, body, [{'id': it['id'], 'words': said(it)[:300]} for it in cands[:20]], len(chosen))
+        except (OSError, ValueError):
+            pick = ''
+        if pick in items and picture(items[pick]):
+            return picture(items[pick]), 'the picture on the board (%s)' % said(items[pick])[:60]
+    shot = covershot(bid, [it['id'] for it in chosen])
+    if shot:
+        return shot, ('a screenshot of the %d chosen item%s' % (len(chosen), '' if len(chosen) == 1 else 's')) if chosen else 'a screenshot of the whole board'
+    return None, ''
+
+
+integrations.COVER = cover_for
 
 # The trained voices come out of the engine at different loudness: measured 2026-11-03 over 4 lines, Gen Jones -28.4 dBFS,
 # Kathryn Louise -27.9, Barry Eads -26.7, William Manire -25.8, Pete Williams -24.5, Steve Andersen -18.5. Gen Jones was

@@ -527,6 +527,31 @@ def chat(msgs, max_tokens, timeout=90, background=False):
     return parse_json(text)
 
 
+def name_frame(texts):
+    """A short name for a frame drawn around these items, from their words (the page asks when a frame is drawn around
+    things and the person has not typed a name; 2026-11-05)."""
+    msgs = [{'role': 'system', 'content': 'You name a frame on a whiteboard from what is inside it. Answer with one JSON object '
+             '{"title": "..."}: two to five plain words that say what these items are about, in English unless every item is in another language. '
+             'No quotes, no period at the end, no "Frame" or "Notes" in the name.'},
+            {'role': 'user', 'content': 'Inside the frame:\n\n' + '\n\n'.join('- ' + ' '.join(str(t).split())[:300] for t in texts[:40])}]
+    j = chat(msgs, 60, timeout=25)
+    title = str(j.get('title') or j.get('_text') or '').strip().strip('"\'').rstrip('.').strip()
+    return ' '.join(title.split())[:60]
+
+
+def pick_cover(title, body, pictures, n_chosen):
+    """Which picture goes on a post made from the board: one of the board's pictures (its id) when its words show it is
+    about the post's subject, else "shot", a screenshot of the chosen items. One short model call (2026-11-06)."""
+    where = 'the %d chosen card%s' % (n_chosen, '' if n_chosen == 1 else 's') if n_chosen else 'the board'
+    msgs = [{'role': 'system', 'content': 'A post is going out from a whiteboard. Pick its cover picture. Answer with one JSON '
+             'object {"pick": "<picture id>" or "shot", "why": "<a few words>"}. Pick a picture only when its words show it is '
+             'about the same thing as the post. Otherwise answer "shot": a screenshot of %s the post came from.' % where},
+            {'role': 'user', 'content': 'POST: %s\n%s\n\nPICTURES ON THE BOARD:\n%s' % (
+                title, ' '.join(body.split())[:800], '\n'.join('- [%s] %s' % (p['id'], p['words']) for p in pictures))}]
+    j = chat(msgs, 80, timeout=25)
+    return str(j.get('pick') or '').strip().strip('[]')
+
+
 def parse_json(text):
     """The JSON object in a model reply, repaired when the model stopped before its closing brackets."""
     start = text.find('{')
@@ -1014,8 +1039,8 @@ INTENT_FIELDS = """ "want": "<what the user wants and why, in one or two plain s
  "deliver": "<what the team will hand back: the one or two that fit best, joined with 'and', only from these kinds:
              findings with sources, a written plan, a comparison table, the content itself written on the board (a copy,
              a transcript, a file's text, as a card or notes), a Markdown (.md) file on the board, a working demo page on
-             the board, drafts for
-             them to send, code changes on a branch for them to review. Never promise a demo page
+             the board, drafts for them to send, a draft or post in a connected app (a Substack post, published after
+             their yes), code changes on a branch for them to review. Never promise a demo page
              when the user asked for a copy, a file or words: a demo is only for something they will click and try>",
  "cannot": "<the part of the JOB THE USER ASKED FOR that no team can do, or empty (usually empty). Never name things the user did
             not ask for (the user asked to find practices for sale: buying one or contacting sellers is NOT part of it). A team CAN write code for Clewbert,
@@ -1023,16 +1048,26 @@ INTENT_FIELDS = """ "want": "<what the user wants and why, in one or two plain s
             app), cannot store sign-ins, tokens or keys, cannot run the app or its tests, and nothing it makes keeps
             running after it ends. It can make a Markdown (.md) file on the board, but not a PDF, a Word file or a
             spreadsheet: 'drop it back as a PDF' -> cannot: 'make a PDF; it makes a .md file'.
-            One short phrase, under 12 words, e.g. 'put the new code live'>",
+            What a CONNECTED APP (listed below) can do is NOT a cannot: a team does it, after their yes (Substack connected
+            and the user asks to post or publish there: the team drafts it and publishes it when the user says yes, so cannot is
+            empty; same for sending from Gmail). Only an app that is not connected makes a cannot ('post it on LinkedIn'
+            with no LinkedIn connected -> cannot: 'post on LinkedIn'). One short phrase, under 12 words, e.g. 'put the new code live'>",
  "acts": true or false (true only when the job means sending messages, posting, or spending money)"""
 INTENT = """The user is about to give a job to a team of AI agents on their Clewbert boards. Say plainly what the
 team will and will not hand back. Reply with JSON only:
 {""" + INTENT_FIELDS + "}"
 
 
-def team_intent(task):
+def apps_line(bid):
+    """What a team can do in the connected apps on this board, for the planner's prompt (never a 'cannot')."""
+    import integrations
+    can = integrations.can_act(bid)
+    return '\nCONNECTED APPS a team can act in, each act after their yes: %s.' % can if can else '\nCONNECTED APPS: none.'
+
+
+def team_intent(task, bid=None):
     """The intent card for a team: what the user wants, what it hands back, what no team can do, whether it acts."""
-    out = chat([{'role': 'system', 'content': INTENT}, {'role': 'user', 'content': task}], 400, timeout=60)
+    out = chat([{'role': 'system', 'content': INTENT + apps_line(bid)}, {'role': 'user', 'content': task}], 400, timeout=60)
     return intent_of(out, task)
 
 
@@ -1285,9 +1320,9 @@ Reply with JSON only:
 """ + INTENT_FIELDS + "}"
 
 
-def team_plan(question, history, here, spaces_text):
+def team_plan(question, history, here, spaces_text, bid=None):
     """How to set up a team for this job: the task in their words, a board name, the space it belongs in."""
-    msgs = [{'role': 'system', 'content': TEAM_PLAN % (here or 'in the app', spaces_text or '(no spaces yet)') + skills.text('assistant')}]
+    msgs = [{'role': 'system', 'content': TEAM_PLAN % (here or 'in the app', spaces_text or '(no spaces yet)') + apps_line(bid) + skills.text('assistant')}]
     for h in history[-3:]:
         msgs += [{'role': 'user', 'content': h['q']}, {'role': 'assistant', 'content': json.dumps({'said': h['a']})}]
     msgs.append({'role': 'user', 'content': question})
@@ -1456,7 +1491,7 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
     if route == 'agent':   # a new kind of teammate, in their words: the server writes its charter and keeps it
         return {'answer': '', 'sources': [], 'checked': None, 'ms': int((time.time() - t0) * 1000), 'route': 'agent', 'agent_build': question}
     if route == 'team':   # a job for a team: how to set it up; the server asks them before starting it
-        plan = team_plan(question, history, here, spaces_text)
+        plan = team_plan(question, history, here, spaces_text, bid=bid)
         plan['explicit'] = bool(re.search(r'\b(team|agents?)\b', question, re.I))
         plan['changed'] = changed   # the user changed where it goes: say only the new setup, no second offer of the space the user just turned down
         return {'answer': '', 'sources': [], 'checked': None, 'ms': int((time.time() - t0) * 1000), 'route': 'team', 'team': plan}

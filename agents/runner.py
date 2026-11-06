@@ -743,6 +743,43 @@ class Runner:
                 r['question']['told'] = True
                 self.save(r)
 
+    def board_status(self):
+        """One word per board for the board list: a team at work, a question waiting on the person, or a task that ended
+        and has not been looked at yet (the board not opened since it ended). Opening the board clears it (seen); a board
+        with nothing going on is not in the answer (2026-11-05: the pill is the system status of each board)."""
+        week = now_ms() - 7 * 86400 * 1000
+        with self.lock:
+            runs = list(self.runs.values())
+        rank = {'waiting': 0, 'working': 1, 'done': 2, 'stopped': 3}
+        out = {}
+        for r in runs:
+            if r['status'] == 'waiting' and r.get('question'):
+                state = 'waiting'
+            elif r.get('parent'):
+                continue   # a teammate's part: its task speaks for it
+            elif r['status'] in ACTIVE:
+                state = 'working'
+            elif r['status'] in ENDED and not r.get('seen') and (r.get('ended') or 0) > week:
+                state = 'done' if r['status'] in ('done', 'partial') else 'stopped'
+            else:
+                continue
+            cur = out.get(r['board'])
+            if not cur or rank[state] < rank[cur['state']]:
+                out[r['board']] = {'state': state, 'when': r.get('ended') or r['created'], 'task': r['task'][:120]}
+        return out
+
+    def seen(self, bid):
+        """The person opened the board: its ended tasks have been looked at, and the board list stops flagging them."""
+        with self.lock:
+            runs = [r for r in self.runs.values() if r['board'] == bid]
+        n = 0
+        for r in runs:
+            if r['status'] in ENDED and not r.get('seen'):
+                r['seen'] = True
+                self.save(r)
+                n += 1
+        return n
+
     def recent(self, bids, hours=6):
         """Tasks on these boards that are running, or ended in the last few hours: the voice can talk about them."""
         since = now_ms() - hours * 3600 * 1000
@@ -775,7 +812,7 @@ class Runner:
                                                          'it, then finish again with a summary of what is new.' % str(text)[:2000] + (
             '\nHand the new work to the teammate whose role fits it (assign). Your teammates now: %s.'
             % '; '.join('%s: %s' % (m['name'], m.get('role', '')) for m in team) if r.get('lead') else '')})
-        for k in ('finished', 'stop', 'frame_gone', 'ended', 'told', 'error', 'final_done', 'final_retry', 'gaps'):
+        for k in ('finished', 'stop', 'frame_gone', 'ended', 'told', 'seen', 'error', 'final_done', 'final_retry', 'gaps'):
             r.pop(k, None)
         r['msg_base'] = sum(1 for m in r['messages'] if m['role'] == 'assistant')   # a fresh allowance of steps and rounds
         r['step_base'] = len(r['steps'])
@@ -1269,6 +1306,11 @@ class Runner:
             if not it:
                 return 'There is no item with that id.'
             kind, words = talk.item_words(it, self.reader)
+            if it.get('type') == 'file':   # name and text ran together ("file: Test 2.md Test 2"): a two-word file read as a file with no text (2026-11-06)
+                text, label = self.item_text(it)
+                tail = words[len(talk._item_words(it, self.reader)[1]):]   # why it is on the board, when known
+                words = 'the file "%s"; its whole text is %d words, between the marks « and »: «%s»%s' % (
+                    label, len(text.split()), text or '(no readable words in it)', tail)
             r['focus'] = it['id']
             ws = words.split()
             per, total = 2000, max(1, -(-len(ws) // 2000))
@@ -1583,6 +1625,8 @@ class Runner:
                     'what will be done (who it goes to, what it says). Only if they say yes, make the same call again with confirm '
                     'true.' % (name, label))
         self.step(r, 'Used %s: %s%s' % (name, shown, ' (you said yes)' if needs_yes else ''))
+        if name == 'substack_draft':   # the post's cover picture comes from this board and the cards the job was started on
+            a = dict(a, _board=r['board'], _selected=r.get('selected') or [])
         return str(fn(a))[:integrations.TOOL_CHARS]
 
     def use_browser(self, r, name, a):
@@ -2499,7 +2543,7 @@ class Runner:
         it = r.get('intent')
         if not it:
             try:
-                it = r['intent'] = talk.team_intent(r['task'])
+                it = r['intent'] = talk.team_intent(r['task'], r.get('board'))
             except (OSError, ValueError, KeyError):
                 it = None
         r['intent_card'] = True

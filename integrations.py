@@ -13,6 +13,7 @@ import base64, json, os, re, secrets, threading, time, urllib.error, urllib.pars
 from email.mime.text import MIMEText
 
 FILE = None   # set by server.py: <data>/integrations.json
+COVER = None   # set by server.py: (board id, item ids, title, body) -> (picture bytes or None, what it is in words), a post's cover
 _lock = threading.Lock()
 _cache = {'mtime': None, 'data': None}
 STATES = {}   # Google sign-in in progress: state -> (time, redirect address)
@@ -63,6 +64,22 @@ def names():
     out = ['Gmail, Google Calendar and Google Drive'] if (s.get('google') or {}).get('refresh_token') else []
     out += ['Substack'] if (s.get('substack') or {}).get('cookie') else []
     return out + [x['name'] for x in s.get('servers', [])]
+
+
+def can_act(bid):
+    """One line for the team planner: what a team can DO in the connected apps on this board (2026-11-06: the planner
+    told the user no team could publish on Substack while the agents had the tool). Empty when nothing is connected or apps
+    are off on this board."""
+    if not board_on(bid):
+        return ''
+    s, out = load(), []
+    if (s.get('google') or {}).get('refresh_token'):
+        out += ['Gmail (search and read; save a draft; send an email after their yes)', 'Google Drive (search and read files)',
+                'Google Calendar (list events; add an event after their yes)']
+    if (s.get('substack') or {}).get('cookie'):
+        out.append('Substack (save a post as a draft; publish it, live for everyone, after their yes)')
+    out += ['%s (its own tools)' % x['name'] for x in s.get('servers', [])]
+    return '; '.join(out)
 
 
 def public(bid=None):
@@ -561,13 +578,25 @@ def substack_draft(a):
     body = str(a.get('body') or '').strip()[:200000]
     if not title or not body:
         raise OSError('A draft needs a title and a body.')
-    r = _substack('POST', 'https://%s.substack.com/api/v1/drafts' % s['subdomain'], {
-        'draft_title': title, 'draft_subtitle': re.sub(r'\s+', ' ', str(a.get('subtitle') or '')).strip()[:200],
-        'draft_body': _substack_body(body), 'type': 'newsletter', 'audience': 'everyone',
-        'draft_bylines': [{'id': s.get('user_id'), 'publicationUserId': s.get('pub_user_id'), 'is_guest': False}]})
+    cover, note, cover_url = None, '', ''   # the cover picture: without one Substack shows the newsletter logo (the owner's own face, 2026-11-06)
+    if COVER and a.get('_board'):
+        try:
+            cover, note = COVER(str(a['_board']), [str(x) for x in (a.get('_selected') or [])][:200], title, body)
+        except (OSError, ValueError, KeyError, TypeError):
+            cover = None
+    if cover:
+        kind = 'png' if cover[:4] == b'\x89PNG' else 'jpeg'
+        up = _substack('POST', 'https://%s.substack.com/api/v1/image' % s['subdomain'], {'image': 'data:image/%s;base64,%s' % (kind, base64.b64encode(cover).decode())})
+        cover_url = str(up.get('url') or '') if isinstance(up, dict) else ''
+    draft = {'draft_title': title, 'draft_subtitle': re.sub(r'\s+', ' ', str(a.get('subtitle') or '')).strip()[:200],
+             'draft_body': _substack_body(body), 'type': 'newsletter', 'audience': 'everyone',
+             'draft_bylines': [{'id': s.get('user_id'), 'publicationUserId': s.get('pub_user_id'), 'is_guest': False}]}
+    if cover_url:
+        draft['cover_image'] = cover_url
+    r = _substack('POST', 'https://%s.substack.com/api/v1/drafts' % s['subdomain'], draft)
     if not isinstance(r, dict) or not r.get('id'):
         raise OSError('Substack did not say it saved the draft.')
-    return {'id': r['id'], 'title': title, 'publication': s.get('publication', ''),
+    return {'id': r['id'], 'title': title, 'publication': s.get('publication', ''), 'cover': note if cover_url else '',
             'url': 'https://%s.substack.com/publish/post/%s' % (s['subdomain'], r['id'])}
 
 
@@ -599,15 +628,17 @@ def substack_publish_tool(a):
 
 def substack_draft_tool(a):
     d = substack_draft(a)
-    return 'Saved on Substack as a draft, not published: "%s" on %s. The person can open it at %s' % (d['title'], d['publication'], d['url'])
+    return 'Saved on Substack as a draft, not published: "%s" on %s. Cover picture: %s. The person can open it at %s' % (
+        d['title'], d['publication'], d['cover'] or 'none (Substack shows the newsletter logo)', d['url'])
 
 
 SUBSTACK = {
     'substack_draft': ('Save a post as a DRAFT on the person\'s Substack newsletter (nothing is published; they publish it themselves). '
-                       'body is plain text: one paragraph per line, a line starting with "# " is a heading.',
+                       'body is plain text: one paragraph per line, a line starting with "# " is a heading. The post gets its cover '
+                       'picture from the board on its own (a picture among the selected items when one fits, else a screenshot of them): the reply says which.',
                        {'title': S, 'subtitle': S, 'body': S}, ['title', 'body'], False, substack_draft_tool),
     'substack_publish': ('Publish a saved Substack draft (draft_id from substack_draft) so it is live for everyone; send true also emails every '
-                         'subscriber, which cannot be undone. Needs the person\'s yes to exactly this first: say the title and whether it emails.',
+                         'subscriber, which cannot be undone. Needs the person\'s yes to exactly this first: say the title, the cover picture and whether it emails.',
                          {'draft_id': S, 'send': {'type': 'boolean'}, 'confirm': CONFIRM}, ['draft_id'], True, substack_publish_tool),
 }
 

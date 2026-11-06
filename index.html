@@ -36,7 +36,7 @@
     --shadow-lift:0 6px 20px rgba(16,20,28,.14);
     --radius:11px;
     --font:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    --hand:"Marker Felt","Patrick Hand","Chalkboard SE","Comic Sans MS",cursive;   /* sticky notes: a quick hand, so they read as short thoughts */
+    --hand:"Caveat Brush","Marker Felt","Patrick Hand","Chalkboard SE","Comic Sans MS",cursive;   /* sticky notes: a marker, so they read as short thoughts */
     --stage:#ffffff;--soft:#fafbfc;--hover:#f1f3f6;--grid:#e3e3e3;--hair:rgba(16,20,28,.09);--glass:rgba(255,255,255,.94);
     --on-primary:#ffffff;--primary-hover:#2b313f;--line:#50555c;--mark:#fef08a;
     --blue:#1d4ed8;--blue-bg:#e8f0fe;--amber:#b45309;--amber-bg:#fff4e0;--green:#15803d;--green-bg:#e7f6ec;
@@ -57,7 +57,8 @@
   /* a sticky note in dark: a dark card with light words; only its folded corner keeps the note's colour */
   :root[data-theme="dark"] .cv-note:not(.plain):not(.cv-org):not(.cv-card) .frame{background:var(--card);border-color:var(--border);color:var(--ink)}
   :root[data-theme="dark"] .cv-item .frame{box-shadow:var(--shadow)}
-  @font-face{font-family:"Patrick Hand";src:url(fonts/patrick-hand.woff2) format("woff2");font-display:swap}   /* for screens without Marker Felt */
+  @font-face{font-family:"Caveat Brush";src:url(fonts/caveat-brush.woff2) format("woff2");font-display:swap}   /* sticky notes: a marker with real lowercase (Permanent Marker is all capitals; 2026-11-05) */
+  @font-face{font-family:"Patrick Hand";src:url(fonts/patrick-hand.woff2) format("woff2");font-display:swap}   /* the fallback while the marker loads */
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;font-family:var(--font);color:var(--ink);background:var(--canvas);-webkit-font-smoothing:antialiased;font-size:13px;line-height:1.45}
@@ -180,10 +181,18 @@
   /* a board an agent team or the assistant made: a badge on its picture, so it is told apart from the user's own boards */
   .cvprev-by{position:absolute;left:8px;top:7px;display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;letter-spacing:.02em;color:#fff;background:#3b82f6;border-radius:999px;padding:2px 8px 2px 6px;pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.15)}
   .cvprev-by.assistant{background:#7c3aed}
+  /* the same pill as the board's system status: a team at work, a question, or work not looked at yet (2026-11-05) */
+  .cvprev-by.working{background:#3b82f6}
+  .cvprev-by.waiting{background:#d97706}
+  .cvprev-by.done{background:#16a34a}
+  .cvprev-by.stopped{background:#dc2626}
+  .cvprev-by i{width:7px;height:7px;border-radius:50%;background:#fff;flex:0 0 auto;margin:0 2px}
+  .cvprev-by.working i{animation:agpulse 1.2s ease-in-out infinite}
   .cvprev-by svg{width:12px;height:12px}
   .cvprev-shot{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
   body.shot{background:var(--soft)}body.shot>*:not(#shotBox){display:none!important}   /* ?shot=<id>: the server photographs one preview */
   #shotBox{position:fixed;left:0;top:0;width:320px;height:160px}#shotBox .cvprev-badge{display:none}
+  #shotBox.cover{width:100vw;height:100vh;background-image:radial-gradient(circle,var(--grid) .9px,transparent 1.1px);background-size:5px 5px}   /* a post's cover picture: the chosen items at Substack's cover size, on the board's dot grid */
 
   /* ---------- Board (canvas) ---------- */
   .cv{position:fixed;inset:0;z-index:80;background:var(--stage);display:none;flex-direction:column}
@@ -574,6 +583,11 @@
   .cv-web iframe{flex:1;min-height:0;width:100%;border:0;background:#fff}
   .cv-web .frame{position:relative}
   .cv-stage:active .cv-web iframe{pointer-events:none}   /* dragging or panning over a page keeps working */
+  /* the page is inert until you select its card: a pinch or scroll over it moves the board, not the browser's zoom (which hid
+     the menus until ⌘0); one click on the card and the page takes your scrolling and clicks (2026-11-05) */
+  .cv-web:not(.sel) iframe{pointer-events:none}
+  .cv-web:not(.sel) .frame::after{content:'Click to use this page';position:absolute;left:50%;bottom:.8em;transform:translateX(-50%);font-size:calc(12px / var(--zs,1));padding:.3em .8em;border-radius:1em;background:rgba(17,24,39,.78);color:#fff;opacity:0;transition:opacity .15s;pointer-events:none;white-space:nowrap}
+  .cv-web:not(.sel):hover .frame::after{opacity:1}
   .cv-web .webprev{flex:1;display:grid;place-items:center;color:var(--muted);font-size:calc(13px / var(--zs,1))}
   .cv-shot .frame{background:#0f172a;border-radius:calc(8px / var(--zs,1));overflow:hidden;display:flex;flex-direction:column;container-type:inline-size}
   .cv-shot .shotbar{display:flex;align-items:center;gap:.5em;padding:.45em .7em;font-size:2.3cqw;color:#e2e8f0;background:#1e293b;white-space:nowrap}
@@ -840,7 +854,7 @@
   .sb-box:focus-within kbd{display:none}
   .sb-p{position:absolute;left:0;right:0;top:42px;z-index:97;min-width:min(420px,calc(100vw - 32px));max-height:min(70vh,640px);overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 40px rgba(16,20,28,.18);padding:6px}
   .sb-p h4{margin:8px 10px 4px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-2)}
-  .sb-r{display:block;width:100%;text-align:left;border:none;background:none;border-radius:8px;padding:7px 10px;color:var(--ink);font-size:13px}
+  .sb-r{display:block;width:100%;text-align:left;border:none;background:none;border-radius:8px;padding:7px 10px;color:var(--ink);font-size:13px;text-decoration:none;box-sizing:border-box}
   .sb-r.on{background:var(--hover)}
   .sb-r b{font-weight:600}
   .sb-r .sb-sub{display:block;font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1358,7 +1372,24 @@ function ago(t){const s=(Date.now()-t)/1000;
 
 /* Spaces: folders for boards (a board is in one space, or none = Unsorted). #s/<id> shows a space, #s/unsorted the
    boards in none, no hash shows all boards. Deleting a space never deletes boards; they become unsorted. */
-const HOME={space:null,spaces:[],boards:[]};
+const HOME={space:null,spaces:[],boards:[],status:{},statusTimer:0};
+/* The pill on a board's card is its system status (2026-11-05): "Agents at work" while a team runs there, "Agents have a question"
+   when one waits on you, then "Agent job done" (or stopped) until you open the board, which clears it. Only a board with nothing
+   going on shows who made it (Agent generated / Assistant generated). */
+const HOME_ST_LABEL={working:'Agents at work',waiting:'Agents have a question',done:'Agent job done',stopped:'Agent job stopped'};
+function homePill(b){
+  const st=HOME.status[b.id];
+  if(st)return '<span class="cvprev-by '+st.state+'" title="'+escapeAttr(st.task||'')+'"><i></i>'+HOME_ST_LABEL[st.state]+'</span>';
+  return b.by==='agent'?'<span class="cvprev-by" title="Made by an agent team">'+CV_BY_ICON+'Agent generated</span>':b.by==='assistant'?'<span class="cvprev-by assistant" title="Made by your assistant">'+CV_BY_ICON+'Assistant generated</span>':'';}
+function homePills(){   // redraw only the pills, in place: the grid itself is not touched
+  $('#boardGrid').querySelectorAll('.bcard:not(.scard) .cvprev').forEach(box=>{const b=(HOME.boards||[]).find(x=>x.id===box._id);if(!b)return;
+    const old=box.querySelector('.cvprev-by'),html=homePill(b);if((old?old.outerHTML:'')===html)return;if(old)old.remove();if(html)box.insertAdjacentHTML('beforeend',html);});}
+async function homeStatusPoll(){
+  clearTimeout(HOME.statusTimer);if($('#home').hidden)return;
+  try{const j=await api('boards/status');if(JSON.stringify(j.boards||{})!==JSON.stringify(HOME.status)){HOME.status=j.boards||{};homePills();}}catch(e){}
+  if(!$('#home').hidden)HOME.statusTimer=setTimeout(homeStatusPoll,document.hidden?30000:5000);
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('#home').hidden)homeStatusPoll();});
 const CV_BY_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="8" width="15" height="11" rx="3"/><path d="M12 8V4.5"/><circle cx="12" cy="3.6" r="1"/><circle cx="9.3" cy="13.2" r=".8" fill="currentColor"/><circle cx="14.7" cy="13.2" r=".8" fill="currentColor"/></svg>';   // the badge on a board an agent or the assistant made
 const spaceOf=b=>HOME.spaces.some(x=>x.id===b.space)?b.space:null;
 /* A sub-space has "parent" = a top-level space (one level only). Nav order: each top-level space, then its sub-spaces. */
@@ -1376,7 +1407,7 @@ const recentBoards=()=>HOME.boards.filter(b=>!boardArchived(b)&&!agentMade(b)).s
 async function loadSpaces(){try{HOME.spaces=(await api('spaces')).spaces||[];}catch(e){}}   // in the user's order (drag to change)
 async function showHome(space){
   $('#cv').classList.remove('open');$('#home').hidden=false;bpClose();
-  HOME.space=space||null;
+  HOME.space=space||null;homeStatusPoll();
   const grid=$('#boardGrid');
   // what we already have is drawn at once; the latest list follows and redraws only if something changed
   if(HOME.boards)homePaint();
@@ -1416,7 +1447,7 @@ function homePaint(){
   const boardCard=b=>{
     const card=document.createElement('div');card.className='bcard';card.draggable=true;
     const n=b.count??b.items.length,sp=spaceOf(b)&&spaceOf(b)!==HOME.space?' · '+escapeHtml(spaceName(spaceOf(b))):'';   // in a parent space or on the top level: which space it is in
-    const by=b.by==='agent'?'<span class="cvprev-by" title="Made by an agent team">'+CV_BY_ICON+'Agent generated</span>':b.by==='assistant'?'<span class="cvprev-by assistant" title="Made by your assistant">'+CV_BY_ICON+'Assistant generated</span>':'';
+    const by=homePill(b);
     card.innerHTML=`<div class="cvprev">${n?`<img class="cvprev-shot" alt="" loading="lazy" decoding="async" src="api/boardshots/${b.id}${cvShotDark()}.jpg?u=${b.updated}&v=${CV_SHOT_V}">`:''}<div class="cvprev-inner"></div><span class="cvprev-badge"></span>${by}</div>
       <div class="bmeta"><span class="bname">${escapeHtml(b.name)}</span><span class="bsub">${n} item${n===1?'':'s'} · edited ${ago(b.updated)}${sp}</span></div>
       <button class="bmore" title="Move or delete">⋯</button>`;
@@ -1546,7 +1577,11 @@ function boardMenu(b,anchor){
   const row=x=>x.parent?`<button data-to="${escapeAttr(x.id)}" data-under="${escapeAttr(x.parent)}"${x.id===cur?' class="cur"':''}${open.has(x.parent)?'':' hidden'}>\u00a0\u00a0\u00a0\u00a0${escapeHtml(x.name)}</button>`
     :`<div class="mrow"><button data-to="${escapeAttr(x.id)}"${x.id===cur?' class="cur"':''}>${escapeHtml(x.name)}</button>${subsOf(x.id).length?`<button class="m-fold${open.has(x.id)?'':' shut'}" data-fold="${escapeAttr(x.id)}" title="Show its sub-spaces">▼</button>`:''}</div>`;
   menuOpen(anchor,`<div class="mh">Move to</div>${tree.map(row).join('')}
-    <button data-to=""${cur?'':' class="cur"'}>Unsorted (no space)</button><hr><button data-arch="${b.archived?'0':'1'}">${b.archived?'Unarchive board':'Archive board'}</button><button class="danger" data-del="1">Delete board</button>`,m=>{
+    <button data-to=""${cur?'':' class="cur"'}>Unsorted (no space)</button><hr><button data-by="${b.by?'user':'agent'}">${b.by?'Mark as made by you':'Mark as agent generated'}</button><button data-arch="${b.archived?'0':'1'}">${b.archived?'Unarchive board':'Archive board'}</button><button class="danger" data-del="1">Delete board</button>`,m=>{
+    m.querySelector('[data-by]').onclick=async()=>{menuClose();   // the badge is yours to set: a board an agent made for you, or one you made that the data misjudged (2026-11-05)
+      try{await api('boards/'+b.id+'/made-by',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({by:m.querySelector('[data-by]').dataset.by})});}
+      catch(e){alert('The board was not changed. Reload the page and try again.');return;}
+      showHome(HOME.space);};
     m.querySelectorAll('[data-to]').forEach(x=>x.onclick=()=>{menuClose();const to=x.dataset.to||null;if(to!==cur)moveBoard(b.id,to);});
     m.querySelectorAll('[data-fold]').forEach(f=>f.onclick=e=>{e.stopPropagation();const id=f.dataset.fold,shut=f.classList.toggle('shut');
       m.querySelectorAll(`[data-under="${CSS.escape(id)}"]`).forEach(x=>x.hidden=shut);});
@@ -1707,6 +1742,8 @@ async function openBoard(id){
   $('#cvTitle').value=cvBoard.name;document.title=cvBoard.name+' · Clewbert';
   cvSaveState('');
   $('#home').hidden=true;$('#cv').classList.add('open');
+  {const st=HOME.status[id];if(st&&st.state!=='working'&&st.state!=='waiting')delete HOME.status[id];}   // you are looking at it now: the card's "job done" goes
+  api('boards/'+id+'/seen',{method:'POST'}).catch(()=>{});
   cvRender();cvHistReset();
   if(cvFocusTitle){cvFocusTitle=false;$('#cvTitle').focus();$('#cvTitle').select();}
   if(VC.openBrief){VC.openBrief=false;bpOpen();}else if(BP.open)bpLoad();
@@ -2738,7 +2775,19 @@ function cvAddFrame(x,y,w,h,behind){   // a frame you make yourself, like the on
   if(behind){it.z=Math.min(0,...cvBoard.items.map(i=>i.z||0))-1;el.style.zIndex=it.z;cvBoard.items.unshift(it);w0.prepend(el);}
   else{it.z=++cvBoard.maxZ;el.style.zIndex=it.z;cvBoard.items.push(it);w0.appendChild(el);}
   $('#cvEmpty').style.display='none';cvSelect(it.id);cvSave();
-  cvEditFrameTitle(it,el);return it;
+  cvEditFrameTitle(it,el);
+  if(behind){const texts=cvInside(it).map(cvItemWords).filter(Boolean);if(texts.length)cvNameFrame(it,texts);}   // drawn around things: named from them unless you type a name first
+  return it;
+}
+function cvItemWords(i){return String(i.type==='note'||i.type==='text'||i.type==='area'?i.text:i.type==='link'?(i.title||i.url):i.type==='file'?i.name:i.type==='web'?i.url:i.type==='img'?i.label:'').trim().slice(0,300);}
+async function cvNameFrame(it,texts){   // the model reads what the frame wraps and gives it a short name; your own words win if you typed any
+  const bid=cvBoardId;let j;
+  try{j=await api('name-frame',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({texts:texts.slice(0,40)})});}catch(e){return;}
+  const title=String(j.title||'').trim();if(!title||cvBoardId!==bid||!cvBoard)return;
+  const cur=cvBoard.items.find(i=>i.id===it.id),el=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"]`),t=el&&el.querySelector('.ftitle');
+  if(!cur||cur.text||(t&&t.isContentEditable&&t.textContent.trim()))return;
+  if(t&&t.isContentEditable){t.textContent=title;t.blur();return;}   // still open for typing: filled in and closed, which saves it
+  cur.text=title;if(t){t.textContent=title;t.classList.remove('empty');}cvSave();
 }
 function cvEditFrameTitle(it,el){   // the title is the frame's handle: double-click it (or place a new frame) to type its name
   const t=el.querySelector('.ftitle');if(!t||t.isContentEditable)return;
@@ -2842,7 +2891,7 @@ async function cvPrevFetch(){
 // thousands of items and hundreds of MB of full-size images, which made the board list slow to open).
 const CV_PREV_MAX=150;
 function cvThumb(src){const m=/^api\/images\/([0-9a-f]{64}\.(?:jpg|png))$/.exec(src||'');return m?'api/thumbs/'+m[1]:src;}
-function paintCanvasPreview(items,box,count,bounds){
+function paintCanvasPreview(items,box,count,bounds,maxK){   // maxK: a cover may blow a few cards up to 3x
   const inner=box.querySelector('.cvprev-inner'),badge=box.querySelector('.cvprev-badge');
   box.querySelectorAll('.cvprev-empty').forEach(e=>e.remove());
   inner.innerHTML='';
@@ -2854,12 +2903,12 @@ function paintCanvasPreview(items,box,count,bounds){
   const minX=bounds?bounds[0]:Math.min(...items.map(i=>i.x)),minY=bounds?bounds[1]:Math.min(...items.map(i=>i.y));
   const bw=Math.max(1,(bounds?bounds[2]:Math.max(...items.map(i=>i.x+i.w)))-minX);
   const bh=Math.max(1,(bounds?bounds[3]:Math.max(...items.map(i=>i.y+i.h)))-minY);
-  const W=box.clientWidth-16,H=box.clientHeight-16;
-  const k=Math.min(W/bw,H/bh,1);
-  inner.style.transform=`translate(${8+(W-bw*k)/2}px,${8+(H-bh*k)/2}px) scale(${k})`;
+  const m=maxK?48:8,W=box.clientWidth-2*m,H=box.clientHeight-2*m;
+  const k=Math.min(W/bw,H/bh,maxK||1);
+  inner.style.transform=`translate(${m+(W-bw*k)/2}px,${m+(H-bh*k)/2}px) scale(${k})`;
   const shown=items.length>CV_PREV_MAX?items.slice().sort((a,b)=>b.w*b.h-a.w*a.h).slice(0,CV_PREV_MAX):items;
   shown.slice().sort((a,b)=>(a.z||0)-(b.z||0)).forEach(it=>{
-    const el=cvItemEl({...it,src:it.type==='img'?cvThumb(it.src):it.src,preview:true});
+    const el=cvItemEl({...it,src:it.type==='img'?(maxK?it.src:cvThumb(it.src)):it.src,preview:it.type==='file'&&it.preview?it.preview:true});   // a file card keeps its text (preview:true printed "true" on it)
     el.style.left=(it.x-minX)+'px';el.style.top=(it.y-minY)+'px';
     inner.appendChild(el);
   });
@@ -3053,11 +3102,11 @@ function cvToPdf(it){   // a plain Letter-size PDF in Helvetica (the browser mea
 async function cvSubstackDraft(it){
   const lines=String(it.text||'').split('\n'),i=lines.findIndex(l=>l.trim());if(i<0)return;
   const title=lines[i].replace(/^#+\s*/,'').trim().slice(0,200),body=lines.slice(i+1).join('\n').trim()||title;
-  let r,j={};try{r=await fetch('api/substack/draft',STG_POST({title,body}));try{j=await r.json();}catch(e){}}catch(e){alert('Substack could not be reached. Check the connection and try again.');return;}
+  let r,j={};try{r=await fetch('api/substack/draft',STG_POST({title,body,board:cvBoardId,items:[it.id]}));try{j=await r.json();}catch(e){}}catch(e){alert('Substack could not be reached. Check the connection and try again.');return;}
   if(!r.ok){alert(j.error||'The draft was not saved on Substack.');return;}
   const k=cvUnit();
   cvAddItem({type:'link',url:j.url,x:it.x+it.w+24*k,y:it.y,w:300*k,h:132*k,sub:{id:String(j.id),state:'draft',title:j.title,pub:j.publication||'your newsletter'},
-    unfurl:{title:'Substack draft: '+j.title,desc:'Saved as a draft on '+(j.publication||'your newsletter')+'. Not live yet: press Publish… here when it is ready, or open it on Substack to edit it first.',img:'',pub:'substack.com'}},true);
+    unfurl:{title:'Substack draft: '+j.title,desc:'Saved as a draft on '+(j.publication||'your newsletter')+'.'+(j.cover?' Cover picture: '+j.cover+'.':' No cover picture: Substack will show the newsletter logo.')+' Not live yet: press Publish… here when it is ready, or open it on Substack to edit it first.',img:'',pub:'substack.com'}},true);
 }
 // the stop point: nothing goes live until one of these is pressed, and each says exactly what it does
 function cvSubstackPublishAsk(it,btn){
@@ -4578,8 +4627,9 @@ function sbPlace(){const b=$('#sb'),board=!!location.hash.slice(1)&&!location.ha
   if(board&&b.parentNode!==$('.cv-head'))$('.cv-head').insertBefore(b,$('.cv-right'));
   else if(!board&&b.parentNode!==$('.home-head'))$('#spaceSelect').after(b);
   $('#sbInput').placeholder=board?'Search this board, or ask a question':location.hash.startsWith('#s/')?'Search your boards, or ask about this space':'Search your boards, or ask a question';
-  sbClose();$('#sbInput').value='';}
+  sbClose();}   // the typed words stay: back from a match, the same search is a click away (2026-11-05)
 function sbClose(){$('#sbP').hidden=true;SB.keep=false;SB.seq++;SB.res=null;}
+const sbHref=s=>s.item?'#'+s.board+'/'+s.item:'#'+s.board;   // a match's own address: ⌘-click or the right-click menu opens it in a new tab
 const sbTouch=()=>matchMedia('(pointer:coarse)').matches;   // a phone or tablet: Enter is the keyboard's Go key
 function sbMark(text,words){   // the typed words highlighted, the rest escaped
   if(!words||!words.length)return escapeHtml(text);
@@ -4588,15 +4638,15 @@ function sbMark(text,words){   // the typed words highlighted, the rest escaped
 function sbPaint(){
   const p=$('#sbP'),q=$('#sbInput').value.trim(),r=SB.res;p.hidden=false;p.innerHTML='';SB.rows=[];
   if(!q){p.hidden=true;return;}   // nothing typed: no panel
-  const row=(html,go,cls)=>{const b=document.createElement('button');b.className='sb-r'+(cls?' '+cls:'');b.innerHTML=html;
-    b.onmousedown=e=>e.preventDefault();b.onclick=go;b.onmousemove=()=>sbOn(SB.rows.indexOf(b));p.appendChild(b);SB.rows.push(b);};
+  const row=(html,go,cls,href)=>{const b=document.createElement(href?'a':'button');b.className='sb-r'+(cls?' '+cls:'');b.innerHTML=html;if(href)b.href=href;
+    b.onmousedown=e=>e.preventDefault();b.onclick=e=>{if(href&&(e.metaKey||e.ctrlKey||e.shiftKey))return;e.preventDefault();go();};b.onmousemove=()=>sbOn(SB.rows.indexOf(b));p.appendChild(b);SB.rows.push(b);};
   const head=t=>{const h=document.createElement('h4');h.textContent=t;p.appendChild(h);};
   const where=cvBoardId?'this board':HOME.space?'the boards in '+spaceName(HOME.space):'all your boards';
   row(`<span class="sb-ask"><span class="sb-q">Ask: <b>${escapeHtml(q)}</b></span>${sbTouch()?'':'<i>Enter</i>'}</span><span class="sb-sub">A written answer from ${escapeHtml(where)}</span>`,()=>sbAsk(q),'ask');
   if(r){
-    if(r.boards.length){head('Boards');r.boards.forEach(b=>row(`<b>${sbMark(b.name,r.words)}</b><span class="sb-sub">${escapeHtml(b.space?spaceName(b.space)||'Board':'Not in a space')}${(HOME.boards||[]).some(x=>x.id===b.id&&boardArchived(x))?' · Archived':''}</span>`,()=>{sbClose();$('#sbInput').blur();location.hash=b.id;}));}
+    if(r.boards.length){head('Boards');r.boards.forEach(b=>row(`<b>${sbMark(b.name,r.words)}</b><span class="sb-sub">${escapeHtml(b.space?spaceName(b.space)||'Board':'Not in a space')}${(HOME.boards||[]).some(x=>x.id===b.id&&boardArchived(x))?' · Archived':''}</span>`,()=>{sbClose();$('#sbInput').blur();location.hash=b.id;},'','#'+b.id));}
     const here=r.items.filter(i=>i.board===cvBoardId),other=r.items.filter(i=>i.board!==cvBoardId);
-    const item=i=>row(`<span class="sb-snip">${sbMark(i.snippet,r.words)}</span><span class="sb-sub">${escapeHtml(SB_KINDS[i.kind]||i.kind)}${i.board===cvBoardId?'':' · '+escapeHtml(i.boardName)}${i.frame?' · '+escapeHtml(i.frame):''}</span>`,()=>{sbClose();$('#sbInput').blur();vcGo(i);});
+    const item=i=>row(`<span class="sb-snip">${sbMark(i.snippet,r.words)}</span><span class="sb-sub">${escapeHtml(SB_KINDS[i.kind]||i.kind)}${i.board===cvBoardId?'':' · '+escapeHtml(i.boardName)}${i.frame?' · '+escapeHtml(i.frame):''}</span>`,()=>{sbClose();$('#sbInput').blur();vcGo(i);},'',sbHref(i));
     if(here.length){head('On this board');here.forEach(item);}
     if(other.length){head(cvBoardId?'On other boards':'On your boards');other.forEach(item);}
     if(!r.boards.length&&!r.items.length){const d=document.createElement('div');d.className='sb-none';d.textContent=`No board, note or picture has these words. ${sbTouch()?'Tap Ask':'Press Enter'} to ask anyway: the answer can use the meaning, not only the words.`;p.appendChild(d);}
@@ -4621,9 +4671,10 @@ async function sbAsk(q){
   p.appendChild(box);SB.rows=[];
   const src=(j.sources||[]).filter(s=>s.item);
   if(src.length){const h=document.createElement('h4');h.textContent='From';p.appendChild(h);
-    src.forEach(s=>{const b=document.createElement('button');b.className='sb-r';b.onmousedown=e=>e.preventDefault();
+    src.forEach(s=>{const b=document.createElement('a');b.className='sb-r';b.href=sbHref(s);b.onmousedown=e=>e.preventDefault();
       b.innerHTML=`<span class="sb-snip">${escapeHtml(s.snippet||'')}</span><span class="sb-sub">${escapeHtml(SB_KINDS[s.kind]||s.kind)}${s.board===cvBoardId?'':' · '+escapeHtml(s.boardName)}</span>`;
-      b.onclick=()=>{$('#sbInput').blur();sbClose();vcGo(s);};b.onmousemove=()=>sbOn(SB.rows.indexOf(b));p.appendChild(b);SB.rows.push(b);});}
+      b.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey)return;e.preventDefault();$('#sbInput').blur();sbClose();vcGo(s);};b.onmousemove=()=>sbOn(SB.rows.indexOf(b));p.appendChild(b);SB.rows.push(b);});}
+  SB.ans=q;   // the answer stays up for this question: back from a source, a click in the box shows it again
   SB.at=-1;   // Enter now asks again, not the first source
   const back=document.createElement('button');back.className='sb-back';back.textContent='← Back to the matches';back.onmousedown=e=>e.preventDefault();
   back.onclick=()=>{SB.res=null;sbFind();$('#sbInput').focus();};box.appendChild(back);
@@ -4631,8 +4682,8 @@ async function sbAsk(q){
 }
 (function(){
   const inp=$('#sbInput');
-  inp.addEventListener('input',()=>{clearTimeout(SB.t);SB.res=null;if(!inp.value.trim()){sbPaint();return;}SB.t=setTimeout(sbFind,150);});
-  inp.addEventListener('focus',()=>{SB.keep=false;if($('#sbP').hidden){if(inp.value.trim())sbFind();else sbPaint();}});
+  inp.addEventListener('input',()=>{clearTimeout(SB.t);SB.res=null;SB.ans=null;if(!inp.value.trim()){sbPaint();return;}SB.t=setTimeout(sbFind,150);});
+  inp.addEventListener('focus',()=>{SB.keep=false;if($('#sbP').hidden){if(SB.ans&&inp.value.trim()===SB.ans)$('#sbP').hidden=false;else if(inp.value.trim())sbFind();else sbPaint();}});
   inp.addEventListener('blur',()=>setTimeout(()=>{if(document.activeElement!==inp&&!SB.keep)$('#sbP').hidden=true;},150));
   document.addEventListener('pointerdown',e=>{if(SB.keep&&!e.target.closest('#sb')){SB.keep=false;$('#sbP').hidden=true;}});   // the matches stay up after Go until you tap elsewhere
   inp.addEventListener('keydown',e=>{e.stopPropagation();   // typing here never reaches the board's shortcut keys
@@ -4649,6 +4700,7 @@ async function sbAsk(q){
 })();
 
 function route(){sbPlace();const id=location.hash.slice(1);
+  {const m=/^([0-9a-f]{12})\/([^/]+)$/.exec(id);if(m){VC.focus=[m[2]];history.replaceState(null,'','#'+m[1]);route();return;}}   // #<board>/<item>: that board, at that item
   if(id==='agents'||id.startsWith('agents/')){closeBoard();$('#cv').classList.remove('open');agvShow(id.slice(7));return;}
   agvHide();
   if(id.startsWith('s/')){closeBoard();showHome(id.slice(2));}else if(id)openBoard(id);else{closeBoard();showHome(null);}}
@@ -4873,10 +4925,18 @@ $('#agvPushOn').onclick=async()=>{
 
 // ?shot=<board id>: only that board's preview, the size of a card, for the server to photograph (server.py boardshot)
 const SHOT=new URLSearchParams(location.search).get('shot');
+const SHOT_ITEMS=(new URLSearchParams(location.search).get('items')||'').split(',').filter(Boolean);   // &cover=1&items=a,b: a post's cover, these items at the window's size
 async function shotPaint(){
   document.body.classList.add('shot');
   const box=document.createElement('div');box.className='cvprev';box.id='shotBox';
   box.innerHTML='<div class="cvprev-inner"></div><span class="cvprev-badge"></span>';document.body.appendChild(box);
+  if(/[?&]cover=1/.test(location.search)){   // the cover picture of a post made from this board (server.py covershot): the chosen items, or the whole board when none were
+    box.classList.add('cover');
+    const [b]=await Promise.all([api('boards/'+SHOT),api('previews?ids='+SHOT+'&seen='+(new URLSearchParams(location.search).get('seen')||''))]);   // seen: tells the server this very shot got its board
+    const all=(b.items||[]).filter(i=>i.type!=='arrow'&&Number.isFinite(i.x)&&Number.isFinite(i.w)&&Number.isFinite(i.h)),chosen=all.filter(i=>SHOT_ITEMS.includes(i.id));
+    paintCanvasPreview(chosen.length?chosen:all,box,undefined,undefined,3);
+    return;
+  }
   const [cards,got]=await Promise.all([api('boards?light=1'),api('previews?ids='+SHOT)]);
   const b=cards.find(c=>c.id===SHOT)||{};
   paintCanvasPreview(got[SHOT]||[],box,b.count,b.bounds);
