@@ -1161,20 +1161,25 @@ for that. Copying a card or a file into a Markdown file is ONE call (add_file wi
 any size) that the Lead makes itself, and so is the transcript of a video or a recording (transcribe: a speech recognizer
 writes the whole thing in about a minute an hour; never a member reading captions or pages). For a job that is
 such a copy or such a transcript, and nothing more, reply {"members": [], "alone": true}.
-Reply with JSON only:
+%sReply with JSON only:
 {"members": [{"kind": "<one kind from the list>", "name": "<2 to 4 words>", "does": "<its part of this job, one sentence>",
   "done_when": "<what must be in its frame for its part to be done, something a checker can see: 'a note per scope and
   limit, each with the developer page it came from'>"}]}"""
 TEAM_KINDS = ('research', 'analyze', 'check', 'write', 'ux', 'ui', 'demo', 'distill')
 
 
-def team_design(task, intent=None, extra_kinds='', notes=''):
+def team_design(task, intent=None, extra_kinds='', notes='', apps=''):
     """The members this job needs: [{kind, name, does, done_when}], 2 to 5, only known kinds."""
     it = intent or {}
     job = task + ('\nThe team hands back: %s.' % it['deliver'] if it.get('deliver') else '') + (
         '\nNo team can do this part, so leave it out: %s.' % it['cannot'] if it.get('cannot') else '') + (
         '\nNOTES FROM EARLIER TEAMS ON SIMILAR JOBS (shape this team by them):\n' + notes if notes else '')
-    out = chat([{'role': 'system', 'content': TEAM_DESIGN % extra_kinds}, {'role': 'user', 'content': job}], 900, timeout=90)
+    apps_text = ('CONNECTED APPS the members can act in (anything that sends or publishes waits for the person\'s yes): %s. '
+                 'When the team hands back a draft or post in one of these apps, the member who writes it ENDS its part by '
+                 'calling that app\'s draft tool (substack_draft, gmail_draft) and its done_when names the saved draft: a post '
+                 'written on the board is not a post. Pictures the person selected go into the post (substack_draft pictures), '
+                 'and the app picks the cover picture itself: never plan "no cover".\n' % apps) if apps else ''
+    out = chat([{'role': 'system', 'content': TEAM_DESIGN % (extra_kinds, apps_text)}, {'role': 'user', 'content': job}], 900, timeout=90)
     if isinstance(out, dict) and out.get('alone') is True and not out.get('members'):
         return 'alone'   # one call does the whole job: the Lead makes it, no team
     kinds = TEAM_KINDS + tuple(re.findall(r'^- (\w+):', extra_kinds, re.M))
@@ -1244,8 +1249,8 @@ def team_critic(task, intent, members, notes='', kinds=TEAM_KINDS, lead_tools=()
         src = clean(a.get('same_source_as'), 40).lower()
         if a.get('asked') is False:
             cut.append({'name': m['name'], 'why': 'the ask does not call for it'})
-        elif src and src in by and src != m['name'].lower() and src not in {c['name'].lower() for c in cut}:
-            cut.append({'name': m['name'], 'why': 'it only re-checks what %s reads from the same item' % by[src]['name']})
+        elif src and src in by and src != m['name'].lower() and src not in {c['name'].lower() for c in cut} and m.get('kind') in ('check', 'research'):
+            cut.append({'name': m['name'], 'why': 'it only re-checks what %s reads from the same item' % by[src]['name']})   # a distiller or writer reading the same card transforms it, it does not re-check it (2026-11-06: the critic cut the distiller)
         else:
             k = dict(m)
             one = clean(a.get('one_call'), 30)

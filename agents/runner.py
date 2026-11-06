@@ -2329,7 +2329,8 @@ class Runner:
             want = talk.team_design(r['task'], r.get('intent'), ((
                 '- engineer: writes real code in one of these code bases: %s. It works on its own branch, which the user reviews '
                 'before anything goes live: it can read, search, edit, check syntax and commit, but cannot run the app or '
-                'deploy. Say in "does" which code base.\n' % ', '.join(have)) if have else '') + custom_kinds_text(), notes)
+                'deploy. Say in "does" which code base.\n' % ', '.join(have)) if have else '') + custom_kinds_text(), notes,
+                apps=integrations.can_act(r['board']))   # a post in a connected app is the app's draft call, not text on the board (2026-11-06)
         except (OSError, ValueError, KeyError):
             want = []
         if want == 'alone':   # the designer: one call does the whole job, no team (a copy of a card is add_file with from_item)
@@ -2564,6 +2565,10 @@ class Runner:
         self.place(r, {'type': 'note', 'text': text, 'color': '#eef4ff', 'card': 1, 'grow': 'h', 'fs': fs}, width, h, wide=True)
         self.step(r, 'Wrote the intent: what the team will hand back' + (' and what it cannot do' if it.get('cannot') else ''))
         brief = 'THE INTENT, AGREED WITH THE USER (it is the first card in your frame): the team hands back %s.' % it['deliver']
+        if 'connected app' in it['deliver'] or 'Substack' in it['deliver'] or 'email' in it['deliver'].lower():
+            brief += (' A draft or post in a connected app means a teammate called that app\'s draft tool (substack_draft, gmail_draft) '
+                      'and reported the draft\'s address: a post written on the board is not it. Pictures the person selected go into '
+                      'the post (substack_draft pictures, in order), and the app chooses the cover picture itself: never plan "no cover".')
         if it.get('cannot'):
             brief += ' Do NOT attempt this, no team can: %s. Say in your answer that it has to be built into the app itself.' % it['cannot']
         r['messages'][1]['content'] += '\n\n' + brief

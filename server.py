@@ -1018,7 +1018,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(409, {'error': 'Substack is not connected. Open Settings, Connected apps, and connect it first.'})
             try:
                 req = json.loads(self.read_body())
-                if BOARD_ID.match(str(req.get('board') or '')):   # the cover picture comes from the note's board
+                if BOARD_ID.match(str(req.get('board') or '')):   # the cover picture (and any pictures inside) come from the note's board
                     req.update(_board=req['board'], _selected=[str(x) for x in (req.get('items') or [])][:200])
                 return self.reply(200, integrations.substack_draft(req))
             except OSError as e:   # 424, not 502: Cloudflare swaps an origin 502 for its own page and the words would never reach the canvas
@@ -2575,7 +2575,24 @@ def cover_for(bid, ids, title, body):
     return None, ''
 
 
+def picture_of(bid, item_id):
+    """A picture card's bytes and caption, for inside a post (integrations.PICTURE); None when it is not a picture here."""
+    try:
+        it = next((i for i in read_board(bid).get('items') or [] if i.get('id') == item_id), None)
+    except (OSError, ValueError, KeyError):
+        return None
+    name = talk.image_name(it.get('src')) if it and it.get('type') == 'img' else None
+    if not name or name.endswith('.pdf'):
+        return None
+    try:
+        with open(os.path.join(IMAGES, name), 'rb') as f:
+            return f.read(), ' '.join(str(it.get('label') or '').split())[:200]
+    except OSError:
+        return None
+
+
 integrations.COVER = cover_for
+integrations.PICTURE = picture_of
 
 # The trained voices come out of the engine at different loudness: measured 2026-11-03 over 4 lines, Gen Jones -28.4 dBFS,
 # Kathryn Louise -27.9, Barry Eads -26.7, William Manire -25.8, Pete Williams -24.5, Steve Andersen -18.5. Gen Jones was

@@ -14,6 +14,7 @@ from email.mime.text import MIMEText
 
 FILE = None   # set by server.py: <data>/integrations.json
 COVER = None   # set by server.py: (board id, item ids, title, body) -> (picture bytes or None, what it is in words), a post's cover
+PICTURE = None   # set by server.py: (board id, item id) -> (picture bytes, caption) or None, a picture card for inside a post
 _lock = threading.Lock()
 _cache = {'mtime': None, 'data': None}
 STATES = {}   # Google sign-in in progress: state -> (time, redirect address)
@@ -554,19 +555,43 @@ def substack_check(cookie):
             'others': [str(x['publication'].get('name') or x['publication']['subdomain'])[:80] for x in pubs if x is not pu]}
 
 
-def _substack_body(text):
-    """Plain text to the editor's own document form: one paragraph per line, a line starting with # a heading."""
-    doc = []
+def _substack_body(text, images=None):
+    """Plain text to the editor's own document form: one paragraph per line, a line starting with # a heading, a line
+    "[picture <id>]" the uploaded picture with that id (images: id -> node); pictures not placed go at the end, in order."""
+    doc, images, placed = [], dict(images or {}), set()
     for line in text.split('\n'):
         line = line.strip()
         if not line:
+            continue
+        p = re.match(r'^\[picture\s+([^\]\s]+)\]$', line, re.I)
+        if p:
+            if p.group(1) in images and p.group(1) not in placed:
+                doc.append(images[p.group(1)]); placed.add(p.group(1))
             continue
         m = re.match(r'^(#{1,3})\s+(.+)$', line)
         if m:
             doc.append({'type': 'heading', 'attrs': {'level': len(m.group(1)) + 1}, 'content': [{'type': 'text', 'text': m.group(2)}]})
         else:
             doc.append({'type': 'paragraph', 'content': [{'type': 'text', 'text': line}]})
+    doc += [node for pid, node in images.items() if pid not in placed]
     return json.dumps({'type': 'doc', 'content': doc or [{'type': 'paragraph'}]})
+
+
+def _substack_image(subdomain, data, caption=''):
+    """Upload a picture and make the editor's image block for it (image2 inside captionedImage, with the upload's own
+    width, height and bytes: the editor shows an empty placeholder without them, and strips a bare image node)."""
+    kind = 'png' if data[:4] == b'\x89PNG' else 'jpeg'
+    up = _substack('POST', 'https://%s.substack.com/api/v1/image' % subdomain, {'image': 'data:image/%s;base64,%s' % (kind, base64.b64encode(data).decode())})
+    if not isinstance(up, dict) or not up.get('url'):
+        raise OSError('Substack did not take the picture.')
+    node = {'type': 'captionedImage', 'content': [{'type': 'image2', 'attrs': {
+        'src': up['url'], 'srcNoWatermark': None, 'fullscreen': None, 'imageSize': None, 'width': up.get('imageWidth') or 0,
+        'height': up.get('imageHeight') or 0, 'resizeWidth': None, 'bytes': up.get('bytes') or len(data), 'alt': caption or None,
+        'title': None, 'type': up.get('contentType') or 'image/' + kind, 'href': None, 'belowTheFold': False, 'topImage': False,
+        'internalRedirect': None}}]}
+    if caption:
+        node['content'].append({'type': 'caption', 'content': [{'type': 'text', 'text': caption[:200]}]})
+    return up['url'], node
 
 
 def substack_draft(a):
@@ -585,11 +610,19 @@ def substack_draft(a):
         except (OSError, ValueError, KeyError, TypeError):
             cover = None
     if cover:
-        kind = 'png' if cover[:4] == b'\x89PNG' else 'jpeg'
-        up = _substack('POST', 'https://%s.substack.com/api/v1/image' % s['subdomain'], {'image': 'data:image/%s;base64,%s' % (kind, base64.b64encode(cover).decode())})
-        cover_url = str(up.get('url') or '') if isinstance(up, dict) else ''
+        try:
+            cover_url = _substack_image(s['subdomain'], cover)[0]
+        except OSError:
+            cover_url = ''
+    images, missing = {}, []   # pictures from the board inside the post, in the order given (2026-11-06)
+    for pid in [str(x) for x in (a.get('pictures') or []) if str(x).strip()][:12]:
+        got = PICTURE(str(a['_board']), pid) if PICTURE and a.get('_board') else None
+        if not got:
+            missing.append(pid)
+            continue
+        images[pid] = _substack_image(s['subdomain'], got[0], got[1])[1]
     draft = {'draft_title': title, 'draft_subtitle': re.sub(r'\s+', ' ', str(a.get('subtitle') or '')).strip()[:200],
-             'draft_body': _substack_body(body), 'type': 'newsletter', 'audience': 'everyone',
+             'draft_body': _substack_body(body, images), 'type': 'newsletter', 'audience': 'everyone',
              'draft_bylines': [{'id': s.get('user_id'), 'publicationUserId': s.get('pub_user_id'), 'is_guest': False}]}
     if cover_url:
         draft['cover_image'] = cover_url
@@ -597,7 +630,7 @@ def substack_draft(a):
     if not isinstance(r, dict) or not r.get('id'):
         raise OSError('Substack did not say it saved the draft.')
     return {'id': r['id'], 'title': title, 'publication': s.get('publication', ''), 'cover': note if cover_url else '',
-            'url': 'https://%s.substack.com/publish/post/%s' % (s['subdomain'], r['id'])}
+            'pictures': len(images), 'missing': missing, 'url': 'https://%s.substack.com/publish/post/%s' % (s['subdomain'], r['id'])}
 
 
 def substack_publish(a):
@@ -628,15 +661,18 @@ def substack_publish_tool(a):
 
 def substack_draft_tool(a):
     d = substack_draft(a)
-    return 'Saved on Substack as a draft, not published: "%s" on %s. Cover picture: %s. The person can open it at %s' % (
-        d['title'], d['publication'], d['cover'] or 'none (Substack shows the newsletter logo)', d['url'])
+    return 'Saved on Substack as a draft, not published: "%s" on %s. Cover picture: %s. Pictures inside the post: %d%s. The person can open it at %s' % (
+        d['title'], d['publication'], d['cover'] or 'none (Substack shows the newsletter logo)', d['pictures'],
+        ' (not pictures on this board, left out: %s)' % ', '.join(d['missing']) if d['missing'] else '', d['url'])
 
 
 SUBSTACK = {
     'substack_draft': ('Save a post as a DRAFT on the person\'s Substack newsletter (nothing is published; they publish it themselves). '
                        'body is plain text: one paragraph per line, a line starting with "# " is a heading. The post gets its cover '
-                       'picture from the board on its own (a picture among the selected items when one fits, else a screenshot of them): the reply says which.',
-                       {'title': S, 'subtitle': S, 'body': S}, ['title', 'body'], False, substack_draft_tool),
+                       'picture from the board on its own (a picture among the selected items when one fits, else a screenshot of them): the reply says which. '
+                       'pictures: ids of picture cards on the board to put INSIDE the post, in order (the screenshots the person selected go in); '
+                       'write "[picture <id>]" on its own line in the body where one goes, else they follow the text.',
+                       {'title': S, 'subtitle': S, 'body': S, 'pictures': {'type': 'array', 'items': S}}, ['title', 'body'], False, substack_draft_tool),
     'substack_publish': ('Publish a saved Substack draft (draft_id from substack_draft) so it is live for everyone; send true also emails every '
                          'subscriber, which cannot be undone. Needs the person\'s yes to exactly this first: say the title, the cover picture and whether it emails.',
                          {'draft_id': S, 'send': {'type': 'boolean'}, 'confirm': CONFIRM}, ['draft_id'], True, substack_publish_tool),
