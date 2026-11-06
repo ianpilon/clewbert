@@ -594,6 +594,28 @@ def name_frame(texts):
     return ' '.join(title.split())[:60]
 
 
+def hook_line(title, body):
+    """The hook for a made cover: one line of the post's own words, 4 to 12 of them, the line most worth reading. The
+    model picks; the line must be in the post word for word, else the title stands in (2026-11-06)."""
+    text = ' '.join(('%s\n%s' % (title, body)).split())
+    msgs = [{'role': 'system', 'content': 'A post is going out with a made cover picture: one line of the post, set large over a '
+             'photo. Pick that line: a sentence or phrase of 4 to 12 words FROM THE POST ITSELF, the one most worth reading, '
+             'that stands on its own. Copy the words exactly as they are in the post: no rewriting, no quotes, no trailing period. '
+             'Answer with one JSON object {"line": "..."}.'},
+            {'role': 'user', 'content': 'POST TITLE: %s\n\nPOST:\n%s' % (title, ' '.join(body.split())[:3000])}]
+    try:
+        j = chat(msgs, 80, timeout=25)
+    except (OSError, ValueError):
+        j = {}
+    line = ' '.join(str(j.get('line') or '').split()).strip(' "\'\u201c\u201d').rstrip('.')
+    plain = lambda t: re.sub(r'[^a-z0-9 ]+', ' ', t.lower())
+    words = line.split()
+    if 3 <= len(words) <= 14 and ' '.join(plain(line).split()) in ' '.join(plain(text).split()):
+        return line
+    t = ' '.join(str(title).split()).rstrip('.')
+    return ' '.join(t.split()[:12]) if t else ' '.join(' '.join(str(body).split()).split()[:12])
+
+
 def pick_cover(title, body, pictures, n_chosen):
     """Which picture goes on a post made from the board: one of the board's pictures (its id) when its words show it is
     about the post's subject, else "shot", a screenshot of the chosen items. One short model call (2026-11-06)."""

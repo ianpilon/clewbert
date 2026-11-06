@@ -1052,6 +1052,12 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as e:   # 424, not 502: Cloudflare swaps an origin 502 for its own page and the words would never reach the canvas
                 print('%s substack: %s' % (time.strftime('%H:%M:%S'), e))
                 return self.reply(424, {'error': str(e)})
+        if parts == ['api', 'covers', 'make']:   # a made cover for a title and body, as a picture: to look at one before it is used (2026-11-06)
+            req = json.loads(self.read_body())
+            data, note = made_cover(str(req.get('title') or '')[:200], str(req.get('body') or '')[:20000])
+            if not data:
+                return self.reply(503, {'error': 'no cover could be made: the pool is empty or Chrome did not answer'})
+            return self.reply(200, data, 'image/jpeg', {'Cache-Control': 'no-store', 'X-Cover-Note': note.encode('ascii', 'ignore').decode()})
         if parts == ['api', 'substack', 'publish']:   # the draft card's Publish, after the person picked email or site-only on the canvas
             if not (integrations.load().get('substack') or {}).get('cookie'):
                 return self.reply(409, {'error': 'Substack is not connected. Open Settings, Connected apps, and connect it first.'})
@@ -2564,8 +2570,8 @@ COVER_SEEN = {}   # cover shot token -> whether its page got the board
 
 def cover_for(bid, ids, title, body):
     """The cover picture of a post made from this board (integrations.COVER): a picture among the chosen items; else the
-    model's pick among the board's pictures when one is about the post; else a screenshot of the chosen items, or of the
-    whole board when none were chosen. Returns (picture bytes or None, what it is in words)."""
+    model's pick among the board's pictures when one is about the post; else a cover made from a line of the post over a
+    nature photo; else a screenshot of the chosen items. Returns (picture bytes or None, what it is in words)."""
     try:
         items = {i['id']: i for i in read_board(bid).get('items') or [] if i.get('id')}
     except (OSError, ValueError, KeyError) as e:
@@ -2597,10 +2603,71 @@ def cover_for(bid, ids, title, body):
             pick = ''
         if pick in items and picture(items[pick]):
             return picture(items[pick]), 'the picture on the board (%s)' % said(items[pick])[:60]
+    made, note = made_cover(title, body)   # no picture of its own: a hook line over a nature photo, never the newsletter logo (2026-11-06)
+    if made:
+        return made, note
     shot = covershot(bid, [it['id'] for it in chosen])
     if shot:
         return shot, ('a screenshot of the %d chosen item%s' % (len(chosen), '' if len(chosen) == 1 else 's')) if chosen else 'a screenshot of the whole board'
     return None, ''
+
+
+COVERS = os.path.join(DATA, 'covers')   # the cover-photo pool: tools/covers/fill_pool.py fills it (public-domain nature photos, vetted)
+
+
+def made_cover(title, body):
+    """A cover made for a post that has no picture of its own: a hook line from the post, set large in a white serif over
+    a nature photo from the pool, darkened a little, the newsletter's name small at the top left. Photographed with
+    headless Chrome at Substack's cover size. (2026-11-06: the user's face must never stand in for a post.)"""
+    try:
+        with open(os.path.join(COVERS, 'pool.json')) as f:
+            pool = json.load(f)
+    except (OSError, ValueError):
+        return None, ''
+    photos = [v for v in (pool.get('accepted') or {}).values() if os.path.exists(os.path.join(COVERS, 'pool', v.get('file', '')))]
+    if not photos:
+        return None, ''
+    last_path = os.path.join(COVERS, 'last.txt')
+    try:
+        with open(last_path) as f:
+            last = f.read().strip()
+    except OSError:
+        last = ''
+    photo = secrets.choice([v for v in photos if v['file'] != last] or photos)
+    hook = talk.hook_line(title, body) or ' '.join(str(title).split()[:12])
+    label = (integrations.load().get('substack') or {}).get('publication') or ''
+    size = 96 if len(hook) <= 40 else 82 if len(hook) <= 70 else 66
+    page = ('<!doctype html><meta charset="utf-8"><style>html,body{margin:0;width:%dpx;height:%dpx;overflow:hidden}'
+            'body{background:#111 url("file://%s") center/cover no-repeat;position:relative;font-family:Baskerville,"Hoefler Text",Georgia,serif;color:#fff}'
+            'body:after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.42)}'
+            '.l{position:absolute;left:44px;top:36px;z-index:2;font:500 20px/1 -apple-system,"Helvetica Neue",Arial,sans-serif;letter-spacing:.02em;opacity:.85}'
+            'h1{position:absolute;inset:0;z-index:2;margin:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 150px;'
+            'font-weight:400;font-size:%dpx;line-height:1.08;text-wrap:balance;text-shadow:0 2px 24px rgba(0,0,0,.35)}</style>'
+            '<span class="l">%s</span><h1>%s</h1>') % (COVER_W, COVER_H, html.escape(os.path.join(COVERS, 'pool', photo['file'])), size,
+                                                        html.escape(label), html.escape(hook))
+    token = secrets.token_hex(6)
+    src = os.path.join(BOARDSHOTS, 'made-%s.html' % token)
+    png, jpg = src[:-5] + '.png', src[:-5] + '.jpg'
+    try:
+        with open(src, 'w') as f:
+            f.write(page)
+        subprocess.run([CHROME, '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+                        '--user-data-dir=' + os.path.expanduser('~/Library/Caches/context-canvas-boardshots'),
+                        '--window-size=%d,%d' % (COVER_W, COVER_H), '--virtual-time-budget=5000', '--screenshot=' + png, 'file://' + src],
+                       capture_output=True, timeout=120)
+        subprocess.run(['sips', '-s', 'format', 'jpeg', '-s', 'formatOptions', '88', png, '--out', jpg], capture_output=True, timeout=60)
+        with open(jpg, 'rb') as f:
+            data = f.read()
+        with open(last_path, 'w') as f:
+            f.write(photo['file'])
+        return data, 'made from your line \u201c%s\u201d over a nature photo' % hook
+    except (OSError, subprocess.SubprocessError) as e:
+        print('%s cover: could not make one (%s)' % (time.strftime('%H:%M:%S'), e), flush=True)
+        return None, ''
+    finally:
+        for f in (src, png, jpg):
+            if os.path.exists(f):
+                os.remove(f)
 
 
 def picture_of(bid, item_id):
