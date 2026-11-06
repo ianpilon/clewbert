@@ -904,6 +904,10 @@ class Handler(BaseHTTPRequestHandler):
                     'iframe{border:0;width:100%%;height:100%%;display:block}</style><iframe src="../images/%s" title="%s"></iframe>'
                     % (html.escape(name), parts[2], html.escape(name)))
             return self.reply(200, page.encode(), 'text/html; charset=utf-8', {'Cache-Control': 'no-cache'})
+        if len(parts) == 4 and parts[:3] == ['api', 'substack', 'preview'] and re.match(r'^[0-9]{1,20}$', parts[3]):
+            # the draft as Substack holds it now, drawn fresh on every load: what the Publish card beside it sends (2026-11-06)
+            return self.reply(200, integrations.substack_preview_page(parts[3]).encode(), 'text/html; charset=utf-8', {
+                'Cache-Control': 'no-store', 'Content-Security-Policy': "sandbox; connect-src 'none'"})
         if len(parts) == 3 and parts[:2] == ['api', 'demos'] and re.match(r'^r[0-9a-f]{12}-[a-z0-9-]{1,40}\.html$', parts[2]):
             # a page an agent wrote: sealed off from the canvas (its own blank origin: no cookies, no access to our data)
             try:

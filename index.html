@@ -579,7 +579,7 @@
   .cv-web .webbar i{width:.6em;height:.6em;border-radius:50%;background:#3b82f6;flex:0 0 auto}
   .cv-web .webbar i.demo{background:#22c55e}
   .cv-web .webbar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
-  .cv-web .webbar a{color:var(--blue);font-weight:600;text-decoration:none}
+  .cv-web .webbar a{color:var(--blue);font-weight:600;text-decoration:none}.webbar .wb-reload{font:inherit;color:inherit;background:none;border:1px solid currentColor;border-radius:6px;padding:1px 7px;margin-right:8px;cursor:pointer;opacity:.8}.webbar .wb-reload:hover{opacity:1}
   .cv-web iframe{flex:1;min-height:0;width:100%;border:0;background:#fff}
   .cv-web .frame{position:relative}
   .cv-stage:active .cv-web iframe{pointer-events:none}   /* dragging or panning over a page keeps working */
@@ -2281,8 +2281,9 @@ function cvItemEl(it){
   }else if(it.type==='web'){ // a live web page on the board: drag it by its bar, use the site below it
     // an agent's demo runs sealed off: no same-origin, so its code cannot reach the canvas or your login
     const src=it.demo?it.url+'?v='+((agRun(it.run)||{}).demo_v||0):safeUrl(it.url),rr=it.demo&&agRun(it.run);
-    el.innerHTML=`<div class="frame"><div class="webbar"><i${it.demo?' class="demo"':''}></i><span title="${escapeAttr(it.url)}">${escapeHtml(it.demo?'Demo · '+(it.label||'')+(rr&&rr.member?' · by '+rr.member.name:''):it.url)}</span><a href="${escapeAttr(it.demo?it.url:safeUrl(it.url))}" target="_blank" rel="noopener">Open ↗</a></div>${it.preview?`<div class="webprev">${it.demo?'Working demo':'Live web page'}</div>`:`<iframe src="${escapeAttr(src)}" data-v="${escapeAttr(src)}" sandbox="${it.demo?'allow-scripts allow-forms allow-pointer-lock':'allow-scripts allow-same-origin allow-forms allow-popups'}" referrerpolicy="no-referrer" loading="lazy"></iframe>`}</div>`;
+    el.innerHTML=`<div class="frame"><div class="webbar"><i${it.demo?' class="demo"':''}></i><span title="${escapeAttr(it.url)}">${escapeHtml(it.demo?(it.sub?'Substack draft, as Substack holds it now':'Demo · '+(it.label||'')+(rr&&rr.member?' · by '+rr.member.name:'')):it.url)}</span>${it.sub?'<button class="wb-reload" title="Read the draft from Substack again, after editing it there">Reload</button>':''}<a href="${escapeAttr(it.demo?it.url:safeUrl(it.url))}" target="_blank" rel="noopener">Open ↗</a></div>${it.preview?`<div class="webprev">${it.demo?'Working demo':'Live web page'}</div>`:`<iframe src="${escapeAttr(src)}" data-v="${escapeAttr(src)}" sandbox="${it.demo?'allow-scripts allow-forms allow-pointer-lock':'allow-scripts allow-same-origin allow-forms allow-popups'}" referrerpolicy="no-referrer" loading="lazy"></iframe>`}</div>`;
     el.querySelector('.webbar a').addEventListener('pointerdown',e=>e.stopPropagation());
+    const rb=el.querySelector('.wb-reload');if(rb){rb.addEventListener('pointerdown',e=>e.stopPropagation());rb.onclick=e=>{e.stopPropagation();const f=el.querySelector('iframe');if(f)f.src=it.url+'?v='+Date.now();};}
     requestAnimationFrame(()=>cvWebFit(el));
   }else if(it.type==='shot'){ // an agent's browser, as it looks now (the page refreshes it while the agent works)
     const rr=agRun(it.run);
@@ -3887,6 +3888,11 @@ function vcSeen(){   // the part of the board on screen, in board units: "the to
   if(!cvBoardId)return null;const r=$('#cvStage').getBoundingClientRect(),s=cvView.s;
   return [-cvView.x/s,-cvView.y/s,(r.width-cvView.x)/s,(r.height-cvView.y)/s];}
 async function vcAsk(q){
+  if(NEWS.draft&&Date.now()-NEWS.draft.at<15*60e3&&/^\W*(?:(?:ok|okay|yes|yeah|sure|please)[,\s]+)*(?:show me|show it|show it to me|take me (?:there|to it)|bring me (?:there|to it)|go there|go to it|where is it|where'?s (?:it|the (?:publish )?(?:button|card|draft|preview)))\W*$/i.test(q)){
+    const dr=NEWS.draft,ids=[dr.preview,dr.card].filter(Boolean);NEWS.draft=null;
+    if(cvBoardId===dr.board&&cvBoard)vcFocus(ids,true);else{VC.focus=ids;VC.close=true;location.hash=dr.board;}
+    const a='Here it is: the preview is the draft as Substack holds it, and the card beside it has the Publish button. Nothing goes out until you press it.';
+    VC.turns.push({q,a,t:Date.now()});vcThread(true);vcSay(a,++VC.askSeq,false);return;}
   const tAsked=performance.now();VC.askHeld=VC.heldAt;VC.heldAt=0;   // when the words were last heard, for the timing record
   const seq=++VC.askSeq,board=cvBoardId||null,scope=vcScope(),space=board?null:HOME.space;
   if(VC.scope!==scope)await vcLoad();
@@ -4286,8 +4292,10 @@ function newsWhere(r){return r.board===cvBoardId?'':` on the ${r.boardName} boar
 function newsDoneLine(r){
   if(r.status==='partial')return `${newsWho(r)}${newsWhere(r)} finished "${newsShort(r.task)}", with gaps. Still missing: ${newsShort(r.gaps,30).replace(/([^.!?…])$/,'$1.')}`;
   if(r.status!=='done')return `${newsWho(r)}${newsWhere(r)} stopped before finishing "${newsShort(r.task)}"${r.status==='failed'?', because of an error':''}.`;
-  const sum=String(r.summary||'').split(/(?<=[.!?])\s+/).slice(0,2).join(' ');
+  if(r.draft&&r.draft.app==='substack')return `${newsWho(r)}${newsWhere(r)} finished "${newsShort(r.task)}". "${r.draft.title}" is saved as a draft on your Substack, not published. Its preview and the Publish button are on the board${newsWhere(r)}.`;
+  const sum=newsNoIds(String(r.summary||'').split(/(?<=[.!?])\s+/).slice(0,2).join(' '));
   return `${newsWho(r)}${newsWhere(r)} finished "${newsShort(r.task)}".${sum?' '+newsShort(sum,45).replace(/([^.!?…])$/,'$1.'):''}`;}
+function newsNoIds(t){return String(t||'').replace(/\s*\b[cr](?=[a-z0-9]*\d)[a-z0-9]{9,12}\b/g,'').replace(/\(\s*\)/g,'').replace(/\s{2,}/g,' ');}   // item and run ids sound like gibberish read aloud (2026-11-06)
 function newsTold(ids,questions=[]){if(ids.length||questions.length)api('news/told',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runs:ids,questions})}).catch(()=>{});}
 function agAnnounce(){
   if(!VC.on||(VC.state!=='listening'&&VC.state!=='')||!vcVoice()||!VC.speak)return;   // replies off: the phone app's notifications say it instead; ears down: it still speaks
@@ -4302,6 +4310,8 @@ function agAnnounce(){
   }
   const d=ds[0];
   if(d){NEWS.done=ds.slice(1);newsTold([d.id]);vcChime();
+    if(d.draft&&d.draft.app==='substack'&&(d.status==='done'||d.status==='partial')){NEWS.draft=Object.assign({at:Date.now()},d.draft);
+      vcNews(newsDoneLine(d)+' Say "show me" and I take you to it. Read the preview, then press Publish on the card when it is right.');return;}
     vcNews(newsDoneLine(d)+(d.status==='done'||d.status==='partial'?' Want me to read the results, show you the frame, or is there anything else?':''));return;}
   const q=qs[0];
   if(q){AG.said.add(q.id+q.question);newsTold([],[q.id]);vcChime();vcNews(ask(q));}

@@ -634,6 +634,109 @@ def substack_draft(a):
             'url': 'https://%s.substack.com/publish/post/%s' % (s['subdomain'], r['id'])}
 
 
+def _pm_html(n):
+    """Substack's stored post body (ProseMirror nodes) as HTML: the kinds of node a post made here can hold."""
+    import html as h
+    if not isinstance(n, dict):
+        return ''
+    t, at, kids = n.get('type'), n.get('attrs') or {}, n.get('content') or []
+    inner = ''.join(_pm_html(c) for c in kids)
+    if t == 'text':
+        out = h.escape(str(n.get('text') or ''))
+        for m in n.get('marks') or []:
+            k = (m.get('type') or '') if isinstance(m, dict) else ''
+            if k in ('strong', 'bold'):
+                out = '<b>%s</b>' % out
+            elif k in ('em', 'italic'):
+                out = '<i>%s</i>' % out
+            elif k == 'code':
+                out = '<code>%s</code>' % out
+            elif k == 'link' and (m.get('attrs') or {}).get('href'):
+                out = '<a href="%s">%s</a>' % (h.escape(str(m['attrs']['href'])), out)
+        return out
+    if t == 'paragraph':
+        return '<p>%s</p>' % inner if inner.strip() else ''
+    if t == 'heading':
+        lvl = min(4, max(2, int(at.get('level') or 1) + 1))
+        return '<h%d>%s</h%d>' % (lvl, inner, lvl)
+    if t in ('image2', 'image'):
+        return '<img src="%s" alt="">' % h.escape(str(at.get('src') or '')) if at.get('src') else ''
+    if t == 'captionedImage':
+        cap = ''.join(_pm_html(c) for c in kids if isinstance(c, dict) and c.get('type') not in ('image2', 'image'))
+        img = ''.join(_pm_html(c) for c in kids if isinstance(c, dict) and c.get('type') in ('image2', 'image'))
+        return '<figure>%s%s</figure>' % (img, '<figcaption>%s</figcaption>' % cap if cap.strip() else '')
+    if t == 'bullet_list':
+        return '<ul>%s</ul>' % inner
+    if t == 'ordered_list':
+        return '<ol>%s</ol>' % inner
+    if t == 'list_item':
+        return '<li>%s</li>' % inner
+    if t == 'blockquote':
+        return '<blockquote>%s</blockquote>' % inner
+    if t == 'horizontal_rule':
+        return '<hr>'
+    if t == 'hard_break':
+        return '<br>'
+    return inner
+
+
+def substack_read(did):
+    """A draft as Substack holds it right now: title, subtitle, cover, the body as HTML. What the preview on the board shows,
+    so the person reads the very thing Publish sends (2026-11-06: the preview drew the cover inside the post, Substack does not)."""
+    s = load().get('substack') or {}
+    if not s.get('cookie'):
+        raise OSError('Substack is not connected. Connect it in Settings.')
+    did = str(did).strip()
+    if not re.match(r'^[0-9]{1,20}$', did):
+        raise OSError('Which draft? Give its id.')
+    d = _substack('GET', 'https://%s.substack.com/api/v1/drafts/%s' % (s['subdomain'], did))
+    if not isinstance(d, dict) or not d.get('id'):
+        raise OSError('Substack did not return the draft.')
+    try:
+        body = json.loads(d.get('draft_body') or '{}')
+    except ValueError:
+        body = {}
+    n_pics = len(re.findall(r'"type":\s*"image2"', d.get('draft_body') or ''))
+    return {'id': str(d['id']), 'title': str(d.get('draft_title') or d.get('title') or '')[:300], 'subtitle': str(d.get('draft_subtitle') or d.get('subtitle') or '')[:300],
+            'cover_url': str(d.get('cover_image') or ''), 'body_html': _pm_html(body), 'pictures': n_pics, 'published': bool(d.get('is_published')),
+            'updated': str(d.get('draft_updated_at') or d.get('updated_at') or ''), 'publication': s.get('publication', ''),
+            'url': 'https://%s.substack.com/publish/post/%s' % (s['subdomain'], d['id'])}
+
+
+def substack_preview_page(did):
+    """The preview page the board shows beside a draft's Publish card: built from Substack's own copy every time it loads,
+    so it is the draft as it is now, cover marked as the cover (it shows on the newsletter page and in shared links, not inside the post)."""
+    import html as h
+    try:
+        d = substack_read(did)
+        err = ''
+    except OSError as e:
+        d, err = None, str(e)
+    css = ('<style>body{margin:0;background:#fff;color:#1a1a1a;font:17px/1.6 Georgia,"Times New Roman",serif}'
+           '.wrap{max-width:680px;margin:0 auto;padding:22px 24px 60px}.tag{font:600 12px/1 system-ui,sans-serif;letter-spacing:.08em;'
+           'text-transform:uppercase;color:#b45309;background:#fff7ed;border:1px solid #fed7aa;border-radius:999px;padding:6px 10px;display:inline-block;margin:0 8px 14px 0}'
+           '.live{color:#166534;background:#f0fdf4;border-color:#bbf7d0}.at{font:13px/1.4 system-ui,sans-serif;color:#777;margin:0 0 18px}'
+           '.cover{display:flex;gap:12px;align-items:center;font:13px/1.4 system-ui,sans-serif;color:#555;background:#f6f6f6;border:1px solid #e5e5e5;border-radius:8px;padding:10px;margin:0 0 22px}'
+           '.cover img{width:120px;height:68px;object-fit:cover;border-radius:4px;flex:none}'
+           'h1{font:700 34px/1.15 system-ui,-apple-system,sans-serif;margin:0 0 8px}.sub{font:400 19px/1.4 system-ui,sans-serif;color:#555;margin:0 0 18px}'
+           '.by{font:13px/1.4 system-ui,sans-serif;color:#777;margin:0 0 22px;padding-bottom:18px;border-bottom:1px solid #eee}'
+           'figure{margin:22px 0}img{display:block;max-width:100%;height:auto;border-radius:6px}figcaption{font:14px/1.4 system-ui,sans-serif;color:#777;margin-top:6px}'
+           'p{margin:0 0 18px}h2,h3,h4{font-family:system-ui,sans-serif}.err{font:15px/1.5 system-ui,sans-serif;color:#991b1b;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px}</style>')
+    head = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s</title>%s</head><body><div class="wrap">'
+    if err:
+        return (head % ('Substack draft', css)) + '<div class="err">The draft could not be read from Substack just now: %s</div></div></body></html>' % h.escape(err)
+    when = d['updated'][:16].replace('T', ' ') + ' UTC' if d['updated'] else 'now'
+    cover = ('<div class="cover"><img src="%s" alt=""><div><b>Cover picture.</b> It shows on the newsletter page and in links shared elsewhere, not inside the post.</div></div>' % h.escape(d['cover_url'])
+             if d['cover_url'] else '<div class="cover"><div><b>No cover picture.</b> The newsletter logo stands in for it on the newsletter page and in shared links.</div></div>')
+    return (head % (h.escape(d['title'] or 'Substack draft'), css)) + (
+        '<span class="tag%s">%s</span><p class="at">%s Reload this card after editing the draft on Substack.</p>%s<h1>%s</h1>%s<div class="by">%s%s</div>%s</div></body></html>' % (
+            ' live' if d['published'] else '', 'Published' if d['published'] else 'Draft, not published',
+            'This is the post as Substack holds it, last saved %s.' % when if not d['published'] else 'Live on %s.' % h.escape(d['publication'] or 'Substack'),
+            cover, h.escape(d['title']), '<p class="sub">%s</p>' % h.escape(d['subtitle']) if d['subtitle'] else '',
+            h.escape(d['publication'] or 'your newsletter'), '' if d['published'] else ' &middot; Publish on the board sends exactly this',
+            d['body_html']))
+
+
 def substack_publish(a):
     """Publish a saved draft to everyone. send true also emails every subscriber. Substack's own pre-flight check runs first."""
     s = load().get('substack') or {}

@@ -303,6 +303,8 @@ the board: that frame is where the person looks, there is no chat. Work like thi
   the board or on a page you can read: a card's words, a file's text, the end of a long quote. Read it again with
   read_item or read_frame instead; a repeat read brings the whole text back when the earlier one was cut.
 - When the task is done, call finish with a short summary of what you found and what is still open.
+  In the summary, and on every note and card, call a board item by its title or what it is (the voice-note file, the
+  picture of the dogs), never by its id: ids are for tool calls only, and what you write is read aloud to the person.
 You cannot send email or messages, call, buy or sign up for anything: never offer to.
 On the board you can add to your frame, read every item of a frame (read_frame) and move existing items into new
 titled groups in your frame (group_items). Never redraw, sketch or recreate a picture that is on the board: name it by
@@ -733,7 +735,7 @@ class Runner:
         pick = lambda r: {'id': r['id'], 'board': r['board'], 'task': r['task'], 'status': r['status'], 'frame': r['frame'],
                           'summary': r.get('summary'), 'question': (r.get('question') or {}).get('text'), 'note': (r.get('question') or {}).get('note'),
                           'member': {k: (r.get('member') or {}).get(k) for k in ('name', 'color')} if r.get('member') else None,
-                          'lead': bool(r.get('lead')), 'ended': r.get('ended'), 'error': r.get('error'), 'gaps': r.get('gaps'),
+                          'lead': bool(r.get('lead')), 'ended': r.get('ended'), 'error': r.get('error'), 'gaps': r.get('gaps'), 'draft': r.get('draft'),
                           'told': bool((r.get('question') or {}).get('told'))}
         return {'done': [pick(r) for r in sorted(done, key=lambda r: r['ended'])], 'waiting': [pick(r) for r in waiting]}
 
@@ -1447,6 +1449,8 @@ class Runner:
                 return 'Not added: the file text has "..." in it. Write the whole thing, nothing cut.'
             it = self.add_file(r, str(a.get('name') or ''), text)
             return ('Made the file %s (%d characters) in your frame. Say its name in your summary.' % (it['label'], len(text))) if it else 'Not added: the frame is gone.'
+        if name in ('add_card', 'add_note', 'add_text', 'add_file', 'add_link', 'make_demo') and r.get('drafted'):   # the preview + Publish card are the hand-back (a writer kept adding its own draft card, 2026-11-06)
+            return 'Not added: the draft as Substack holds it and its Publish card are already in your frame, and nothing more goes on the board about it. Call finish.'
         if name == 'add_card':   # a card is a note with a title line: the same checks, then drawn as a card
             name, a = 'add_note', dict(a, text=(str(a.get('title') or '').strip() + '\n' + str(a.get('facts') or '').strip()).strip(), card=1)
         if name in ('add_note', 'add_text'):   # quote marks promise word for word: a quote that is on no page the agent read is turned away
@@ -1560,6 +1564,10 @@ class Runner:
                 r['final_done'] = True
                 r['gaps'] = None if v['pass'] else (v['missing'] or v['why'])
             r['summary'] = str(a.get('summary') or '')[:2000]
+            if not r.get('parent') and r.get('draft'):   # the draft, from the record: a Lead wrote "Substack chose the cover itself" when the board picture was the cover (2026-11-06)
+                dr = r['draft']
+                r['summary'] += ' [On Substack: "%s" is saved as a draft, not published. Cover picture: %s. Pictures inside the post: %d. Its preview and Publish button are on the board.]' % (
+                    dr['title'], dr['cover'] or 'none', dr['pictures'])
             g = self.grouped(r)
             if g:   # the facts, in code, next to its own words
                 n = sum(int(re.match(r'Grouped (\d+)', x).group(1)) for x in g)
@@ -1639,57 +1647,36 @@ class Runner:
             d = integrations.substack_draft(a)
             try:
                 self.substack_cards(r, d)   # what the post will look like, and the Publish button, on the board (2026-11-06)
-                shown = ' The board now shows a preview of the post and its Publish card in your frame: add no card, note or demo about the draft, and never redraw a picture. Finish.'
+                shown = ' The board now shows the draft as Substack holds it and its Publish card in your frame: that is the whole hand-back, so nothing more goes on the board about it (a card, note or demo would be turned away), and never redraw a picture. Call finish now, naming the post by its title.'
             except (OSError, ValueError, KeyError, TypeError):
                 shown = ''
             return (integrations.substack_draft_text(d) + shown)[:integrations.TOOL_CHARS]
         return str(fn(a))[:integrations.TOOL_CHARS]
 
     def substack_cards(self, r, d):
-        """After a teammate saves a Substack draft: a sealed preview page of the post as it will look (cover, title, subtitle,
-        the body with its pictures where they sit) and, beside it, the same draft card the note menu makes, with its
-        Publish button, so the person's yes is one look and one click on the board."""
-        import html as h
+        """After a teammate saves a Substack draft: a preview card that shows the draft as Substack holds it (drawn from
+        Substack's own copy on every load, the cover marked as the cover) and, beside it, the same draft card the note menu
+        makes, with its Publish button, so the person's yes is one read and one click on the board. The draft is recorded on
+        this run and on the whole job, so the voice's done news and the Lead's summary state it from the record, not from memory."""
         u = r['lay']['u']
-        paras = []
-        for line in str(d.get('body') or '').split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            p = re.match(r'^\[picture\s+([^\]\s]+)\]$', line, re.I)
-            if p:
-                if d['picture_urls'].get(p.group(1)):
-                    paras.append('<figure><img src="%s" alt=""></figure>' % h.escape(d['picture_urls'][p.group(1)]))
-                continue
-            m = re.match(r'^(#{1,3})\s+(.+)$', line)
-            paras.append('<h%d>%s</h%d>' % (len(m.group(1)) + 1, h.escape(m.group(2)), len(m.group(1)) + 1) if m else '<p>%s</p>' % h.escape(line))
-        placed = set(re.findall(r'^\[picture\s+([^\]\s]+)\]$', str(d.get('body') or ''), re.I | re.M))
-        paras += ['<figure><img src="%s" alt=""></figure>' % h.escape(url) for pid, url in d['picture_urls'].items() if pid not in placed]
-        page = ('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s</title>'
-                '<style>body{margin:0;background:#fff;color:#1a1a1a;font:17px/1.6 Georgia,"Times New Roman",serif}'
-                '.wrap{max-width:680px;margin:0 auto;padding:28px 24px 60px}.tag{font:600 12px/1 system-ui,sans-serif;letter-spacing:.08em;'
-                'text-transform:uppercase;color:#b45309;background:#fff7ed;border:1px solid #fed7aa;border-radius:999px;padding:6px 10px;display:inline-block;margin-bottom:18px}'
-                'h1{font:700 34px/1.15 system-ui,-apple-system,sans-serif;margin:0 0 8px}.sub{font:400 19px/1.4 system-ui,sans-serif;color:#555;margin:0 0 18px}'
-                '.by{font:13px/1.4 system-ui,sans-serif;color:#777;margin:0 0 22px;padding-bottom:18px;border-bottom:1px solid #eee}'
-                'figure{margin:22px 0}img{display:block;max-width:100%%;height:auto;border-radius:6px}p{margin:0 0 18px}h2,h3{font-family:system-ui,sans-serif}</style></head>'
-                '<body><div class="wrap"><span class="tag">Draft, not published</span>%s<h1>%s</h1>%s<div class="by">%s &middot; goes out only after you press Publish on the board</div>%s</div></body></html>') % (
-            h.escape(d['title']), '<figure><img src="%s" alt=""></figure>' % h.escape(d['cover_url']) if d.get('cover_url') else '',
-            h.escape(d['title']), '<p class="sub">%s</p>' % h.escape(d['subtitle']) if d.get('subtitle') else '',
-            h.escape(d.get('publication') or 'your newsletter'), ''.join(paras))
-        did = '%s-substack-preview' % r['id']
-        with open(os.path.join(self.demos, did + '.html.tmp'), 'w') as f:
-            f.write(page)
-        os.replace(os.path.join(self.demos, did + '.html.tmp'), os.path.join(self.demos, did + '.html'))
-        r.setdefault('demos', {})[did] = r.get('demos', {}).get(did, 0) + 1
-        r['demo_v'] = r.get('demo_v', 0) + 1
-        self.place(r, {'type': 'web', 'url': 'api/demos/%s.html' % did, 'demo': True, 'run': r['id'], 'label': 'Substack preview: ' + d['title']},
-                   r['lay']['inner'], 560 * u, wide=True)
+        prev = self.place(r, {'type': 'web', 'url': 'api/substack/preview/%s' % d['id'], 'demo': True, 'run': r['id'],
+                              'sub': {'id': str(d['id'])}, 'label': 'Substack draft: ' + d['title']}, r['lay']['inner'], 560 * u, wide=True)
         pub = d.get('publication') or 'your newsletter'
-        self.place(r, {'type': 'link', 'url': d['url'], 'sub': {'id': str(d['id']), 'state': 'draft', 'title': d['title'], 'pub': pub},
-                       'unfurl': {'title': 'Substack draft: ' + d['title'], 'img': d.get('cover_url') or '', 'pub': 'substack.com',
-                                  'desc': 'Saved as a draft on %s by the team.%s Not live yet: press Publish\u2026 here when it is ready, or open it on Substack to edit it first.' % (
-                                      pub, ' Cover picture: %s.' % d['cover'] if d.get('cover') else ' No cover picture: Substack will show the newsletter logo.')}},
-                   300 * u, (270 if d.get('cover_url') else 132) * u)
+        card = self.place(r, {'type': 'link', 'url': d['url'], 'sub': {'id': str(d['id']), 'state': 'draft', 'title': d['title'], 'pub': pub},
+                              'unfurl': {'title': 'Substack draft: ' + d['title'], 'img': d.get('cover_url') or '', 'pub': 'substack.com',
+                                         'desc': 'Saved as a draft on %s by the team, not published. The preview beside this card is the draft as Substack holds it: Publish\u2026 sends exactly that.%s' % (
+                                             pub, ' Cover picture (on the newsletter page and in shared links, not inside the post): %s.' % d['cover'] if d.get('cover') else ' No cover picture: the newsletter logo stands in for it.')}},
+                          300 * u, (270 if d.get('cover_url') else 132) * u)
+        rec = {'app': 'substack', 'id': str(d['id']), 'title': d['title'], 'url': d['url'], 'cover': d.get('cover') or '', 'pictures': int(d.get('pictures') or 0),
+               'board': r['board'], 'frame': r['frame'], 'card': (card or {}).get('id'), 'preview': (prev or {}).get('id'), 'at': now_ms()}
+        r['draft'] = rec
+        r['drafted'] = True   # nothing more goes on the board about it: the cards above are the whole hand-back
+        top = r
+        while top.get('parent') and self.runs.get(top['parent']):
+            top = self.runs[top['parent']]
+        if top is not r:
+            top['draft'] = rec
+            self.save(top)
         self.step(r, 'Put the post preview and its Publish button on the board')
 
     def use_browser(self, r, name, a):
