@@ -1035,7 +1035,10 @@ Decide WHERE their message needs to look.
   board now, is team.
 - agent: the user asks you to CREATE, build or make a NEW agent, teammate or role, a kind of worker the app does not have
   yet ("create me an agent that...", "build me a teammate who..."), not to do a job now. Reply {"intent": "agent"}.
-Where he is now: %s. That is only a hint: what the user asks decides.%s
+- mis-heard: the words are not a sentence the user could have meant (speech heard wrong in a noisy room: random words, a
+  name that fits nothing, no verb, no question). Reply {"intent": "chat", "reply": "I didn't catch that. Say it again?"}.
+  Never go looking on the boards for words that make no sense.
+Where the user is now: %s. That is only a hint: what the user asks decides.%s
 When you are not sure, it is boards.
 Reply with JSON only: {"intent": "chat", "reply": "..."} or {"intent": "boards"} or {"intent": "team"} or {"intent": "agent"}%s.
 A chat reply: one or two short spoken sentences, warm and natural, plain words, no lists, no markdown. Never say you
@@ -1422,7 +1425,7 @@ def team_plan(question, history, here, spaces_text, bid=None):
     out = chat(msgs, 700, timeout=60)
     if not out.get('task'):
         return {'task': question}
-    plan = {k: ' '.join(str(out.get(k) or '').split())[:600 if k == 'task' else 80] for k in
+    plan = {k: ' '.join(str(out.get(k) or '').split())[:600 if k == 'task' else 300 if k == 'why' else 80] for k in
             ('task', 'why', 'board_name', 'space', 'space_also', 'new_space', 'mode')}
     plan['intent'] = intent_of(out, question + ' ' + plan['task']) if out.get('deliver') else None
     return plan

@@ -1111,7 +1111,8 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self.read_body() or b'{}')
             t = now_ms()
             board = {'id': secrets.token_hex(6), 'name': str(req.get('name') or 'Untitled board')[:200],
-                     'created': t, 'updated': t, 'items': [], 'view': None, 'space': None}
+                     'created': t, 'updated': t, 'items': [], 'view': None, 'space': None,
+                     'by': 'user'}   # the person's own board, however much a team fills it (a blank demo board left Recent, 2026-11-07)
             with LOCK:
                 if req.get('space') in {x['id'] for x in read_spaces()['spaces']}:
                     board['space'] = req['space']
@@ -1413,13 +1414,28 @@ class Handler(BaseHTTPRequestHandler):
                     if picked:
                         here += ', with %d item%s selected' % (len(picked), '' if len(picked) == 1 else 's')
                     frames = {i['id'] for i in boards[0].get('items') or []}   # a team whose frame was cleared from the board left nothing to answer from (2026-11-05)
-                    done = [r['task'].split(' (This is about')[0][:200] for r in RUNNER.view(boards[0]['id']) if r.get('status') in ('done', 'partial') and not r.get('parent') and r.get('frame') in frames][-3:]
-                    if done:   # "what would it take to build this" right after a team answered it: the answer is on the board
-                        here += '. Teams that already finished their work on this board: %s' % '; '.join('"%s"' % d for d in done)
+                    done = [(r['task'].split(' (This is about')[0][:200], ' '.join(str(r.get('summary') or '').split())[:300])
+                            for r in RUNNER.view(boards[0]['id']) if r.get('status') in ('done', 'partial') and not r.get('parent') and r.get('frame') in frames][-3:]
+                    if done:   # "what would it take to build this" right after a team answered it: the answer is on the board;
+                        # with what it found, so "now execute what they worked out" carries it (a team once wrote an essay instead, 2026-11-07)
+                        here += '. Teams that already finished their work on this board: %s' % '; '.join(
+                            '"%s"%s' % (d, ' (what it found: %s)' % s if s else '') for d, s in done)
                 # what kind of question it is, decided while the map below is built (small talk and app questions skip it)
                 apps = integrations.names() if integrations.board_on(boards[0]['id'] if req.get('board') else None) else []
                 early = {}
                 agent_waits = bool([w for w in RUNNER.news()['waiting'] if w['board'] in {b['id'] for b in boards}])
+                if req.get('board') and not waiting_on:
+                    live = [r for r in RUNNER.view(boards[0]['id']) if not r.get('parent') and r['status'] in agents.ACTIVE]
+                    quick = status_answer(question, live) if live else frame_answer(question, boards[0], frames)
+                    if quick:   # a status question or "show me the frame": answered from the runs themselves, no model (2026-11-07)
+                        record_ask(talk_id, question, history, here, '', apps, bool(agent_waits), (waiting_on or {}).get('say', ''), picked,
+                                   boards[0]['id'], dict(quick, route='status'))
+                        turn = {'q': question, 'a': quick['answer'], 'sources': [], 'checked': None, 't': now_ms(), 'route': 'status'}
+                        with LOCK:
+                            conv = read_talk(talk_id)
+                            conv['turns'] = (conv['turns'] + [turn])[-500:]
+                            write_json(talk_path(talk_id), conv)
+                        return self.reply(200, dict(quick, sources=[], turn=turn))
 
                 def route_now():
                     try:
@@ -1471,6 +1487,12 @@ class Handler(BaseHTTPRequestHandler):
                 plan = result.pop('team', None)
                 if plan:   # a team job: ask first, saying where its work goes (on the selected items, when there are some)
                     sel = []
+                    if not picked and req.get('board') and REFERS_BACK.search(question):   # "now execute what they worked out": the same items
+                        on = {i['id'] for i in boards[0].get('items') or []}
+                        for r in reversed(RUNNER.view(boards[0]['id'])):
+                            if not r.get('parent') and r.get('status') in ('done', 'partial') and r.get('selected'):
+                                picked = [x for x in r['selected'] if x in on]
+                                break
                     if picked:
                         sel, about = task_items(boards[0], [{'board': boards[0]['id'], 'item': x} for x in picked], [])
                         plan['task'] = plan.get('task', question) + about
@@ -2152,6 +2174,57 @@ SAY_NO = re.compile(r"^\W*(no|nope|nah|never ?mind|cancel|stop|don't|do not|forg
 CHANGE_WORDS = re.compile(r"\b(but|actually|instead|rather|only|except|change|different|another|other|new board|in the|into)\b", re.I)
 
 
+JOB_WORDS = re.compile(r"\b(have (a|the|an) (team|agent|teammate)|have them|get (a|the) (team|agents)|spin up|start (a|the|another)|build|make|write|find|search|"
+                       r"create|convert|put together|compare|research|look for|look up|redo|again|update (the|that|this|my|our|its|every|all)|"
+                       r"(the|that|this|my) (card|note|table|file|list|post|sheet)s?)\b", re.I)
+STATUS_Q = re.compile(r"\b(status|(an|quick|status|progress) update|update (me|us)|progress|how far along|where things stand|still (working|going|running)|"
+                      r"where (are we|we're|we are|is it|it's|are they|they're|is the team) at|"
+                      r"how('s| is| are) (it|they|the team|things) (going|doing|coming)|what('s| is| are) (it|they|the team) doing|"
+                      r"what (it|they|the team)('s|'re| is| are) doing|how (is|are) the (team|agents) doing)\b", re.I)
+FRAME_Q = re.compile(r"^\W*(ok(ay)?,?\s+)?(show|open|go to|zoom (in )?to|pull up)\s+(me\s+)?(the|that|their|its|the team's)\s+(frame|results?)\W*$", re.I)
+REFERS_BACK = re.compile(r"\b(the team|they|them|their|that job|the intention|what (they|it) (found|worked out))\b", re.I)
+
+
+def status_answer(question, live):
+    """A status question while a team works: the answer from the runs themselves, in a few spoken sentences. The board
+    answer model once turned "tell me where we're at" into a team offer and took 53 s (2026-11-07)."""
+    if not STATUS_Q.search(question) or JOB_WORDS.search(question) or len(question.split()) > 30:
+        return None
+    r = live[-1]
+    short = lambda t, k=12: ' '.join(str(t or '').split()[:k]) + ('…' if len(str(t or '').split()) > k else '')
+    kids = [RUNNER.runs[c] for c in r.get('children', []) if c in RUNNER.runs]
+    names = lambda xs: ', '.join((k.get('member') or {}).get('name', 'a teammate') for k in xs)
+    done = [k for k in kids if k['status'] in agents.ENDED]
+    going = [k for k in kids if k['status'] in agents.ACTIVE]
+    who = 'The team' if r.get('lead') else (r.get('member') or {}).get('name') or 'The agent'
+    say = '%s is still working on "%s".' % (who, short(r['task']))
+    if kids:
+        say += ' %d of %d parts are back%s.' % (len(done), len(kids), ' (%s)' % names(done) if done else '')
+        if going:
+            now = going[0]['steps'][-1]['text'] if going[0].get('steps') else ''
+            say += ' %s %s working now%s.' % (names(going), 'is' if len(going) == 1 else 'are', ' (%s)' % short(now, 10) if now else '')
+        elif r.get('steps'):
+            say += ' The Lead is %s.' % short(r['steps'][-1]['text'], 10).lower()
+    elif r.get('steps'):
+        say += ' Last step: %s.' % short(r['steps'][-1]['text'], 12)
+    if len(live) > 1:
+        say += ' %d other team%s on this board %s working too.' % (len(live) - 1, '' if len(live) == 2 else 's', 'is' if len(live) == 2 else 'are')
+    return {'answer': say, 'show': [{'board': r['board'], 'item': r['frame']}] if r.get('frame') else []}
+
+
+def frame_answer(question, board, frames):
+    """"Show me the frame" right after a team finished: that team's frame, not a frame the model picks (it zoomed to an
+    unrelated frame and read its gist, 2026-11-07)."""
+    if not FRAME_Q.match(question):
+        return None
+    runs = [r for r in RUNNER.view(board['id']) if not r.get('parent') and r.get('frame') in frames and r.get('status') in agents.ENDED]
+    if not runs:
+        return None
+    r = max(runs, key=lambda x: x.get('ended') or x['created'])
+    short = ' '.join(str(r['task']).split()[:12])
+    return {'answer': 'Here is the frame of "%s".' % short, 'show': [{'board': board['id'], 'item': r['frame']}]}
+
+
 def pending_reply(text):
     """'yes', 'no' or None (a change, or something else) for a reply while an action waits."""
     t = ' '.join(str(text).split())
@@ -2470,6 +2543,18 @@ def builtins_frame():
             'questions marked bad, and one-agent jobs over 30 model calls',
             'Writes: one Failure patterns card next to this frame, with each recurring problem, how often, which jobs, and what a fix would touch',
             'Changes nothing by itself: the fix is still a change to a prompt, a rule or a tool, tried on the recorded questions first']),
+        ('Putting results together', 'Nov 7', ['A Lead with its parts back: after 8 board looks it is told to write the final answer from them; after 12 it counts as stuck',
+            'A Lead the watchdog starts again writes from the rounds it already ran; it does not hand the finished parts out again',
+            'A part that reads a teammate\'s frame is handed out in the round after that teammate, never the same one']),
+        ('Building on a finished team', 'Nov 7', ['The planner sees what each finished team on the board found, so "now execute what they worked out" carries it',
+            'A job that refers to the team ("they", "the intention") with nothing selected works on the items that team was given']),
+        ('Status by voice', 'Nov 7', ['"Where are we at", "status update", "how is it going" while a team works: answered from the runs themselves, no model, never a team offer',
+            '"Show me the frame" after a team finished: that team\'s frame',
+            'A finished team\'s news never reads a web address aloud: it says "a link"',
+            'Words that make no sense (speech heard wrong): "I didn\'t catch that", not a board search']),
+        ('Demos on a phone', 'Nov 7', ['Every hover or mouse interaction in a demo must also work with touch',
+            'A replaced demo keeps every control the earlier one had',
+            'A finished team\'s notification opens the board at its frame']),
         ('Router', 'Nov 3', ['Reads: new inbox email and calendar changes in the next 3 days, every 3 minutes',
             'Drops first: no-reply senders, promotions and social mail, anything already seen',
             'Then: your own model sorts the rest by the rules note on the Incoming board: ignore, note, or suggest a task',

@@ -4278,7 +4278,7 @@ async function newsPoll(){
   try{const j=await api('news');NEWS.done=j.done||[];NEWS.waiting=j.waiting||[];newsNotify();agAnnounce();$('#agvHome .dot').hidden=$('#hbBtn .dot').hidden=!NEWS.waiting.length;}catch(e){}
   NEWS.timer=setTimeout(newsPoll,VC.on?5000:20000);
 }
-function newsShort(t,n=12){const w=String(t||'').trim().split(/\s+/);return w.slice(0,n).join(' ').replace(/[.,;:]$/,'')+(w.length>n?'…':'');}
+function newsShort(t,n=12){const w=String(t||'').replace(/https?:\/\/\S+/g,'a link').trim().split(/\s+/);return w.slice(0,n).join(' ').replace(/[.,;:]$/,'')+(w.length>n?'…':'');}   // a URL read aloud letter by letter is noise (2026-11-07)
 function newsWho(r){return r.lead?'The team':r.member?'The '+r.member.name:'The agent';}
 function newsWhere(r){return r.board===cvBoardId?'':` on the ${r.boardName} board`;}
 function newsDoneLine(r){

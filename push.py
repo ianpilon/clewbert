@@ -115,7 +115,8 @@ class Push:
             title = '%s %s' % (who, 'finished' if n['status'] == 'done' else 'stopped')
             body = short(n.get('summary') if n['status'] == 'done' and n.get('summary') else n.get('task'), 40)
         return {'title': title, 'body': body + (' · ' + n['boardName'] if n.get('boardName') else ''),
-                'url': './#agents/' + n['id'], 'tag': n['id']}
+                'url': ('./#%s/%s' % (n['board'], n['frame'])) if n.get('board') and n.get('frame') else './#agents/' + n['id'],   # the board, at the frame (a tap once landed on the spaces list, 2026-11-07)
+                'tag': n['id']}
 
     # ---------- sending ----------
     def auth(self, endpoint):

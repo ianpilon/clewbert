@@ -398,7 +398,9 @@ TOOLS = [
          {'name': S, 'text': S, 'from_item': S}),
     tool('make_demo', 'Build a working demo: ONE complete HTML page (its CSS in <style>, its JavaScript in <script>, nothing '
          'else needed) that shows what you found or built. It opens as a live card in your frame, and you get back any '
-         'JavaScript errors and what the page shows, so you can fix it: call it again with the same title to replace it.',
+         'JavaScript errors and what the page shows, so you can fix it: call it again with the same title to replace it. '
+         'The person opens demos on a phone too: every hover or mouse interaction must also work with touch (pointer '
+         'events or touchmove, never mousemove alone), and a replacement keeps every control the earlier version had.',
          {'title': S, 'html': S}),
     tool('try_demo', 'Use a demo the way a person would and see it: give the demo\'s title and steps such as "press Space", '
          '"scroll down 600", "click Explode", "wait 1000". You get, for the page as opened and after each step, a '
@@ -831,6 +833,8 @@ class Runner:
             r.pop(k, None)
         r['msg_base'] = sum(1 for m in r['messages'] if m['role'] == 'assistant')   # a fresh allowance of steps and rounds
         r['step_base'] = len(r['steps'])
+        if str(text).startswith('The watchdog started you again'):   # a restart, not new work: it may write from the rounds it ran
+            r.setdefault('watch_retry', time.time())
         self.step(r, 'Follow-up: ' + str(text)[:200])
         r['status'] = 'queued'
         self.save(r)
@@ -1301,21 +1305,32 @@ class Runner:
         if name in WRITES and CUT_PASTED.search(json.dumps(a)):   # the words came from a cut result, not from the item
             return ('Not added: that text comes from a result that was cut short. Read the item or page again (read_item, '
                     'the part named; read_web_page) and quote from the fresh text.')
-        looks = sum(1 for x in r['steps'][r.get('step_base', 0):] if x['text'].startswith(('Searched the board', 'Read a'))) \
-            if r.get('lead') and name in ('search_board', 'read_item') and not r.get('children') else 0
-        if looks >= 5 and (r.get('crew') is None or len(r['crew']) > 1):
+        looks = sum(1 for x in r['steps'][r.get('step_base', 0):] if x['text'].startswith(('Searched the board', 'Read a', 'Read the frame'))) \
+            if r.get('lead') and name in ('search_board', 'read_item', 'read_frame') else 0
+        if looks and r.get('children'):   # a Lead with parts back: its looks since the last round came in
+            since = max([i for i, x in enumerate(r['steps']) if x['text'].startswith(('Handed out', 'The team finished this round'))]
+                        + [r.get('step_base', 0)])
+            looks = sum(1 for x in r['steps'][since:] if x['text'].startswith(('Searched the board', 'Read a', 'Read the frame')))
+            if looks >= 8:   # the design Lead read 110 items after its last round and ran out of steps (2026-11-07)
+                if looks >= 12:
+                    r['loop_turn'] = True
+                return ('Not done: you have read enough (%d looks) and your teammates\' results are above. Write the final answer '
+                        'now from them (add_text), then finish.' % looks)
+        elif looks >= 5 and (r.get('crew') is None or len(r['crew']) > 1):
             # a manager that keeps looking instead of delegating (a Lead once searched the board 14 times first;
             # this sat below the search itself and never ran, so a Lead searched 25 times on Oct 31)
             r['loop_turn'] = True   # told and still searching: three of these and it is stopped as Stuck
             return 'Not done: you have looked enough. Hand the work out now with assign; your reports will dig deeper.'
-        if looks >= 8:   # a Lead alone: it once spent 44 model calls searching for a one-call copy job (2026-11-07 mining: 9 jobs)
+        elif looks >= 8:   # a Lead alone: it once spent 44 model calls searching for a one-call copy job (2026-11-07 mining: 9 jobs)
             if looks >= 12:
                 r['loop_turn'] = True
             return ('Not done: you have read enough (%d looks). Do the task now with what you read: write the result with '
                     'add_text or add_file (a copy = add_file with from_item), then finish.' % looks)
         alone = r.get('lead') and r.get('crew') is not None and len(r['crew']) <= 1   # a Lead with no teammates does the job itself (2026-11-05)
         if r.get('lead') and not alone and name in ('add_text', 'finish') and not any(
-                x['text'].startswith('Handed out') for x in r['steps'][r.get('step_base', 0):]):
+                x['text'].startswith('Handed out') for x in (r['steps'] if r.get('watch_retry') else r['steps'][r.get('step_base', 0):])):
+            # a Lead the watchdog started again writes from the rounds it already ran: it once re-ran all four finished parts
+            # because only hand-outs since the restart counted (17 minutes, 2026-11-07)
             # a Lead puts teammates' results together; it does not do the work itself (it once pasted code instead of a demo)
             return ('Not done: you are the Lead. Hand this to the teammate whose role fits it (assign) first; you write only '
                     'the final answer, from their results.')
@@ -1609,6 +1624,14 @@ class Runner:
         bad = [str(p.get('teammate')) for p in parts if not isinstance(p, dict) or str(p.get('teammate', '')).lower() not in team]
         if bad:
             return 'No teammate called %s. Your teammates: %s.' % (', '.join(bad), ', '.join(m['name'] for m in team.values()))
+        now = [str(p.get('teammate', '')).lower() for p in parts]
+        for p in parts:   # a part that reads a teammate's frame cannot run in the same round as that teammate (2026-11-07: a
+            me = str(p.get('teammate', '')).lower()   # shipping researcher ran out of steps waiting on URLs that did not exist yet)
+            needs = [n for n in now if n != me and n in str(p.get('task', '')).lower()]
+            if needs:
+                return ('Not handed out: %s\'s part reads %s\'s work, which does not exist yet (they would run at the same time). '
+                        'Hand out %s now, and %s in the next round, after that work is back.'
+                        % (team[me]['name'], team[needs[0]]['name'], team[needs[0]]['name'], team[me]['name']))
         # design first: for something people will use, the designers' specs come before the Developer builds
         ids = {n: m['id'] for n, m in team.items()}
         wanted = [ids.get(str(p.get('teammate', '')).lower()) for p in parts]
@@ -2344,7 +2367,7 @@ class Runner:
         except (OSError, ValueError):
             return ''
         out = [' '.join(str(i.get('text') or '').split()) for i in sorted(board.get('items') or [], key=lambda i: (i.get('y', 0), i.get('x', 0)))
-               if i.get('type') == 'note' and not i.get('agent') and not i.get('builtin') and str(i.get('text') or '').strip()]
+               if i.get('type') == 'note' and not i.get('agent') and not i.get('builtin') and not i.get('mined') and str(i.get('text') or '').strip()]
         return '\n'.join('- ' + x[:400] for x in out[:40])
 
     def load_notes(self):
