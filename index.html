@@ -4214,8 +4214,8 @@ function agReflow(){   // an agent's frame: the server guesses how tall each car
   // taller pushes the rows under it down (never up), and the frame grows to hold all of it (content ran out of frames, 2026-11-04)
   if(!cvBoard)return;const w=$('#cvWorld');let changed=false;
   for(const f of cvBoard.items){
-    if(f.type!=='area'||!f.agent)continue;
-    const inside=cvBoard.items.filter(i=>i!==f&&i.agent===f.agent&&i.type!=='area'&&i.type!=='arrow'&&i.x>=f.x-1&&i.x<f.x+f.w&&i.y>=f.y-1);
+    if(f.type!=='area'||!f.agent||f.chart)continue;   // the team's org chart frame is not a task frame: it must not grow to hold the work under it (2026-11-07)
+    const inside=cvBoard.items.filter(i=>i!==f&&i.agent===f.agent&&!i.chart&&i.type!=='area'&&i.type!=='arrow'&&i.x>=f.x-1&&i.x<f.x+f.w&&i.y>=f.y-1);
     if(!inside.length)continue;
     for(const i of inside){if(!i.grow)continue;const el=w.querySelector(`.cv-item[data-id="${i.id}"]`);if(el&&el.isConnected&&el.offsetHeight>i.h+.5)i.h=el.offsetHeight;}   // the real height of text drawn at its own size
     const pad=Math.max(1,Math.min(...inside.map(i=>i.y))-f.y),gap=pad*18/28,rows=[];
@@ -4375,9 +4375,13 @@ async function cvStartSuggested(it){   // a task the router suggested on an Inco
 function agReveal(id){   // bring a task frame into view at the current zoom (zoom out only if it does not fit), clear of the Tasks card
   const f=cvBoard&&cvBoard.items.find(i=>i.id===id);if(!f)return;const r=$('#cvStage').getBoundingClientRect();
   const card=$('#tkp'),room=card.hidden?r.width:Math.max(300,card.getBoundingClientRect().left-r.left-16);
-  // the frame fills the free space (zooming in as well as out), below the header
-  cvView.s=Math.max(.02,Math.min(1.2,(room-120)/f.w,(r.height-200)/f.h));
-  cvView.x=room/2-(f.x+f.w/2)*cvView.s;cvView.y=Math.max(90,(r.height-f.h*cvView.s)/2+20)-f.y*cvView.s;cvApplyView();
+  // the frame, with the items the team was pointed at, fills the free space (zooming in as well as out), below the header
+  const run=AG.runs.find(x=>x.frame===id),sel=run&&run.selected?cvBoard.items.filter(i=>run.selected.includes(i.id)):[];
+  let bx=f.x,by=f.y,bw=f.w,bh=f.h;
+  if(sel.length){const x0=Math.min(bx,...sel.map(i=>i.x)),y0=Math.min(by,...sel.map(i=>i.y)),x1=Math.max(f.x+f.w,...sel.map(i=>i.x+i.w)),y1=Math.max(f.y+f.h,...sel.map(i=>i.y+i.h));
+    if(x1-x0<f.w*6&&y1-y0<f.h*6){bx=x0;by=y0;bw=x1-x0;bh=y1-y0;}}   // unless they lie so far apart that both would be specks
+  cvView.s=Math.max(.02,Math.min(1.2,(room-120)/bw,(r.height-200)/bh));
+  cvView.x=room/2-(bx+bw/2)*cvView.s;cvView.y=Math.max(90,(r.height-bh*cvView.s)/2+20)-by*cvView.s;cvApplyView();
   // it stays outlined (orange, with its title marked) until you next press on the board, and pulses as you land
   $('#cvWorld').querySelectorAll('.cv-item.hl').forEach(e=>e.classList.remove('hl'));VC.hl=new Set([id]);
   const el=$('#cvWorld').querySelector(`.cv-item[data-id="${id}"]`);

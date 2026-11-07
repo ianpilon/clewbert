@@ -632,7 +632,7 @@ class Runner:
         """The tasks on one board, or on every board (bid None: the phone app's Agents screen)."""
         with self.lock:
             runs = [r for r in self.runs.values() if bid is None or r['board'] == bid]
-        return [{'id': r['id'], 'board': r['board'], 'task': r['task'], 'status': r['status'], 'frame': r['frame'], 'focus': r.get('focus'),
+        return [{'id': r['id'], 'board': r['board'], 'task': r['task'], 'status': r['status'], 'frame': r['frame'], 'focus': r.get('focus'), 'selected': r.get('selected') or [],
                  'member': {k: (r.get('member') or {}).get(k) for k in ('id', 'name', 'color')} if r.get('member') else None,
                  'parent': r.get('parent'), 'created': r['created'], 'ended': r.get('ended'), 'summary': r.get('summary'),
                  'step': r['steps'][-1]['text'] if r['steps'] else '', 'steps': len(r['steps']),
@@ -2529,10 +2529,11 @@ class Runner:
         self.crew_chart(r, crew)
         self.step(r, ('Put a team together for this job: ' + ', '.join(m['name'] for m in crew[1:])) if crew[1:] else 'No team: the Lead does this job alone')
 
-    def crew_chart(self, r, crew, above=False):
+    def crew_chart(self, r, crew):
         """The job's team as an org chart in its own frame ABOVE the team's work, drawn as the org cards the user knows (the
         old Agents tab): the Lead on top, thin lines down to each teammate, each card with why it is there, its
-        done-when and how its part is going; crew_paint keeps them up to date. The Lead's frame moves down to make room."""
+        done-when and how its part is going; crew_paint keeps them up to date. It sits in clear space above the Lead's
+        frame; nothing moves."""
         u = r['lay']['u']
         members, pad, gap = crew[1:], r['lay']['pad'], 26 * u
         bw = 240 * u
@@ -2552,19 +2553,16 @@ class Runner:
             w = max(frame['w'], roww + 2 * pad)
             h = 2 * pad + 30 * u + lh + 64 * u + bh
             x0, y0, z = frame['x'], frame['y'], max([i.get('z', 1) for i in items] + [1]) + 1
-            if above:   # a team that already ran: the chart goes in clear space above its work, nothing moves
-                team = {r['id']} | set(r.get('children') or [])
-                y0 = min(i['y'] for i in items if i.get('agent') in team and i.get('type') != 'arrow' and not i.get('chart')) - h - 60 * u
-                for _ in range(50):
-                    hit = [i for i in items if i.get('type') != 'arrow' and i.get('agent') not in team and i['x'] < x0 + w
-                           and i['x'] + i['w'] > x0 and i['y'] < y0 + h and i['y'] + i['h'] > y0]
-                    if not hit:
-                        break
-                    y0 = min(i['y'] for i in hit) - h - 60 * u
-            else:
-                for i in items:   # the Lead's frame and what is in it so far (its intent card) go below the chart
-                    if i.get('agent') == r['id']:
-                        i['y'] += h + 110 * u   # room for the hand-off lines' lane between the chart and the work
+            # clear space above the team's work, nothing moves. Moving the frame down to make room instead left an open
+            # page, which keeps its own positions, saving the frame back where it was: under the chart (2026-11-07)
+            team = {r['id']} | set(r.get('children') or [])
+            y0 = min([i['y'] for i in items if i.get('agent') in team and i.get('type') != 'arrow' and not i.get('chart')] + [frame['y']]) - h - 60 * u
+            for _ in range(50):
+                hit = [i for i in items if i.get('type') != 'arrow' and i.get('agent') not in team and i['x'] < x0 + w
+                       and i['x'] + i['w'] > x0 and i['y'] < y0 + h and i['y'] + i['h'] > y0]
+                if not hit:
+                    break
+                y0 = min(i['y'] for i in hit) - h - 60 * u
             why = {'by': 'Lead', 'task': r['task'][:400], 'asked': '', 'when': now_ms(), 'run': r['id']}
             box = lambda m, x, y, h_: {'id': 'a' + secrets.token_hex(5), 'type': 'note', 'agent': r['id'], 'chart': m['id'], 'why': why,
                                        'text': self.crew_text(r, m), 'org': self.crew_card(r, m), 'x': x, 'y': y, 'w': bw, 'h': h_, 'z': z + 1}
@@ -2601,7 +2599,7 @@ class Runner:
                     continue
                 r.pop('chart', None)
             try:
-                self.crew_chart(r, r['crew'], above=True)
+                self.crew_chart(r, r['crew'])
             except (OSError, ValueError, KeyError):
                 continue
             self.save(r)
