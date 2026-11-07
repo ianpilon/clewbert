@@ -2204,7 +2204,7 @@ def status_answer(question, live):
             now = going[0]['steps'][-1]['text'] if going[0].get('steps') else ''
             say += ' %s %s working now%s.' % (names(going), 'is' if len(going) == 1 else 'are', ' (%s)' % short(now, 10) if now else '')
         elif r.get('steps'):
-            say += ' The Lead is %s.' % short(r['steps'][-1]['text'], 10).lower()
+            say += ' The Lead\'s last step: %s.' % short(r['steps'][-1]['text'], 10)
     elif r.get('steps'):
         say += ' Last step: %s.' % short(r['steps'][-1]['text'], 12)
     if len(live) > 1:
