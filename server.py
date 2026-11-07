@@ -477,6 +477,23 @@ def rules_board():
     return bid
 
 
+def record_ask(talk_id, question, history, here, spaces_text, apps, waiting, pending, picked, bid, result):
+    """Every question, with the very input the routing and the team planner saw, and what they made of it: DATA/asks.jsonl,
+    append-only. tools/replay.py replays marked ones against the live model before a prompt change goes out (2026-11-07,
+    after the planner copied a finished job's text as a new task and the fix could only be tried on one question)."""
+    try:
+        plan = result.get('team') or {}
+        rec = {'id': secrets.token_hex(4), 't': now_ms(), 'talk': talk_id, 'board': bid, 'q': question,
+               'history': [{'q': h['q'], 'a': h['a'], 'route': h.get('route')} for h in history][-3:], 'here': here, 'spaces_text': spaces_text,
+               'apps': list(apps), 'waiting': waiting, 'pending': pending, 'selected': len(picked), 'route': result.get('route'),
+               'task': plan.get('task'), 'mode': plan.get('mode'), 'why': plan.get('why'), 'ms': result.get('ms'),
+               'apps_line': talk.apps_line(bid)}   # the planner's connected-apps line, so a replay elsewhere sees the same prompt
+        with open(os.path.join(DATA, 'asks.jsonl'), 'a') as f:
+            f.write(json.dumps(rec) + '\n')
+    except (OSError, TypeError, ValueError, KeyError) as e:
+        print('ask not recorded:', e)
+
+
 def add_rule(text):
     bid = rules_board()
 
@@ -1422,15 +1439,19 @@ class Handler(BaseHTTPRequestHandler):
                 tasks = [{'board': t['board'], 'boardName': names.get(t['board'], ''), 'item': t['frame'], 'run': t['id'], 'frame': '',
                           'ended': t.get('ended'), 'text': RUNNER.progress(t)} for t in sorted(RUNNER.recent(set(names)), key=lambda t: t['created'])][-6:]
                 t_call = time.time()
+                spaces_text = '\n'.join('- %s%s: %s' % (x['name'], ' (inside %s)' % spaces[x['parent']]['name'] if x.get('parent') in spaces else '',
+                                                        ', '.join(b.get('name', '') for b in everything if b.get('space') == x['id'])[:300])
+                                       for x in spaces.values())
                 result = talk.answer(question, history, boards, scope, READER, {b['id']: BRIEFER.load(b['id']) for b in boards}, layout,
                                      waiting, tasks, RUNNER.team_text(boards[0]['id']) if req.get('board') else '', req.get('seen'), FINDER,
                                      here=here, apps=apps, routed=(routing, early),
                                      selected=picked, bid=boards[0]['id'] if req.get('board') else None, pending=(waiting_on or {}).get('say', ''),
                                      spaces=[x['name'] for x in spaces.values()], pending_raw=(waiting_on or {}).get('raw'),
-                                     spaces_text='\n'.join('- %s%s: %s' % (x['name'], ' (inside %s)' % spaces[x['parent']]['name'] if x.get('parent') in spaces else '',
-                                                                             ', '.join(b.get('name', '') for b in everything if b.get('space') == x['id'])[:300])
-                                                            for x in spaces.values()))
-                print('%s ask %.2fs route=%s prep=%dms %s %r' % (time.strftime('%Y-%m-%d %H:%M:%S'), time.time() - t_ask, result.get('route'), (t_call - t_ask) * 1000, result.get('timing') or '', question[:60]), flush=True)
+                                     spaces_text=spaces_text)
+                print('%s ask %.2fs route=%s prep=%dms %s %r%s' % (time.strftime('%Y-%m-%d %H:%M:%S'), time.time() - t_ask, result.get('route'), (t_call - t_ask) * 1000, result.get('timing') or '', question[:60],
+                      ' task=%r' % (result.get('team') or {}).get('task', '')[:160] if result.get('team') else ''), flush=True)
+                record_ask(talk_id, question, history, here, spaces_text, apps, bool(waiting), (waiting_on or {}).get('say', ''), picked,
+                           boards[0]['id'] if req.get('board') else None, result)
                 if result.get('route') in ('yes', 'no') and waiting_on:   # the check heard agreement or a refusal in other words
                     return settle(result['route'])
                 proposal = result.pop('proposal', None)
@@ -2435,6 +2456,11 @@ def builtins_frame():
             'Stuck: no progress for %d minutes gets one push to you and a line in the team\'s frame' % router.STALL_MIN,
             'Stopped early: a team that ends unfinished or with an error is started again once, from its frame',
             'Never: a team you stopped, a teammate\'s part (the Lead retries those), or work that ended before a restart']),
+        ('Failure patterns', 'Nov 7', ['Nightly at 3:45: reads the last 14 days of jobs and their checks, notes and questions',
+            'Looks for: jobs that stopped, failed or fell short, parts that did not pass their check, a job asked again within the hour, '
+            'questions marked bad, and one-agent jobs over 30 model calls',
+            'Writes: one Failure patterns card next to this frame, with each recurring problem, how often, which jobs, and what a fix would touch',
+            'Changes nothing by itself: the fix is still a change to a prompt, a rule or a tool, tried on the recorded questions first']),
         ('Router', 'Nov 3', ['Reads: new inbox email and calendar changes in the next 3 days, every 3 minutes',
             'Drops first: no-reply senders, promotions and social mail, anything already seen',
             'Then: your own model sorts the rest by the rules note on the Incoming board: ignore, note, or suggest a task',
@@ -2446,7 +2472,7 @@ def builtins_frame():
 
         def put(board):
             items = [i for i in board.get('items') or [] if not i.get('builtin')]
-            x0 = max([i['x'] + i.get('w', 0) for i in items if 'x' in i] + [0]) + 120
+            x0 = max([i['x'] + i.get('w', 0) for i in items if 'x' in i and not i.get('mined')] + [0]) + 120   # the miner's card sits right of the frame
             y0 = min([i['y'] for i in items if 'y' in i] + [40])
             w, gap, pad, top = 320, 24, 28, 70
             heights = [44 + 19 * sum(1 + len(l) // 30 for l in lines) for _, _, lines in cards]   # rows wrap in their value column

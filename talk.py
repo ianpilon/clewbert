@@ -1387,7 +1387,9 @@ def agent_charter(said, existing=(), tools=()):
 
 
 TEAM_PLAN = """The user wants a team of AI agents to take on a job in their Clewbert app. Work out how to set it up.
-Where the user is: %s. Their spaces (folders of boards), each with some of its boards:
+The job is ONLY the user's last message. Earlier messages a team was already started on are done or under way: never
+repeat them and never fold them into this task; the new job may build on what they left on the board.
+Where the user is: %s.%s Their spaces (folders of boards), each with some of its boards:
 %s
 Reply with JSON only:
 {"task": "<the job in their own words, complete enough to hand to a team: what to find, compare, plan or build;
@@ -1404,9 +1406,16 @@ Reply with JSON only:
 
 def team_plan(question, history, here, spaces_text, bid=None):
     """How to set up a team for this job: the task in their words, a board name, the space it belongs in."""
-    msgs = [{'role': 'system', 'content': TEAM_PLAN % (here or 'in the app', spaces_text or '(no spaces yet)') + apps_line(bid) + skills.text('assistant')}]
+    # jobs earlier teams finished sit in 'here' (for "what would it take" questions); here they are set apart and marked
+    # DONE: the planner once copied a finished job's text, word for word, as the new task (2026-11-07)
+    here, _, done = (here or 'in the app').partition('. Teams that already finished their work on this board: ')
+    done = ' Jobs earlier teams already FINISHED on this board (their work is on the board; never make one of these the task again): %s.' % done if done else ''
+    msgs = [{'role': 'system', 'content': TEAM_PLAN % (here, done, spaces_text or '(no spaces yet)') + apps_line(bid) + skills.text('assistant')}]
     for h in history[-3:]:
-        msgs += [{'role': 'user', 'content': h['q']}, {'role': 'assistant', 'content': json.dumps({'said': h['a']})}]
+        a = {'said': h['a']}
+        if h.get('route') == 'confirm':   # their yes that started a team: that job is handed off, not part of the new one
+            a['note'] = 'A team was started on that job; it is not part of the next job.'
+        msgs += [{'role': 'user', 'content': h['q']}, {'role': 'assistant', 'content': json.dumps(a)}]
     msgs.append({'role': 'user', 'content': question})
     out = chat(msgs, 700, timeout=60)
     if not out.get('task'):

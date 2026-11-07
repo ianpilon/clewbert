@@ -544,8 +544,7 @@
   .cv-area .ftitle.empty{opacity:0}   /* a blank shape: its title (the drag handle) shows only on hover or when selected */
   .cv-area .ftitle.empty:hover,.cv-area.sel .ftitle.empty{opacity:1}
   /* agents: a task is a frame the agent fills (agents/runner.py) */
-  .ag-fly{width:340px;max-width:calc(100% - 16px);box-sizing:border-box;left:auto}
-  #cvAgBtn.on{color:var(--blue);background:var(--blue-bg)}
+  .ag-fly{width:340px;max-width:calc(100% - 16px);box-sizing:border-box}
   .ag-fly textarea{width:100%;box-sizing:border-box;min-height:74px;resize:vertical;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font:inherit;font-size:13.5px;line-height:1.4;color:var(--ink)}
   .ag-fly textarea:focus{outline:none;border-color:#1d4ed8}
   .ag-fly .ag-h{font-size:13px;font-weight:650;margin:2px 0 7px}
@@ -620,8 +619,6 @@
   .cv-note.asking .askf{display:flex}
   .cv-note .askf input{flex:1;min-width:0;border:1px solid rgba(0,0,0,.18);border-radius:.4em;padding:.35em .5em;font:inherit;font-size:.9em;background:var(--card)}
   .cv-note .askf button{border:none;border-radius:.4em;background:#b45309;color:#fff;font:inherit;font-size:.9em;font-weight:600;padding:0 .7em}
-  .ag-fly .ag-mode{justify-content:flex-start;gap:6px;margin:0 0 8px}
-  .ag-fly .ag-mode .hint{margin-left:4px}
   /* Tasks: a card on the right, over whichever view is underneath (like the ⋯ menu) */
   .tasksview{position:absolute;right:16px;top:64px;bottom:16px;z-index:91;width:400px;max-width:calc(100vw - 32px);display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(16,20,28,.16)}
   .tasksview[hidden]{display:none}
@@ -1046,7 +1043,6 @@
     .vc.slim .vc-last{display:block;font-size:14px;line-height:1.4;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:2px 2px 6px;cursor:pointer}
     .vc.slim .vc-last:empty{display:none}
     .cv-menu .cv-mview{display:block}
-    #cvAgBtn{display:none}   /* phones: the top row has no room; Agent task is in the ⋯ menu */
     .cv-menu{top:100%}   /* below the search bar, which has its own row here */
     #cvMenuBtn.waiting::after{display:block}
     .cv-zoom{display:none}
@@ -1172,14 +1168,14 @@
 <div class="cv" id="cv">
   <div class="cv-head">   <!-- floating pills over the board, no bar -->
     <div class="pill cv-crumb"><button class="cv-back" id="cvBack" title="Back to the boards">← All spaces</button><span class="cv-sep">/</span><input class="cv-title" id="cvTitle" spellcheck="false" title="Board name: click to rename"><span class="cv-save" id="cvSaveState"></span><span class="cv-follow" id="cvLive" hidden></span></div>
-    <div class="cv-right"><button class="pill pill-btn" id="cvAgBtn" title="Agent task (A): give an agent a job on this board, or on what you selected"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="8" width="15" height="11" rx="3"/><path d="M12 8V4.5"/><circle cx="12" cy="3.6" r="1"/><circle cx="9.3" cy="13.2" r=".9" fill="currentColor"/><circle cx="14.7" cy="13.2" r=".9" fill="currentColor"/><path d="M2.5 12.5v2.5M21.5 12.5v2.5"/></svg></button><button class="pill pill-btn" id="cvMenuBtn" title="More">⋯</button></div>
-    <div class="pill cv-menu" id="cvMenu" hidden><button class="cv-mview" data-add="photo">Take a photo</button><button class="cv-mview" data-add="library">Upload from your photos</button><button class="cv-mview" data-add="link">Paste a link</button><button class="cv-mview" data-add="note">Sticky note</button><button class="cv-mview" id="cvMAgent">Agent task</button><hr class="cv-mview"><button class="cv-mwait" id="cvMTasks" hidden>Waiting on you</button><hr class="cv-mview"><button class="cv-brief" id="cvBriefBtn">Board brief</button><button id="cvHistBtn">Download the history</button><button id="cvHelpBtn">Shortcuts and tips</button><button id="cvThemeBtn"></button><button id="cvStgBtn">Settings: models and keys</button></div>
+    <div class="cv-right"><button class="pill pill-btn" id="cvMenuBtn" title="More">⋯</button></div>
+    <div class="pill cv-menu" id="cvMenu" hidden><button class="cv-mview" data-add="photo">Take a photo</button><button class="cv-mview" data-add="library">Upload from your photos</button><button class="cv-mview" data-add="link">Paste a link</button><button class="cv-mview" data-add="note">Sticky note</button><hr class="cv-mview"><button class="cv-mwait" id="cvMTasks" hidden>Waiting on you</button><hr class="cv-mview"><button class="cv-brief" id="cvBriefBtn">Board brief</button><button id="cvHistBtn">Download the history</button><button id="cvHelpBtn">Shortcuts and tips</button><button id="cvThemeBtn"></button><button id="cvStgBtn">Settings: models and keys</button></div>
     <div class="pill cv-help cv-why" id="cvWhy" hidden></div>
     <div class="cv-scrim" id="cvScrim" hidden></div>
     <div class="pill cv-help cv-rec" id="cvRec" hidden></div>
     <div class="pill cv-help" id="cvHelp" hidden><b>Shortcuts and tips</b><ul>
       <li><kbd>⌘V</kbd> paste screenshots and links · drag in any file</li><li>Drag empty space to select · <kbd>Space</kbd>+drag, two-finger scroll or middle button to pan · <kbd>⌘</kbd>-scroll to zoom</li>
-      <li>Tools: <kbd>V</kbd> select · <kbd>N</kbd> note · <kbd>T</kbd> text · <kbd>D</kbd> document · <kbd>F</kbd> frame · <kbd>P</kbd> marker · <kbd>A</kbd> agent task</li><li>Double-click for a note, or a note to edit it · hold <kbd>⌥</kbd> while resizing to grow from the centre</li>
+      <li>Tools: <kbd>V</kbd> select · <kbd>N</kbd> note · <kbd>T</kbd> text · <kbd>D</kbd> document · <kbd>F</kbd> frame · <kbd>P</kbd> marker</li><li>Double-click for a note, or a note to edit it · hold <kbd>⌥</kbd> while resizing to grow from the centre</li>
       <li><kbd>⌘Z</kbd> undo · <kbd>⇧⌘Z</kbd> redo</li><li>Voice: <kbd>M</kbd> mutes the mic · <kbd>Esc</kbd> closes what is open</li></ul></div>
   </div>
   <div class="cv-stage" id="cvStage">
@@ -1201,7 +1197,6 @@
     <div class="pill cv-zoompill"><button id="cvZoomOut" title="Zoom out">−</button><span class="cv-zoom" id="cvZoomPct">100%</span><button id="cvZoomIn" title="Zoom in">+</button><button id="cvFit" title="Fit everything in view">Fit</button></div>
     <div class="cv-tb" id="cvTb">
       <button class="tbmic" id="micTb" title="Talk to your assistant"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></button>
-      <button data-tool="select" title="Select (V)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 3l14 8-6 1.5L10 19z"/></svg></button>
       <button data-tool="note" draggable="true" title="Sticky note (N): click the board to place it, or drag it there"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 4h16v10l-6 6H4z"/><path d="M14 20v-6h6"/></svg></button>
       <button data-tool="text" draggable="true" title="Text (T): click for a title, drag a box for a paragraph"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 5h14M12 5v15"/></svg></button>
       <button data-tool="doc" draggable="true" title="Document (D): click the board to place a card you paste into, or drag this onto the board; it becomes a .md or PDF file"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h7M9 17h5" stroke-linecap="round"/></svg></button>
@@ -1215,7 +1210,7 @@
     <div class="cv-fly" id="cvFrameFly" hidden><div class="row" id="cvFrameFills"></div></div>
     <div class="cv-fly" id="cvDocFly" hidden><div class="row" id="cvDocKinds"></div></div>
     <div class="cv-fly" id="cvPenFly" hidden><div class="row" id="cvPenColors"></div><div class="row" id="cvPenSizes" style="margin-top:7px"></div></div>
-    <div class="cv-fly ag-fly" id="agFly" hidden><div class="ag-h">Agent task</div><div class="row ag-mode" id="agMode"><button class="tx on" data-m="team">Team</button><button class="tx" data-m="one">One agent</button><span class="hint" id="agWho"></span></div><textarea id="agTask" placeholder="What should the agent do? For example: find three brokers in Nova Scotia and put each on a note."></textarea><div class="row"><span class="hint" id="agCtx"></span><button class="go" id="agStart">Start</button></div></div>
+    <div class="cv-fly ag-fly" id="agFly" hidden><div class="ag-h">Agent task</div><textarea id="agTask" placeholder="What should the agent do? For example: find three brokers in Nova Scotia and put each on a note."></textarea><div class="row"><span class="hint" id="agCtx"></span><button class="go" id="agStart">Start</button></div></div>
     <div class="cv-fly" id="cvEmojiFly" hidden><div class="cv-emojis" id="cvEmojis"></div></div>
     <div class="cv-empty" id="cvEmpty" style="display:none"><div>A blank board.<br><b>⌘V</b> paste a screenshot or a link · drag in any file (images, PDFs, videos, documents) · <b>double-click</b> to add a note</div></div>
   </div>
@@ -2399,7 +2394,7 @@ function cvItemEl(it){
 }
 
 // the ⋯ menu on an item: what you can do to it, in one place
-const CV_MI={mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>',agent:'<rect x="4.5" y="8" width="15" height="11" rx="3"/><path d="M12 8V4.5"/><circle cx="12" cy="3.6" r="1"/><circle cx="9.3" cy="13.2" r=".8"/><circle cx="14.7" cy="13.2" r=".8"/>',crop:'<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>',
+const CV_MI={mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>',crop:'<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>',
   link:'<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   dl:'<path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/>',
   none:'<rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 3"/><path d="M9 9l6 6M15 9l-6 6"/>',
@@ -2416,7 +2411,6 @@ function cvItemMenu(it,el,btn){
     ${pic?`<button data-a="link" title="${it.url?'Edit the link on this picture':'Add a link to this picture'}">${ico('link')}Link</button>`:''}
     ${pic&&!it.uploading?`<button data-a="crop">${ico('crop')}Crop</button>`:''}
     ${it.suggest?`<button data-a="suggest">${ico('doc')}Start this task</button>`:''}
-    <button data-a="agent">${ico('agent')}Agent task on this ${what}</button>
     <button data-a="why">${ico('why')}Why is this here?</button>
     <button data-a="voice">${ico('mic')}${it.voice?'Record your reason again':'Record why you added this'}</button>
     ${it.type==='note'&&!it.card&&!it.ask&&String(it.text||'').trim()?`<button data-a="md">${ico('doc')}Turn into a .md document</button><button data-a="pdf">${ico('doc')}Turn into a PDF document</button><button data-a="sub">${ico('open')}Post on Substack (draft first)</button>`:''}
@@ -2426,7 +2420,6 @@ function cvItemMenu(it,el,btn){
     const on=(a,f)=>{const b=mm.querySelector(`[data-a="${a}"]`);if(b)b.onclick=e=>{e.stopPropagation();menuClose();f();};};
     on('open',()=>cvOpenTarget(it)());
     on('suggest',()=>cvStartSuggested(it));
-    on('agent',()=>agFlyOpen());
     on('crop',()=>cvCropOpen(it));
     on('link',()=>cvLinkPopOpen(it,el));
     on('del',()=>cvDrop([it.id]));
@@ -2553,13 +2546,11 @@ function cvGroupMenu(btn){
   const its=cvBoard.items.filter(i=>cvSel.has(i.id)),dls=its.map(cvDownload).filter(Boolean);
   const ico=k=>`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${CV_MI[k]}</svg>`;
   menuOpen(btn,`${dls.length?`<button data-a="dl">${ico('dl')}Download ${dls.length<its.length?`${dls.length} of ${its.length} items`:`${its.length} items`}</button>`:''}
-    <button data-a="agent">${ico('agent')}Agent task on these ${its.length} items</button>
     <button data-a="none">${ico('none')}Deselect</button>
     <button class="danger" data-a="del">${ico('del')}Delete these ${its.length} items</button>`,mm=>{
     mm.classList.add('cv-itemmenu');mm.dataset.item='group';
     const on=(a,f)=>{const b=mm.querySelector(`[data-a="${a}"]`);if(b)b.onclick=e=>{e.stopPropagation();menuClose();f();};};
     on('none',()=>cvSelect(null));
-    on('agent',()=>agFlyOpen());
     on('del',()=>{if(confirm(`Delete these ${its.length} items? This cannot be undone.`))cvDrop(its.map(i=>i.id));});
     on('dl',()=>dls.forEach((d,n)=>setTimeout(()=>cvSaveDownload(d),n*400)));   // one at a time: browsers drop downloads that start together
   });
@@ -2667,6 +2658,7 @@ function cvPlaceFlys(){
   const st=$('#cvStage').getBoundingClientRect(),vc=$('#vc'),vcBottom=vc.hidden||vc.classList.contains('right')?0:vc.getBoundingClientRect().bottom-st.top+8;
   for(const [fly,tool] of [['#cvNoteFly','note'],['#cvTextFly','text'],['#cvDocFly','doc'],['#cvFrameFly','frame'],['#cvPenFly','pen'],['#cvEmojiFly','emoji']]){
     const b=$(`#cvTb [data-tool=${tool}]`);$(fly).style.top=Math.max($('#cvTb').offsetTop+b.offsetTop-5,vcBottom)+'px';}
+  agFlyPlace();
 }
 new ResizeObserver(()=>cvPlaceFlys()).observe($('#vc'));
 // the arrow at the bottom of the tool bar folds it down to the voice button and back; each device remembers its choice
@@ -2679,6 +2671,7 @@ function cvTbFold(f){
 $('#tbFold').onclick=()=>cvTbFold(!$('#cvTb').classList.contains('folded'));
 try{if(localStorage.getItem('cc_tb_folded'))$('#cvTb').classList.add('folded'),$('#tbFold').title='Show the tools';}catch(e){}
 function cvSetTool(t){
+  if(t!=='select'&&!$('#agFly').hidden)agFlyClose();   // picking another tool puts the agent box away (the box itself selects, so select never closes it)
   if(t==='emoji'){const f=$('#cvEmojiFly');const open=f.hidden;cvSetTool('select');f.hidden=!open;$('#cvTb [data-tool=emoji]').classList.toggle('on',open);return;}
   cvTool=t;$('#cvEmojiFly').hidden=true;
   document.querySelectorAll('#cvTb button[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
@@ -3307,7 +3300,6 @@ async function cvNoteToDoc(it,kind){
     const ae=document.activeElement,typing=ae&&(ae.isContentEditable||/INPUT|TEXTAREA/.test(ae.tagName));
     if(e.key==='Escape'&&!$('#org').hidden){if(ORG.editing)oeClose();else orgClose();return;}
     if(e.key==='Escape'&&!$('#tkp').hidden){tkpClose();return;}
-    if(!typing&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&e.key.toLowerCase()==='a'){e.preventDefault();agFlyOpen();return;}
     if(e.key==='Escape'&&!typing&&(cvTool!=='select'||!$('#cvEmojiFly').hidden)){cvSetTool('select');return;}
     if(!typing&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&CV_TOOL_KEYS[e.key.toLowerCase()]){cvSetTool(CV_TOOL_KEYS[e.key.toLowerCase()]);return;}
     if(e.key==='Escape'){
@@ -4149,7 +4141,7 @@ function vcPlayer(sr){
     stop(){stopped=true;srcs.forEach(x=>{try{x.stop();}catch(e){}});res();},
     done};
 }
-$('#micHome').onclick=vcOpen;$('#micTb').onclick=vcOpen;$('#vcClose').onclick=vcClose;
+$('#micHome').onclick=vcOpen;$('#micTb').onclick=()=>{agFlyClose();vcOpen();};$('#vcClose').onclick=vcClose;
 $('#vcStop').onclick=vcStopNow;
 $('#vcMute').onclick=()=>vcMuteToggle();
 // ⋯ on the voice card: volume, pick the voice, clear the conversation
@@ -4188,7 +4180,7 @@ const AG={runs:[],timer:null,seen:new Map(),steps:null,stepsTimer:null};   // se
 document.addEventListener('input',e=>{if(e.target.id==='oeColor')$('#oeBot').style.color=e.target.value;});   // the robot shows the colour as you pick it
 const AG_BOT='<svg class="agbot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="8" width="15" height="11" rx="3" fill="#fff"/><path d="M12 8V4.5"/><circle cx="12" cy="3.6" r="1"/><circle cx="9.3" cy="13.2" r=".9" fill="currentColor"/><circle cx="14.7" cy="13.2" r=".9" fill="currentColor"/><path d="M2.5 12.5v2.5M21.5 12.5v2.5"/></svg>';
 const AG_LABEL={queued:'Starting',working:'Working',waiting:'Waiting on you',team:'Team working',done:'Done',stopped:'Stopped',failed:'Stopped by an error',unfinished:"Stopped: didn't finish",partial:'Done, with gaps'};
-AG.mode='team';AG.said=new Set();   // mode for new tasks; questions the voice has already read out
+AG.said=new Set();   // questions the voice has already read out
 function agSeen(bid){if(!AG.seen.has(bid))AG.seen.set(bid,new Set());return AG.seen.get(bid);}
 function agRun(id){return AG.runs.find(r=>r.id===id);}
 async function agPoll(){
@@ -4347,21 +4339,21 @@ function agAskForm(el,it){
     agPoll();};
 }
 // starting a task: the agent works from what is selected, and its frame goes right of the selection (or mid-view)
-function agCtx(){if(AG.follow&&AG.follow.steer){$('#agCtx').textContent='The Lead re-plans with this. Parts stuck waiting are stopped; what they found so far is kept.';return;}
-  if(AG.follow){$('#agCtx').textContent='The same '+(AG.follow.member?AG.follow.member.name==='Lead'?'team':AG.follow.member.name:'agent')+' carries on from what it found.';return;}const n=cvSel.size;$('#agCtx').textContent=n?`It works from the ${n} selected item${n===1?'':'s'}. Its results go in a new frame next to them.`:'Nothing selected, so it searches the whole board. Select items first to point it at them.';}
-async function agWho(){try{const t=await api('teams/'+cvBoardId);AG.team=t;
-  $('#agWho').innerHTML=AG.mode==='team'?`${escapeHtml(t.members.map(m=>m.name).join(', '))} · <a href="#" id="agEditTeam">Edit</a>`:'One agent does the whole task.';
-  const e=$('#agEditTeam');if(e)e.onclick=ev=>{ev.preventDefault();agFlyClose();orgOpen();};}catch(e){}}
-$('#agMode').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;AG.mode=b.dataset.m;document.querySelectorAll('#agMode .tx').forEach(x=>x.classList.toggle('on',x===b));agWho();};
-function agFlyOpen(follow){if(!cvBoard)return;newsAskPermission();
-  AG.follow=follow&&follow.id?follow:null;   // a follow-up on a task that ended, or a new task
-  $('#agFly .ag-h').textContent=AG.follow?(AG.follow.steer?'Redirect: ':'Follow up: ')+newsShort(AG.follow.task,10):'Agent task';$('#agMode').hidden=!!AG.follow;
-  $('#agTask').placeholder=AG.follow?(AG.follow.steer?'What should they do differently? For example: use the Developer to read the site\'s code.':'What else should they do? It goes in the same frame.'):'What should the agent do? For example: find three brokers in Nova Scotia and put each on a note.';
-  agWho();cvSetTool('select');const f=$('#agFly');f.hidden=false;$('#cvAgBtn').classList.add('on');vcTuck(true);
-  const st=$('#cvStage').getBoundingClientRect(),vc=$('#vc'),vcBottom=vc.hidden||vc.classList.contains('right')?0:vc.getBoundingClientRect().bottom-st.top+8;
-  const b=$('#cvAgBtn').getBoundingClientRect(),hd=$('.cv-head').getBoundingClientRect();   // under the top bar, at its button (phones: at the right edge)
-  f.style.top=Math.max(hd.bottom-st.top+8,vcBottom)+'px';f.style.right=Math.max(8,Math.min(b.width?st.right-b.right:8,st.width-8-f.offsetWidth))+'px';agCtx();$('#agTask').focus();}
-function agFlyClose(){$('#agFly').hidden=true;$('#cvAgBtn').classList.remove('on');vcTuck(false);}
+function agCtx(){if(!AG.follow)return;if(AG.follow.steer){$('#agCtx').textContent='The Lead re-plans with this. Parts stuck waiting are stopped; what they found so far is kept.';return;}
+  $('#agCtx').textContent='The same '+(AG.follow.member?AG.follow.member.name==='Lead'?'team':AG.follow.member.name:'agent')+' carries on from what it found.';}
+// Follow up / Redirect on a task card (new tasks are given to the assistant, spoken or typed)
+function agFlyOpen(follow){if(!cvBoard||!follow||!follow.id)return;newsAskPermission();
+  AG.follow=follow;
+  $('#agFly .ag-h').textContent=(AG.follow.steer?'Redirect: ':'Follow up: ')+newsShort(AG.follow.task,10);
+  $('#agTask').placeholder=AG.follow.steer?'What should they do differently? For example: use the Developer to read the site\'s code.':'What else should they do? It goes in the same frame.';
+  const f=$('#agFly');f.hidden=false;cvSetTool('select');vcTuck(true);
+  agFlyPlace();agCtx();$('#agTask').focus();}
+// beside the top of the tool bar (phones: the voice card is a sheet at the bottom, so only the bar counts)
+function agFlyPlace(){const f=$('#agFly');if(f.hidden)return;
+  const st=$('#cvStage').getBoundingClientRect(),vc=$('#vc'),tb=$('#cvTb'),vcBottom=vc.hidden||vcMobile()||vc.classList.contains('right')?0:vc.getBoundingClientRect().bottom-st.top+8;
+  f.style.top=Math.max(tb.offsetTop,vcBottom)+'px';
+  f.style.left=Math.max(8,Math.min(tb.offsetLeft+tb.offsetWidth+8,st.width-8-f.offsetWidth))+'px';}
+function agFlyClose(){if($('#agFly').hidden)return;$('#agFly').hidden=true;vcTuck(false);}
 // the agent box and the voice card share the top left: while the box is open the voice card folds to its title bar
 // (and the latest answer), still listening; a click on the folded card closes the box and brings the conversation back
 function vcTuck(on){const v=$('#vc');if(v.hidden&&on)return;
@@ -4369,18 +4361,9 @@ function vcTuck(on){const v=$('#vc');if(v.hidden&&on)return;
   v.classList.toggle('tucked',on);}
 $('#vc').addEventListener('click',e=>{if($('#vc').classList.contains('tucked')&&!e.target.closest('button,select,input'))agFlyClose();});
 async function agStart(){
-  const task=$('#agTask').value.trim();if(!task||!cvBoard)return;
-  if(AG.follow){const f=AG.follow;$('#agStart').disabled=true;
+  const task=$('#agTask').value.trim(),f=AG.follow;if(!task||!cvBoard||!f)return;$('#agStart').disabled=true;
     try{await api('runs/'+f.id+'/'+(f.steer?'steer':'follow'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:task})});$('#agTask').value='';agFlyClose();await agPoll();agReveal(f.frame);}
     catch(e){$('#agCtx').textContent='The follow-up did not start. Try again in a moment.';}
-    $('#agStart').disabled=false;return;}
-  const its=cvBoard.items.filter(i=>cvSel.has(i.id)),u=cvUnit();let anchor;
-  if(its.length)anchor={x:Math.max(...its.map(i=>i.x+i.w))+60*u,y:Math.min(...its.map(i=>i.y)),unit:u};
-  else{const r=$('#cvStage').getBoundingClientRect();anchor={x:(r.width*.35-cvView.x)*u,y:(r.height*.2-cvView.y)*u,unit:u};}
-  $('#agStart').disabled=true;
-  try{const j=await api('agents/'+cvBoardId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task,selected:[...cvSel],anchor,mode:AG.mode})});
-    $('#agTask').value='';agFlyClose();cvSelect(null);await agPoll();agReveal(j.frame);}
-  catch(e){$('#agCtx').textContent='The task did not start. Try again in a moment.';}
   $('#agStart').disabled=false;
 }
 async function cvStartSuggested(it){   // a task the router suggested on an Incoming card: the user starts it here, the card is its source
@@ -4400,8 +4383,6 @@ function agReveal(id){   // bring a task frame into view at the current zoom (zo
   const el=$('#cvWorld').querySelector(`.cv-item[data-id="${id}"]`);
   if(el){el.classList.add('hl');el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash');setTimeout(()=>el.classList.remove('flash'),2600);}
 }
-$('#cvMAgent').onclick=e=>{e.stopPropagation();$('#cvMenu').hidden=true;agFlyOpen();};
-$('#cvAgBtn').onclick=()=>{$('#agFly').hidden?agFlyOpen():agFlyClose();};
 $('#agStart').onclick=agStart;
 $('#agTask').addEventListener('keydown',e=>{e.stopPropagation();if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();agStart();}if(e.key==='Escape')agFlyClose();});
 // every step a task took, in a side panel
@@ -4520,7 +4501,7 @@ async function orgOpen(){sideClose();$('#org').hidden=false;viewMark();
   orgPaint();orgAddList();orgFit();}
 function orgClose(){$('#org').hidden=true;oeClose();viewMark();}
 async function orgSave(members){   // the team as a whole: names, colours, reporting lines, whys, prompts
-  AG.team=Object.assign(AG.team,await api('teams/'+cvBoardId,putJson(JSON.stringify({members}))));orgPaint();orgAddList();agWho();}
+  AG.team=Object.assign(AG.team,await api('teams/'+cvBoardId,putJson(JSON.stringify({members}))));orgPaint();orgAddList();}
 function orgAddList(){const have=new Set(AG.team.members.map(m=>m.id));
   $('#orgAdd').innerHTML='<option value="">+ Add teammate…</option>'+Object.entries(AG.team.starters).filter(([k])=>!have.has(k)).map(([k,v])=>`<option value="${k}">${escapeHtml(v.name)}</option>`).join('')+'<option value="_blank">Someone new (write the prompt)</option>';}
 // editing one teammate, beside the chart
@@ -4596,7 +4577,7 @@ async function orgMove(id,boss){   // reorganise: id now reports to boss (never 
     setTimeout(()=>{h.textContent=was;h.style.color='';},4000);return;}
   const members=ms.map(m=>m.id===id?{...m,reports_to:boss}:m);
   try{AG.team=Object.assign(AG.team,await api('teams/'+cvBoardId,putJson(JSON.stringify({members}))));}catch(e){return;}
-  orgPaint();agWho();
+  orgPaint();
 }
 (function(){
   const st=$('#orgStage');
