@@ -45,6 +45,8 @@ RISKY = re.compile(r"\b(send|submit|buy|purchase|pay|checkout|check out|place or
 YES = re.compile(r"^\W*(yes|yeah|yep|ok|okay|sure|go|go ahead|do it|approved?|confirm(ed)?)\b", re.I)
 KEEP_RESULTS = 4          # the newest tool results stay whole; older ones are cut short so a long run fits the context
 OLD_RESULT_CHARS = 400
+CUT_MARK = ' … [CUT: the rest is no longer shown; make the same call again before quoting or copying from it]'
+CUT_PASTED = re.compile(r'older result, cut|\[CUT:')   # a note once held "(older result, cut)" as if it were the text (2026-11-07 mining: 11 jobs)
 CONTEXT_WORDS = 3000      # words of selected items given with the task
 ACTIVE = ('queued', 'working', 'waiting', 'team')
 STICKY_MAX = 120   # characters a sticky note holds; more goes on a card
@@ -278,6 +280,9 @@ SYSTEM = """You are an agent working on a canvas board (a Miro-style board of no
 The person gave you a task. You work on it step by step with your tools and put what you find INTO YOUR TASK FRAME on
 the board: that frame is where the person looks, there is no chat. Work like this:
 - Start from the board: the selected items are given below; use search_board and read_item for more of the board.
+- The selected items are the source: work from them, not from other cards that look alike, and say the id you used.
+- Quote only from a read that is whole in front of you. A result marked cut, or one that ends mid-sentence, is read
+  again (read_item, the part named) before one word of it is quoted; to copy a whole item into a file, add_file with from_item.
 - Use web_search and read_web_page when the task needs facts from outside the board. Search results are only leads:
   read the page before you put a finding on the board, and check it really is what the task asks for (a directory
   or a list of firms is not a firm). Never invent facts, names,
@@ -1183,7 +1188,8 @@ class Runner:
                     except Exception as e:   # a tool that breaks (a bad address, a page that will not load) is reported, not fatal
                         result = 'That did not work (%s: %s). Try another way.' % (type(e).__name__, str(e)[:200])
                 if result is not None:
-                    r['messages'].append({'role': 'tool', 'tool_call_id': c['id'], 'content': result})
+                    r['messages'].append(dict({'role': 'tool', 'tool_call_id': c['id'], 'content': result},
+                                              **({'keep': True} if name == 'read_item' and isinstance(args, dict) and args.get('item_id') in (r.get('selected') or []) else {})))
                     if result.startswith(('Not added', 'Not done', 'Not typed')):
                         r['refused'] = True
                 free = free and (name in BOARD_READS or bool(r.pop('_free', False)))
@@ -1292,13 +1298,21 @@ class Runner:
 
     def use(self, r, name, a, call_id):
         """Run one tool; returns what the model reads back (None = answered later, by the person)."""
-        if r.get('lead') and name in ('search_board', 'read_item') and not r.get('children') and sum(
-                1 for x in r['steps'][r.get('step_base', 0):] if x['text'].startswith(('Searched the board', 'Read a'))) >= 5:
+        if name in WRITES and CUT_PASTED.search(json.dumps(a)):   # the words came from a cut result, not from the item
+            return ('Not added: that text comes from a result that was cut short. Read the item or page again (read_item, '
+                    'the part named; read_web_page) and quote from the fresh text.')
+        looks = sum(1 for x in r['steps'][r.get('step_base', 0):] if x['text'].startswith(('Searched the board', 'Read a'))) \
+            if r.get('lead') and name in ('search_board', 'read_item') and not r.get('children') else 0
+        if looks >= 5 and (r.get('crew') is None or len(r['crew']) > 1):
             # a manager that keeps looking instead of delegating (a Lead once searched the board 14 times first;
             # this sat below the search itself and never ran, so a Lead searched 25 times on Oct 31)
-            if r.get('crew') is None or len(r['crew']) > 1:
-                r['loop_turn'] = True   # told and still searching: three of these and it is stopped as Stuck
-                return 'Not done: you have looked enough. Hand the work out now with assign; your reports will dig deeper.'
+            r['loop_turn'] = True   # told and still searching: three of these and it is stopped as Stuck
+            return 'Not done: you have looked enough. Hand the work out now with assign; your reports will dig deeper.'
+        if looks >= 8:   # a Lead alone: it once spent 44 model calls searching for a one-call copy job (2026-11-07 mining: 9 jobs)
+            if looks >= 12:
+                r['loop_turn'] = True
+            return ('Not done: you have read enough (%d looks). Do the task now with what you read: write the result with '
+                    'add_text or add_file (a copy = add_file with from_item), then finish.' % looks)
         alone = r.get('lead') and r.get('crew') is not None and len(r['crew']) <= 1   # a Lead with no teammates does the job itself (2026-11-05)
         if r.get('lead') and not alone and name in ('add_text', 'finish') and not any(
                 x['text'].startswith('Handed out') for x in r['steps'][r.get('step_base', 0):]):
@@ -1621,8 +1635,9 @@ class Runner:
             return 'Your frame was deleted.'
         u = r['lay']['u']
         r['round'] = []
-        for p in parts[:8]:
-            c = self.start(r['board'], p.get('task', ''), r.get('selected', []), {'x': frame['x'] + frame['w'] + 200 * u, 'y': frame['y'], 'unit': u},
+        about = ('\nThe selected items this job is about: %s. Work from these.' % ', '.join(r['selected'][:20])) if r.get('selected') else ''
+        for p in parts[:8]:   # a team once built from a look-alike card instead of the one the person pointed at (2026-11-07 mining: 4 jobs)
+            c = self.start(r['board'], str(p.get('task', '')) + about, r.get('selected', []), {'x': frame['x'] + frame['w'] + 200 * u, 'y': frame['y'], 'unit': u},
                            member=team[str(p['teammate']).lower()], parent=r['id'], done_when=p.get('done_when'))
             r['children'].append(c['id'])
             r['round'].append(c['id'])
@@ -2332,19 +2347,58 @@ class Runner:
                if i.get('type') == 'note' and not i.get('agent') and not i.get('builtin') and str(i.get('text') or '').strip()]
         return '\n'.join('- ' + x[:400] for x in out[:40])
 
-    def notes_for(self, bid, task):
-        """Notes earlier teams left: the last ones on this board, and the ones whose jobs share the most words."""
+    def load_notes(self):
+        """Every note earlier teams left (team_notes.jsonl); older notes without an id get one, once."""
+        path = os.path.join(os.path.dirname(self.dir), 'team_notes.jsonl')
         try:
-            with open(os.path.join(os.path.dirname(self.dir), 'team_notes.jsonl')) as f:
+            with open(path) as f:
                 notes = [json.loads(l) for l in f if l.strip()]
         except (OSError, ValueError):
-            return ''
+            return path, []
+        if any('id' not in x for x in notes):
+            for x in notes:
+                x.setdefault('id', 'n' + secrets.token_hex(4))
+            self.save_notes(path, notes)
+        return path, notes
+
+    def save_notes(self, path, notes):
+        tmp = path + '.tmp'
+        with open(tmp, 'w') as f:
+            f.write(''.join(json.dumps(x) + '\n' for x in notes))
+        os.replace(tmp, path)
+
+    def notes_for(self, bid, task):
+        """Notes earlier teams left, (text, ids): the last live ones on this board, and the live ones whose job and
+        'applies when' share the most words with this task. Retired notes are never given out."""
+        path, notes = self.load_notes()
+        live = [x for x in notes if not x.get('retired')]
         want = set(talk.tokens(task))
-        here = [x for x in notes if x.get('board') == bid][-3:]
-        near = sorted((x for x in notes if x not in here), key=lambda x: -len(want & set(talk.tokens(x.get('task', '')))))[:2]
-        near = [x for x in near if len(want & set(talk.tokens(x.get('task', '')))) >= 3]
-        return '\n'.join('- Job: %s\n  Worked: %s\n  Failed: %s' % (x['task'][:160], x.get('worked') or '-', x.get('failed') or '-')
-                         for x in here + near)
+        fit = lambda x: len(want & set(talk.tokens(x.get('task', '') + ' ' + x.get('applies', ''))))
+        here = [x for x in live if x.get('board') == bid][-3:]
+        near = sorted((x for x in live if x not in here), key=lambda x: (-fit(x), -x.get('hits', 0)))[:2]
+        near = [x for x in near if fit(x) >= 3]
+        picked = here + near
+        return ('\n'.join('- Job: %s%s\n  Worked: %s\n  Failed: %s' % (x['task'][:160], ' (applies when: %s)' % x['applies'] if x.get('applies') else '',
+                                                                  x.get('worked') or '-', x.get('failed') or '-') for x in picked),
+                [x['id'] for x in picked])
+
+    def note_outcomes(self, r):
+        """The notes this job was given are reinforced when the job went through, counted against when it fell short, and
+        retired after repeated misses or a long silence: 3 misses and more misses than hits, or 60 days with no hit
+        (after AgentPilot's policy memory, 2026-11-07)."""
+        used = set(r.get('notes_used') or [])
+        if not used:
+            return
+        path, notes = self.load_notes()
+        passed = r.get('status') == 'done' and not r.get('gaps')
+        now = now_ms()
+        for x in notes:
+            if x['id'] in used:
+                x['hits' if passed else 'misses'] = x.get('hits' if passed else 'misses', 0) + 1
+            if not x.get('retired') and ((x.get('misses', 0) >= 3 and x.get('misses', 0) > x.get('hits', 0))
+                                         or (not x.get('hits') and x.get('misses') and now - x.get('t', now) > 60 * 86400000)):
+                x['retired'] = now
+        self.save_notes(path, notes)
 
     def team_notes(self, r):
         """A finished team leaves a short note for the next one: what worked and what failed, from its own log."""
@@ -2362,10 +2416,12 @@ class Runner:
             note = talk.team_note('\n'.join(log))
         except (OSError, ValueError, KeyError):
             return
+        self.note_outcomes(r)   # first: how the notes this job was given fared
         if not (note['worked'] or note['failed']):
             return
         with open(os.path.join(os.path.dirname(self.dir), 'team_notes.jsonl'), 'a') as f:
-            f.write(json.dumps({'board': r['board'], 'run': r['id'], 'task': r['task'][:400], 't': now_ms(), **note}) + '\n')
+            f.write(json.dumps({'id': 'n' + secrets.token_hex(4), 'board': r['board'], 'run': r['id'], 'task': r['task'][:400], 't': now_ms(),
+                                'hits': 0, 'misses': 0, **note}) + '\n')
         self.card(r, 'Team notes, for the next team\nWorked: %s\nFailed: %s' % (note['worked'] or '-', note['failed'] or '-'), '#f1f5f9')
         self.step(r, 'Left notes for the next team')
 
@@ -2375,7 +2431,8 @@ class Runner:
         r['crew_done'] = True
         try:
             have = code.repos(os.path.dirname(self.dir))
-            notes = r['team_notes_read'] = self.notes_for(r['board'], r['task'])
+            notes, r['notes_used'] = self.notes_for(r['board'], r['task'])
+            r['team_notes_read'] = notes
             want = talk.team_design(r['task'], r.get('intent'), ((
                 '- engineer: writes real code in one of these code bases: %s. It works on its own branch, which the user reviews '
                 'before anything goes live: it can read, search, edit, check syntax and commit, but cannot run the app or '
@@ -2420,7 +2477,7 @@ class Runner:
         r['messages'][0]['content'] = (SYSTEM + "\n\nYOUR ROLE: you are the Lead on this job's team. " + STARTERS['lead']['role'] + learned(os.path.dirname(self.dir), 'lead')
                                        + LEAD % (lines, MAX_ROUNDS)
                                        + ('\nThe plan critic found you can finish this job alone: there are no teammates. Do it yourself with your '
-                                          'tools (a copy of a card or file = one add_file call with from_item; otherwise read what is needed and write the result in your frame with add_text or add_file) and finish. Do not use assign.'
+                                          'tools (a copy of a card or file = one add_file call with from_item; otherwise read what is needed and write the result in your frame with add_text or add_file) and finish. Do not use assign. Read the named items once, then act: this job is usually one or two calls.'
                                           if not crew[1:] else '\nThis team was put together for this job; each line says what that teammate is for.')
                                        + ('\nNOTES FROM EARLIER TEAMS ON SIMILAR JOBS (learn from them):\n' + r['team_notes_read']
                                           if r.get('team_notes_read') else ''))
@@ -2735,7 +2792,7 @@ def trimmed(messages):
     old = set(tools[:-KEEP_RESULTS]) if len(tools) > KEEP_RESULTS else set()
     out = []
     for i, m in enumerate(messages):
-        if i in old and len(m.get('content') or '') > OLD_RESULT_CHARS:
-            m = dict(m, content=m['content'][:OLD_RESULT_CHARS] + ' … (older result, cut)')
-        out.append(m)
+        if i in old and not m.get('keep') and len(m.get('content') or '') > OLD_RESULT_CHARS:
+            m = dict(m, content=m['content'][:OLD_RESULT_CHARS] + CUT_MARK)
+        out.append({k: v for k, v in m.items() if k != 'keep'})   # keep: a read of a selected item stays whole (the source of the job)
     return out

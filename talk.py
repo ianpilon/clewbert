@@ -1209,13 +1209,15 @@ def team_conflicts(frames):
 TEAM_NOTE = """An AI agent team just ended a job on the user's Clewbert board. From its log, write a short note for the
 next team that gets a similar job. Only what this log shows; no general advice.
 Reply with JSON only: {"worked": "<what worked, one or two sentences, concrete (a source, a way in, a team shape)>",
-"failed": "<what failed or wasted time and why, one or two sentences, concrete; empty when nothing did>"}"""
+"failed": "<what failed or wasted time and why, one or two sentences, concrete; empty when nothing did>",
+"applies": "<when the next team should read this: the kind of job and source, one line ('copying a voice-note file card into a Markdown file')>"}"""
 
 
 def team_note(log):
     out = chat([{'role': 'system', 'content': TEAM_NOTE}, {'role': 'user', 'content': log[:14000]}], 300, timeout=90)
     out = out if isinstance(out, dict) else {}
-    return {'worked': ' '.join(str(out.get('worked') or '').split())[:400], 'failed': ' '.join(str(out.get('failed') or '').split())[:400]}
+    return {'worked': ' '.join(str(out.get('worked') or '').split())[:400], 'failed': ' '.join(str(out.get('failed') or '').split())[:400],
+            'applies': ' '.join(str(out.get('applies') or '').split())[:160]}
 
 
 TEAM_DESIGN = """The user gave a job to a team of AI agents on their Clewbert boards. Design the team THIS job needs: 2 to 5
