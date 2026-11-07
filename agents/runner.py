@@ -948,6 +948,10 @@ class Runner:
             for c in parts:
                 if c.get('done_when') and c.get('check') is None and c['status'] != 'stopped':
                     c['check'] = self.check_part(c)
+                    if c['check']['pass'] and c['status'] == 'unfinished':   # out of steps, but the work asked for is in its frame:
+                        c['status'] = 'done'   # that is done, not "didn't finish" (six parts wore that label in one day, 2026-11-07)
+                        c['ended'] = c.get('ended') or int(time.time() * 1000)
+                        self.step(c, 'Ran out of steps, but its check passed: counted as done')
                     self.save(c)
                     if not c['check']['pass'] and not c.get('retry_of') and not self.about_blocked(p, c['task']):   # a blocked site will not open on a second try either
                         again.append(self.retry_part(p, c))
