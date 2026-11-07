@@ -15,6 +15,7 @@ import glob, json, os, re, secrets, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import models, skills, talk   # noqa: E402
+from agents import propose   # noqa: E402
 
 ENDED = ('done', 'partial', 'failed', 'stopped', 'unfinished')
 SIGNATURE = """You are reading the record of one job an AI agent team did on the user's Clewbert boards, with the signals that
@@ -161,8 +162,8 @@ def card_text(result):
     return head + '\n' + '\n'.join(rows)
 
 
-def put_card(data, text):
-    """One card on the standing rules board, right of the built-ins frame; rewritten each run (id mined-patterns)."""
+def put_card(data, text, cid='mined-patterns', under=None):
+    """One card on the standing rules board, right of the built-ins frame (or under another card); rewritten each run."""
     try:
         with open(os.path.join(data, 'rules_board')) as f:
             bid = f.read().strip()
@@ -172,12 +173,15 @@ def put_card(data, text):
     board = load_json(path, None)
     if not board:
         return False
-    items = [i for i in board.get('items') or [] if i.get('id') != 'mined-patterns']
+    items = [i for i in board.get('items') or [] if i.get('id') != cid]
     frame = next((i for i in items if i.get('id') == 'builtin-frame'), None)
     x, y = (frame['x'] + frame['w'] + 60, frame['y']) if frame else (40, -500)
+    above = next((i for i in items if i.get('id') == under), None) if under else None
+    if above:
+        x, y = above['x'], above['y'] + above.get('h', 0) + 40
     w = 380
     h = 44 + 19 * sum(1 + len(l) // 34 for l in text.split('\n'))
-    items.append({'id': 'mined-patterns', 'type': 'note', 'mined': 1, 'card': 1, 'grow': 'h', 'color': '#fdecec', 'fs': 13,
+    items.append({'id': cid, 'type': 'note', 'mined': 1, 'card': 1, 'grow': 'h', 'color': '#fdecec' if cid == 'mined-patterns' else '#eef2ff', 'fs': 13,
                   'x': x, 'y': y, 'w': w, 'h': h, 'z': 2, 'text': text})
     board['items'] = items
     board['updated'] = int(time.time() * 1000)
@@ -253,6 +257,12 @@ def main():
     text = card_text(result)
     print(text, flush=True)
     print('card written' if put_card(data, text) else 'card not written (no rules board yet)')
+    try:   # the proposal step: one rule per big pattern, tried for real, judged on the jobs that follow
+        props = propose.run(data, result, {r['id']: r['created'] for r in roots})
+        print('proposals: %s' % ', '.join('%s %s' % (x['status'], x['pattern']) for x in props[-6:]) if props else 'proposals: none', flush=True)
+        put_card(data, propose.card_text(props), cid='mined-proposals', under='mined-patterns')
+    except Exception as e:   # a failed proposal pass never loses the night's patterns
+        print('proposal step failed: %s: %s' % (type(e).__name__, e), flush=True)
     return 0
 
 

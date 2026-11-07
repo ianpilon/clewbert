@@ -14,6 +14,28 @@ def load():
         return {}
 
 
+def save(got):
+    path = os.path.join(DATA, 'skills.json')
+    with open(path + '.tmp', 'w') as f:
+        json.dump(got, f, indent=1)
+    os.replace(path + '.tmp', path)
+
+
+def add(key, text, **meta):
+    """A skill added by code (a proposal being tried, a note that proved itself): its id. Meta says where it came from."""
+    got = load()
+    x = {'id': 's' + os.urandom(3).hex(), 'text': ' '.join(str(text).split())[:400], 'added': int(__import__('time').time() * 1000), **meta}
+    got[key] = (got.get(key) or []) + [x]
+    save(got)
+    return x['id']
+
+
+def remove(key, skill_id):
+    got = load()
+    got[key] = [x for x in got.get(key) or [] if x.get('id') != skill_id]
+    save(got)
+
+
 def text(key):
     """The skills block for one agent's instructions ('' when it has none)."""
     got = load().get(key) or []

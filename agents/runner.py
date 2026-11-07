@@ -1195,6 +1195,11 @@ class Runner:
                         result = self.use(r, name, args if isinstance(args, dict) else {}, c['id'])
                     except Exception as e:   # a tool that breaks (a bad address, a page that will not load) is reported, not fatal
                         result = 'That did not work (%s: %s). Try another way.' % (type(e).__name__, str(e)[:200])
+                if result is not None and isinstance(result, str) and name in READ_TOOLS + BOARD_READS:
+                    # what this is costing, in view (after Exo's cost legibility): the agent can wrap up before the cap does it
+                    used = sum(1 for m in r['messages'] if m['role'] == 'assistant') - r.get('msg_base', 0)
+                    cap = RETRY_STEPS if r.get('watch_retry') else PART_STEPS if r.get('parent') and not r.get('lead') else MAX_STEPS
+                    result += '\n(Step %d of %d.)' % (used, cap)
                 if result is not None:
                     r['messages'].append(dict({'role': 'tool', 'tool_call_id': c['id'], 'content': result},
                                               **({'keep': True} if name == 'read_item' and isinstance(args, dict) and args.get('item_id') in (r.get('selected') or []) else {})))
@@ -2372,7 +2377,16 @@ class Runner:
             return ''
         out = [' '.join(str(i.get('text') or '').split()) for i in sorted(board.get('items') or [], key=lambda i: (i.get('y', 0), i.get('x', 0)))
                if i.get('type') == 'note' and not i.get('agent') and not i.get('builtin') and not i.get('mined') and str(i.get('text') or '').strip()]
-        return '\n'.join('- ' + x[:400] for x in out[:40])
+        text = '\n'.join('- ' + x[:400] for x in out[:40])
+        try:
+            from agents import propose
+            tried = propose.trying(os.path.dirname(self.dir))   # rules the failure miner is trying out (agents/propose.py)
+        except Exception:
+            tried = []
+        if tried:
+            text += '\nRules being tried (from the failure patterns; follow them like the rest):\n' + '\n'.join(
+                '- %s%s' % (x['rule'], ' (when: %s)' % x['applies'] if x.get('applies') else '') for x in tried[:6])
+        return text
 
     def load_notes(self):
         """Every note earlier teams left (team_notes.jsonl); older notes without an id get one, once."""
@@ -2422,6 +2436,10 @@ class Runner:
         for x in notes:
             if x['id'] in used:
                 x['hits' if passed else 'misses'] = x.get('hits' if passed else 'misses', 0) + 1
+            if x['id'] in used and passed and x.get('hits', 0) >= 3 and x.get('misses', 0) * 3 <= x['hits'] and not x.get('skill') and x.get('worked'):
+                # a note that kept proving itself is a procedure: it becomes a skill of the Lead on every board (AgentPilot's
+                # provisional skill made trusted by use; the note itself stays, but no longer needs to fit the task by words)
+                x['skill'] = skills.add('lead', '%s%s' % (('When %s: ' % x['applies']) if x.get('applies') else '', x['worked']), note=x['id'])
             if not x.get('retired') and ((x.get('misses', 0) >= 3 and x.get('misses', 0) > x.get('hits', 0))
                                          or (not x.get('hits') and x.get('misses') and now - x.get('t', now) > 60 * 86400000)):
                 x['retired'] = now
