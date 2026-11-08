@@ -1880,6 +1880,7 @@ let CV_TOUCHED=0,CV_DRAGGED=0;   // when a selection box was last dragged out: a
 function cvRender(){
   if(CV_CROP)cvCropEnd(false);
   const w=$('#cvWorld');w.innerHTML='';
+  for(const id of [...CV_MEDIA.keys()])if(!cvBoard.items.some(i=>i.id===id))CV_MEDIA.delete(id);   // players of cards that are gone, or of another board
   cvBoard.items.forEach(it=>w.appendChild(cvItemEl(it)));
   $('#cvEmpty').style.display=cvBoard.items.length?'none':'grid';
   w.classList.toggle('multi',cvSel.size>1);cvGroupBox();
@@ -2178,6 +2179,7 @@ function cvArrowsFollow(){if(cvArrowRaf||!cvBoard||!cvBoard.items.some(i=>i.type
     if(CV_IX.items!==items||CV_IX.n!==items.length)Object.assign(CV_IX,{items,n:items.length,map:new Map(items.map(i=>[i.id,i]))});
     const els=new Map([...w.querySelectorAll('.cv-arrow')].map(e=>[e.dataset.id,e]));
     items.filter(i=>i.type==='arrow').forEach(i=>{const el=els.get(i.id);if(el)cvArrowDraw(i,el);});});}
+const CV_MEDIA=new Map();   // item id -> its <video>/<audio>, kept across redraws
 function cvItemEl(it){
   const el=document.createElement('div');
   el.className='cv-item cv-'+it.type+(cvBoard&&cvSel.has(it.id)&&cvBoard.items.includes(it)?' sel':'')+(cvBoard&&VC.hl.has(it.id)&&cvBoard.items.includes(it)?' hl':'');
@@ -2232,13 +2234,22 @@ function cvItemEl(it){
     if(th)th.addEventListener('error',()=>{if(!th.dataset.retried){th.dataset.retried=1;setTimeout(()=>{th.src=u.img+(u.img.includes('?')?'&':'?')+'r=1';},4000);}
       else th.closest('.thumb').remove();});   // one more try, then the card shows its words without a broken picture
   }else if(it.type==='media'){ // a dropped video or sound: drags like an image, a click plays or pauses, the player's own strip still works
-    const ext=escapeAttr(it.src);
-    el.innerHTML=`<div class="frame"><div class="mbar"><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'Video')}</span><a href="${ext}" target="_blank" rel="noopener">Open ↗</a></div>${it.kind==='audio'?`<audio controls preload="${it.preview?'none':'metadata'}" src="${ext}"></audio>`:`<video controls preload="${it.preview?'none':'metadata'}" playsinline src="${ext}"></video>`}</div>`;
-    const v=el.querySelector('video,audio');
-    if(v.tagName==='VIDEO')v.addEventListener('click',e=>{if(e.clientY<v.getBoundingClientRect().bottom-44*cvView.s)e.preventDefault();});   // our click plays or pauses, not Chrome's as well
-    if(it.kind!=='audio'&&!it.ar)v.addEventListener('loadedmetadata',()=>{   // first time: fit the card to the video's shape
-      if(!v.videoWidth||!cvBoard||!cvBoard.items.includes(it))return;
-      it.ar=v.videoHeight/v.videoWidth;it.h=Math.round(it.w*it.ar)+cvBarH(el);el.style.height=it.h+'px';cvSave();},{once:true});
+    const ext=escapeAttr(it.src),play=it.clip||it.src;   // the card streams the board-sized copy when the server has made one; Open gives the original
+    el.innerHTML=`<div class="frame"><div class="mbar"><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'Video')}</span><a href="${ext}" target="_blank" rel="noopener">Open ↗</a></div></div>`;
+    // the player lives on across redraws: a new one would fetch the video's headers again through the tunnel and stop what was playing (2026-11-07)
+    let v=CV_MEDIA.get(it.id);
+    if(!v||v.dataset.src!==play){
+      v=document.createElement(it.kind==='audio'?'audio':'video');v.controls=true;v.dataset.src=play;v.src=play;
+      if(it.kind!=='audio'){v.playsInline=true;
+        v.addEventListener('click',e=>{if(e.clientY<v.getBoundingClientRect().bottom-44*cvView.s)e.preventDefault();});   // our click plays or pauses, not Chrome's as well
+        v.addEventListener('loadedmetadata',()=>{   // first time: fit the card to the video's shape
+          const el2=v.closest('.cv-item');if(it.ar||!v.videoWidth||!cvBoard||!cvBoard.items.includes(it)||!el2)return;
+          it.ar=v.videoHeight/v.videoWidth;it.h=Math.round(it.w*it.ar)+cvBarH(el2);el2.style.height=it.h+'px';cvSave();},{once:true});}
+      CV_MEDIA.set(it.id,v);
+    }
+    if(it.poster)v.poster=it.poster;
+    v.preload=it.poster||it.preview?'none':'metadata';   // with a still to show, nothing loads until you press play
+    el.querySelector('.frame').appendChild(v);
     el.querySelector('.mbar a').addEventListener('pointerdown',e=>e.stopPropagation());
   }else if(it.type==='file'){ // any other dropped file: name, kind, size and the first lines of its text; a click opens it
     const ext=it.doc&&!it.src?it.doc:(String(it.label||'').match(/\.([a-z0-9]{1,6})$/i)||[,'file'])[1];

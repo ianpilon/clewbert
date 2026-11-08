@@ -43,8 +43,8 @@ DATA = os.path.abspath(os.path.expanduser(sys.argv[2]))
 models.SETTINGS = os.path.join(DATA, 'settings.json')   # which model does which job, and outside keys (owner-only file)
 integrations.FILE = os.path.join(DATA, 'integrations.json')   # connected apps: Google sign-in and your own MCP servers (owner-only)
 HERE = os.path.dirname(os.path.abspath(__file__))
-BOARDS, IMAGES, TRASH, TALKS, FILES, UPLOADS, THUMBS = (os.path.join(DATA, d) for d in ('boards', 'images', 'trash', 'talks', 'files', 'uploads', 'thumbs'))
-for d in (BOARDS, IMAGES, TRASH, TALKS, FILES, UPLOADS, THUMBS):
+BOARDS, IMAGES, TRASH, TALKS, FILES, UPLOADS, THUMBS, CLIPS = (os.path.join(DATA, d) for d in ('boards', 'images', 'trash', 'talks', 'files', 'uploads', 'thumbs', 'clips'))
+for d in (BOARDS, IMAGES, TRASH, TALKS, FILES, UPLOADS, THUMBS, CLIPS):
     os.makedirs(d, exist_ok=True)
 
 MAX_BODY = 25 * 1024 * 1024
@@ -971,6 +971,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, f.read(), 'image/jpeg', {'Cache-Control': 'private, max-age=31536000, immutable'})
         if len(parts) == 3 and parts[:2] == ['api', 'files'] and FILE_NAME.match(parts[2]):
             return self.send_file(os.path.join(FILES, parts[2]))
+        if len(parts) == 3 and parts[:2] == ['api', 'clips'] and FILE_NAME.match(parts[2]):   # a video's board-sized copy or its still
+            return self.send_file(os.path.join(CLIPS, parts[2]))
         self.reply(404, {'error': 'not found'})
 
     def send_file(self, path):
@@ -1110,7 +1112,10 @@ class Handler(BaseHTTPRequestHandler):
             if req.get('size') is not None and int(req['size']) != os.path.getsize(part):   # the page says how big the file is
                 os.remove(part)
                 return self.reply(409, {'error': 'the file did not arrive whole; drop it again'})
-            return self.reply(201, finish_upload(part, name))
+            out = finish_upload(part, name)
+            if out.get('kind') == 'video':
+                CLIPS_Q.put(out['src'].rsplit('/', 1)[1])
+            return self.reply(201, out)
         if parts == ['api', 'boards']:
             req = json.loads(self.read_body() or b'{}')
             t = now_ms()
@@ -1766,9 +1771,14 @@ class Handler(BaseHTTPRequestHandler):
                     if not it.get('added') and not it.get('agent'):
                         it['added'] = now_ms()
                 else:
+<<<<<<< server.py
                     for k in ('added', 'why', 'voice'):   # voice: the user's recorded reason for adding it
+=======
+                    for k in ('added', 'why', 'voice', 'clip', 'poster'):   # voice: Ian's recorded reason for adding it; clip, poster: made here
+>>>>>>> /tmp/new_server.py
                         if k in old and k not in it:
                             it[k] = old[k]
+                clip_fill(it)
             board['items'] = req['items']
             board['view'] = req.get('view')
             board['updated'] = now_ms()
@@ -2502,6 +2512,81 @@ def edit_board(bid, fn):
     return out
 
 
+CLIP_URL = os.environ.get('CLIP_URL', 'http://100.121.91.119:8097').rstrip('/')   # the media service on the GX10 head (transcribe/serve.py there)
+CLIPS_Q = queue.Queue()
+
+
+def clip_fill(it):
+    """A video card plays its board-sized copy when one has been made: 480p at about 0.7 Mbps with a still for the card, so
+    the board streams a quarter of the original and draws the card without touching the video (the mini's line out is
+    about 3 Mbps, 2026-11-07). The original stays behind Open and is what teams read."""
+    if not isinstance(it, dict) or it.get('type') != 'media' or it.get('kind') != 'video' or it.get('clip') or not str(it.get('src') or '').startswith('api/files/'):
+        return False
+    stem = it['src'].rsplit('/', 1)[1].rsplit('.', 1)[0]
+    meta = os.path.join(CLIPS, stem + '.json')
+    if not (os.path.exists(os.path.join(CLIPS, stem + '.mp4')) and os.path.exists(os.path.join(CLIPS, stem + '.jpg')) and os.path.exists(meta)):
+        return False
+    try:
+        with open(meta) as f:
+            m = json.load(f)
+    except (OSError, ValueError):
+        return False
+    it['clip'], it['poster'] = 'api/clips/%s.mp4' % stem, 'api/clips/%s.jpg' % stem
+    if m.get('w') and m.get('h') and not it.get('ar'):
+        it['ar'] = m['h'] / m['w']
+    return True
+
+
+def clips_worker():
+    """Makes the board-sized copy of each dropped video on the GX10, then writes it into every card that shows the video.
+    At start, every video card without one is queued (videos dropped before this existed, or while the service was down)."""
+    try:
+        for b in live_boards():
+            for it in read_board(b['id']).get('items') or []:
+                if it.get('type') == 'media' and it.get('kind') == 'video' and not it.get('clip') and str(it.get('src') or '').startswith('api/files/'):
+                    CLIPS_Q.put(it['src'].rsplit('/', 1)[1])
+    except (OSError, ValueError, KeyError):
+        pass
+    done = set()
+    while True:
+        name = CLIPS_Q.get()
+        stem = name.rsplit('.', 1)[0]
+        if name in done or not os.path.exists(os.path.join(FILES, name)):
+            continue
+        if not os.path.exists(os.path.join(CLIPS, stem + '.json')):
+            try:
+                with open(os.path.join(FILES, name), 'rb') as f:
+                    body = f.read()
+                req = urllib.request.Request(CLIP_URL + '/clip', data=body, headers={'Content-Type': 'video/mp4', 'X-Name': name}, method='POST')
+                with urllib.request.urlopen(req, timeout=7200) as resp:
+                    out = json.loads(resp.read().decode())
+                for part, ext in (('clip.mp4', 'mp4'), ('poster.jpg', 'jpg')):
+                    with urllib.request.urlopen('%s/clips/%s/%s' % (CLIP_URL, out['token'], part), timeout=600) as resp:
+                        data = resp.read()
+                    with open(os.path.join(CLIPS, '%s.%s.tmp' % (stem, ext)), 'wb') as f:
+                        f.write(data)
+                    os.replace(os.path.join(CLIPS, '%s.%s.tmp' % (stem, ext)), os.path.join(CLIPS, '%s.%s' % (stem, ext)))
+                write_json(os.path.join(CLIPS, stem + '.json'), {'w': out.get('w'), 'h': out.get('h'), 'duration_s': out.get('duration_s'), 'bytes': out.get('mp4_bytes'), 'made': now_ms()})
+                print('clip made for %s: %d KB, %ss' % (name[:16], int(out.get('mp4_bytes') or 0) // 1024, out.get('seconds')), flush=True)
+            except (OSError, ValueError, KeyError) as e:
+                print('clip not made for %s: %s' % (name[:16], str(e)[:200]), flush=True)   # tried again at the next start
+                continue
+        done.add(name)
+        try:   # every card that shows this video, on every board
+            for b in live_boards():
+                with LOCK:
+                    board = read_board(b['id'])
+                    if any(clip_fill(it) for it in board.get('items') or []):
+                        board['updated'] = now_ms()
+                        write_json(board_path(b['id']), board)
+                    else:
+                        continue
+                live_send(b['id'], {'kind': 'saved', 'updated': board['updated']}, '')
+        except (OSError, ValueError, KeyError):
+            pass
+
+
+threading.Thread(target=clips_worker, daemon=True).start()
 BRIEFER = briefs.Briefer(DATA, READER, read_board, lambda: [b['id'] for b in sorted(live_boards(), key=lambda b: len(b.get('items') or []))])   # small boards first: they are ready in minutes
 
 rules_board()   # made once, with the rules the user has already given
