@@ -1023,15 +1023,53 @@ class Runner:
             self.step(r, 'Found %d place%s where teammates disagree' % (len(found), '' if len(found) == 1 else 's'))
 
     def check_part(self, c):
-        """One part, read against its done-when by a checker call; the verdict goes on the board in the part's frame."""
+        """One part, read against its done-when by a checker call; the verdict goes on the board in the part's frame.
+        A part that passed is then checked at its surface: the first page it cites is read again and held against the
+        words about it, and a demo it built is opened once (a verifier that reads the board's say-so proves nothing, 2026-11-07)."""
         try:
             v = talk.check_part(c['task'], c['done_when'], self.frame_words(c))
         except (OSError, ValueError, KeyError) as e:
             v = {'pass': False, 'missing': '', 'why': 'The check could not run (%s).' % type(e).__name__, 'error': True}
+        if v['pass']:
+            try:
+                v = self.surface_check(c) or v
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                self.step(c, 'Could not check at the source (%s)' % type(e).__name__)
         self.card(c, ('Check: passed. ' + v['why']) if v['pass'] else
                   ('Check: not done. ' + ('Missing: %s' % v['missing'] if v['missing'] else v['why'])), '#e7f6ec' if v['pass'] else '#fff4e0')
         self.step(c, 'Checked against its done-when: %s' % ('passed' if v['pass'] else 'not done'))
         return v
+
+    def surface_check(self, c):
+        """The part's words against the thing itself: the first web page it cites, read again now; the newest demo it
+        built, opened once. None when there is nothing to touch or it holds."""
+        items = [i for i in self.board_items(c['board']) if i.get('agent') == c['id'] and i.get('type') != 'area' and not i.get('chart')]
+        for it in items:
+            text = str(it.get('text') or it.get('url') or '')
+            for url in re.findall(r'https?://[^\s)\]>"\']+', text)[:3]:
+                url = url.rstrip('.,;')
+                if self.blocked(c, url) or self.site(url) in ('context-canvas.voiceclaw.ca',):
+                    continue
+                page = self.read_page(c, url)
+                if page.startswith('Could not read') or 'blocked' in page[:200].lower() and len(page) < 400:
+                    return None   # the page cannot be read now: nothing to hold the words against
+                v = talk.surface_check(url, text, page)
+                if v['holds']:
+                    self.step(c, 'Checked at the source: %s holds up' % url[:90])
+                    return None
+                self.step(c, 'Checked at the source: %s does not say that' % url[:90])
+                return {'pass': False, 'why': 'Checked against %s: %s' % (url[:120], v['why']),
+                        'missing': 'The page at %s does not show what the note about it says (%s). Read that page again and correct the note to what it does say, or say plainly that the page does not hold it.' % (url, v['why'])}
+        if c.get('demos'):
+            did = sorted(c['demos'], key=lambda d: c['demos'][d])[-1]
+            title = did.split('-', 1)[1].replace('-', ' ') if '-' in did else did
+            out = self.try_demo(c, title, [])
+            if out.startswith('The browser could not play it') or ' ERRORS: ' in out:
+                self.step(c, 'Opened the demo "%s": it does not open cleanly' % title[:60])
+                return {'pass': False, 'why': 'Opened the demo once: it does not open cleanly.',
+                        'missing': 'The demo "%s" does not open cleanly in a browser: %s. Fix it so it opens without errors, then try_demo it yourself.' % (title, out[-400:])}
+            self.step(c, 'Opened the demo "%s": it opens cleanly' % title[:60])
+        return None
 
     def retry_part(self, p, c):
         """Send a part that fell short back once, to the same teammate, for only what is missing."""
@@ -1685,6 +1723,9 @@ class Runner:
         u = r['lay']['u']
         r['round'] = []
         about = ('\nThe selected items this job is about: %s. Work from these.' % ', '.join(r['selected'][:20])) if r.get('selected') else ''
+        avoid = (self.root(r).get('intent') or {}).get('avoid')
+        if avoid:
+            about += '\nNot doing (the person did not ask for it): %s.' % avoid
         for p in parts[:8]:   # a team once built from a look-alike card instead of the one the person pointed at (2026-11-07 mining: 4 jobs)
             c = self.start(r['board'], str(p.get('task', '')) + about, r.get('selected', []), {'x': frame['x'] + frame['w'] + 200 * u, 'y': frame['y'], 'unit': u},
                            member=team[str(p['teammate']).lower()], parent=r['id'], done_when=p.get('done_when'))
@@ -2723,6 +2764,8 @@ class Runner:
         lines.append('The team will hand back: ' + it['deliver'])
         if it.get('cannot'):
             lines.append('Not something a team can do: %s.' % it['cannot'].rstrip('.'))
+        if it.get('avoid'):
+            lines.append('Not doing: ' + it['avoid'] + '.')   # non-goals: what an eager team would do that was not asked for (2026-11-07)
         lines.append('Sends, posts or spends: ' + ('yes. Each one waits for your yes.' if it.get('acts') else 'no.'))
         u, width = r['lay']['u'], r['lay']['inner']
         fs = 15 * u
@@ -2738,6 +2781,8 @@ class Runner:
                       'the post (substack_draft pictures, in order), and the app chooses the cover picture itself: never plan "no cover".')
         if it.get('cannot'):
             brief += ' Do NOT attempt this, no team can: %s. Say in your answer that it has to be built into the app itself.' % it['cannot']
+        if it.get('avoid'):
+            brief += ' NOT DOING (not asked for; nobody on the team does it): %s.' % it['avoid']
         r['messages'][1]['content'] += '\n\n' + brief
 
     def place_text(self, r, text, style):

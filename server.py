@@ -2354,6 +2354,9 @@ def propose_team(plan, here_board, here_space, spaces, sel=None):
     elif it.get('cannot') and it.get('deliver'):   # say up front what no team can do (a team once "engineered" an integration it could not build)
         lead += "A team can hand back %s, but it can't %s. " % (
             it['deliver'].rstrip('.'), it['cannot'][0].lower() + it['cannot'][1:].rstrip('.'))
+    elif it.get('deliver') and (it.get('avoid') or it.get('acts')):   # the plan before the yes, when there is something to know (idea-to-spec's playback, 2026-11-07)
+        lead += 'It hands back %s%s.%s ' % (it['deliver'].rstrip('.'), (', and does not %s' % (it['avoid'][0].lower() + it['avoid'][1:])) if it.get('avoid') else '',
+                                           ' Each send or post waits for your yes.' if it.get('acts') else '')
     if here_board:
         a['board'] = here_board['id']
         n = plan.get('n_selected') or 0   # what the user selected (the team also gets the cards stacked with them)
@@ -2656,6 +2659,11 @@ def builtins_frame():
             'Judged after 6 more jobs: recurring at half its old rate or less = kept as a rule note; otherwise dropped. At most 2 new a night',
             'Listed in the Proposed rules card next to this frame; delete a line in proposals.json or the note to stop one']),
         ('Cost in view', 'Nov 7', ['Every read an agent makes comes back with "Step N of M", so it can wrap up before the cap does']),
+        ('Not doing', 'Nov 7', ['The intent card names the one or two things an eager team would do that you did not ask for; the Lead and every part carry the same line',
+            'Said before the yes when there is one: "It hands back X, and does not Y"']),
+        ('One question first', 'Nov 7', ['When your words could mean two different jobs, the Assistant asks one question with the choices instead of guessing; it never asks twice for one job']),
+        ('Checked at the source', 'Nov 7', ['A part that cites a web page is checked against that page, read again: a figure, name or quote the page does not hold fails the check and goes back',
+            'A part that built a demo has it opened once in the browser; a demo that does not open cleanly fails the check']),
         ('Advice when stuck', 'Nov 7', ['When a part fails its check and goes back for the missing piece, or the Lead fails the final check, a stronger model (the Advisor in Settings) is asked once what to do differently; its advice rides along with the retry',
             'Off until an Advisor is picked in Settings; the step "Asked the advisor" shows where it came in']),
         ('Notes that proved themselves', 'Nov 7', ['A team note counted for 3 times with at most a third as many misses becomes a Lead skill on every board',

@@ -1066,6 +1066,8 @@ def small_talk(question, history=(), waiting=(), here='', apps=(), pending=''):
                                '(another board, another space, fewer or other things, another name). Reply {"intent": "change"}.'
                                '\n- yes / no: their message agrees to it ("sure", "go on", "sounds good") or turns it down ("not now", '
                                '"skip it"). Reply {"intent": "yes"} or {"intent": "no"}, never a chat reply.' % pending)
+    if history and history[-1].get('route') == 'clarify' and not pending:   # the user is answering the one question asked about their job: on to the plan
+        return 'team', None
     msgs.append({'role': 'user', 'content': question + (' (An agent is waiting on the user\'s answer right now.)' if waiting else '')})
     out = chat(msgs, 150, timeout=20)
     intent, reply = out.get('intent'), ' '.join(str(out.get('reply') or '').split())
@@ -1132,6 +1134,9 @@ INTENT_FIELDS = """ "want": "<what the user wants and why, in one or two plain s
             and the user asks to post or publish there: the team drafts it and publishes it when the user says yes, so cannot is
             empty; same for sending from Gmail). Only an app that is not connected makes a cannot ('post it on LinkedIn'
             with no LinkedIn connected -> cannot: 'post on LinkedIn'). One short phrase, under 12 words, e.g. 'put the new code live'>",
+ "avoid": "<the one or two things an eager team would do here that he did NOT ask for and would be wrong: short phrases
+           from the ask itself ('rewrite the text in its own words', 'look for captions elsewhere', 'contact the sellers');
+           empty when nothing stands out>",
  "acts": true or false (true only when the job means sending messages, posting, or spending money)"""
 INTENT = """The user is about to give a job to a team of AI agents on their Clewbert boards. Say plainly what the
 team will and will not hand back. Reply with JSON only:
@@ -1166,7 +1171,8 @@ def intent_of(out, asked=''):
         cannot = ''   # "can't contact sellers or buy a practice" when the user only asked to find practices: the line is only for an act the user asked for
     return {'want': ' '.join(str(out.get('want') or '').split())[:400],
             'deliver': re.sub(r'\b(him|her|them|the user)\b', 'you', ' '.join(str(out.get('deliver') or '').split())[:300]),
-            'cannot': cannot, 'acts': out.get('acts') is True}
+            'cannot': cannot, 'acts': out.get('acts') is True,
+            'avoid': ' '.join(str(out.get('avoid') or '').split()).rstrip('.')[:200]}   # non-goals: what an eager team would do that the user did not ask for (2026-11-07)
 
 
 PART_CHECK = """You check one part of an AI team's work on the user's Clewbert board. You get the part (what the teammate
@@ -1214,6 +1220,26 @@ def advise(task, done_when, missing, frame_text, steps):
         cut = text[:700].rfind('. ')
         text = text[:cut + 1] if cut > 300 else text[:700]
     return text
+
+
+SURFACE_CHECK = """You check one thing an AI teammate wrote on the user's Clewbert board against the web page it cites, read
+again just now. You get the teammate's words (they name the page) and the page's text. Does the page support what the
+words say about it: the figures, names, quotes, dates, what is offered or available? Small wording differences are fine.
+A number, name or quote the page does not contain is not. If the page text is a block, login or error page, say so and
+treat the claim as unchecked (holds: true).
+Reply with JSON only, the why in double quotes: {"holds": true or false, "why": "<one plain sentence: what matched, or exactly what the page does not say>"}"""
+
+
+def surface_check(url, claim, page_text):
+    """Does the cited page back the teammate's words about it? -> {'holds', 'why'}; holds when it cannot tell."""
+    out = chat([{'role': 'system', 'content': SURFACE_CHECK}, {'role': 'user', 'content': 'THE PAGE: %s\n\nTHE TEAMMATE WROTE:\n%s\n\nTHE PAGE SAYS (read just now):\n%s'
+                % (url, claim[:1500], (page_text or '(nothing)')[:7000])}], 300, timeout=90)
+    out = out if isinstance(out, dict) else {}
+    if '_text' in out:   # the model forgot the quotes around "why" once: read the verdict out of the text it did write
+        m = re.search(r'"holds"\s*:\s*(true|false)', out['_text'], re.I)
+        w = re.search(r'"why"\s*:\s*"?(.*?)"?\s*}?\s*$', out['_text'], re.S)
+        out = {'holds': m.group(1).lower() == 'true', 'why': w.group(1) if w else ''} if m else {}
+    return {'holds': out.get('holds') is not False, 'why': ' '.join(str(out.get('why') or '').split())[:300]}
 
 
 TEAM_CONFLICTS = """An AI agent team just finished a job on the user's Clewbert board. You get every teammate's frame. Find the
@@ -1432,6 +1458,12 @@ Reply with JSON only:
  "space_also": "<a second space that could fit just as well, or empty>",
  "new_space": "<only when no space fits: a short name for a new space, else empty>",
  "mode": "team" or "one" (one only when the user asks for a single agent),
+ "unsure": "<when the user's words could mean two materially different jobs and nothing here settles it, OR the task you
+            would write says nothing about the result (a bare 'do', 'handle', 'deal with', 'sort out', 'look at' the item,
+            with no deliverable): one spoken question that names the 2 or 3 likely jobs, under 160 characters ('Do you want
+            the video transcribed, summarized, or its key points noted?'). Else empty. If your previous turn below was such
+            a question, the new message answers it: plan from the earlier message and this answer together, leave this empty>",
+ "options": ["<the same 2 or 3 choices, under 8 words each; empty when unsure is empty>"],
 """ + INTENT_FIELDS + "}"
 
 
@@ -1446,6 +1478,8 @@ def team_plan(question, history, here, spaces_text, bid=None):
         a = {'said': h['a']}
         if h.get('route') == 'confirm':   # their yes that started a team: that job is handed off, not part of the new one
             a['note'] = 'A team was started on that job; it is not part of the next job.'
+        elif h.get('route') == 'clarify':   # the question that asked which he meant: his next message is the answer
+            a['note'] = 'This asked which he meant. His next message answers it: the job is his earlier message plus this answer. Do not ask again.'
         msgs += [{'role': 'user', 'content': h['q']}, {'role': 'assistant', 'content': json.dumps(a)}]
     msgs.append({'role': 'user', 'content': question})
     out = chat(msgs, 700, timeout=60)
@@ -1454,6 +1488,10 @@ def team_plan(question, history, here, spaces_text, bid=None):
     plan = {k: ' '.join(str(out.get(k) or '').split())[:600 if k == 'task' else 300 if k == 'why' else 80] for k in
             ('task', 'why', 'board_name', 'space', 'space_also', 'new_space', 'mode')}
     plan['intent'] = intent_of(out, question + ' ' + plan['task']) if out.get('deliver') else None
+    opts = [' '.join(str(x).split())[:60] for x in (out.get('options') or []) if str(x).strip()][:3] if isinstance(out.get('options'), list) else []
+    if not any(h.get('route') == 'clarify' for h in history[-3:]) and len(opts) >= 2:   # ask once, with choices; never twice for one job
+        plan['unsure'] = ' '.join(str(out.get('unsure') or '').split())[:200]
+        plan['options'] = opts
     return plan
 
 
@@ -1614,6 +1652,9 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
         return {'answer': '', 'sources': [], 'checked': None, 'ms': int((time.time() - t0) * 1000), 'route': 'agent', 'agent_build': question}
     if route == 'team':   # a job for a team: how to set it up; the server asks them before starting it
         plan = team_plan(question, history, here, spaces_text, bid=bid)
+        if plan.get('unsure'):   # his words could mean two different jobs: one question with the choices, then the plan (after idea-to-spec, 2026-11-07)
+            q = plan['unsure'].rstrip('?.') + '?'
+            return {'answer': q, 'sources': [], 'checked': None, 'ms': int((time.time() - t0) * 1000), 'route': 'clarify', 'options': plan['options']}
         plan['explicit'] = bool(re.search(r'\b(team|agents?)\b', question, re.I))
         plan['changed'] = changed   # the user changed where it goes: say only the new setup, no second offer of the space the user just turned down
         return {'answer': '', 'sources': [], 'checked': None, 'ms': int((time.time() - t0) * 1000), 'route': 'team', 'team': plan}
