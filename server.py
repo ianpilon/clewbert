@@ -2174,7 +2174,10 @@ def do_edit(bid, edit):
         arrange.keep_undo(DATA, bid, before, 'the frame as it was before the sort')
         return 'Done. I sorted the %s frame into %d themes: %s. Say "put it back" to undo it.' % (
             title, len(groups), ', '.join(t for t, _ in groups)), True
-    return edit_board(bid, change)
+    try:
+        return edit_board(bid, change)
+    except RulesLocked as e:
+        return str(e), False
 
 
 def regroup(ids, groups):
@@ -2492,13 +2495,43 @@ def run_pending(a, why=None):
 MOVED = {}   # board -> {item: ([old places], new item, when)}: moves made here, kept when a page still showing an old place saves
 
 
+class RulesLocked(ValueError):
+    """A standing rule may be added, never rewritten or removed by the app (only the user edits one, on the page)."""
+
+
+def rule_notes(items):
+    """The standing rules on the rules board: every plain note that is not a built-in card, a mined report or an agent's."""
+    return {i['id']: ' '.join(str(i.get('text') or '').split()) for i in items or []
+            if isinstance(i, dict) and i.get('type') == 'note' and not i.get('builtin') and not i.get('mined') and not i.get('agent') and not i.get('chart')}
+
+
+def rules_kept(before, after):
+    """'' when every rule that was there is still there, word for word; else what would have been lost. Lessons the
+    app learned are append-only: a rewrite drops what was learned without anyone seeing it go (the warning that came
+    with Agentic Context Engineering, 2026-11-07)."""
+    b, a = rule_notes(before), rule_notes(after)
+    gone = [t for k, t in b.items() if k not in a]
+    changed = [t for k, t in b.items() if k in a and a[k] != t]
+    if not gone and not changed:
+        return ''
+    return 'it would %s' % ' and '.join(x for x in [('remove %d rule%s' % (len(gone), '' if len(gone) == 1 else 's')) if gone else '',
+                                                    ('rewrite %d rule%s' % (len(changed), '' if len(changed) == 1 else 's')) if changed else ''] if x)
+
+
 def edit_board(bid, fn):
     """Change a stored board under the lock (agents and the voice write this way); returns what fn returns. Items it
-    moves are remembered for a while, and every open copy of the board is told to fetch it."""
+    moves are remembered for a while, and every open copy of the board is told to fetch it. On the rules board a
+    change may add rules and move cards, never rewrite or remove a rule (RulesLocked; nothing is written)."""
     with LOCK:
         board = read_board(bid)
         before = {i['id']: (i['x'], i['y']) for i in board.get('items') or [] if 'x' in i}
+        rules = json.loads(json.dumps(board.get('items') or [])) if bid == rules_board() else None
         out = fn(board)
+        if rules is not None:
+            lost = rules_kept(rules, board.get('items') or [])
+            if lost:
+                print('rules board: a change was refused, %s' % lost, flush=True)
+                raise RulesLocked('Not done: the standing rules are append-only (%s). A rule can be added, never rewritten or removed by the app; only you change one, on the board.' % lost)
         board['updated'] = now_ms()
         write_json(board_path(bid), board)
         moved = {i['id']: i for i in board.get('items') or [] if i['id'] in before and (i['x'], i['y']) != before[i['id']]}
@@ -2659,6 +2692,8 @@ def builtins_frame():
             'Judged after 6 more jobs: recurring at half its old rate or less = kept as a rule note; otherwise dropped. At most 2 new a night',
             'Listed in the Proposed rules card next to this frame; delete a line in proposals.json or the note to stop one']),
         ('Cost in view', 'Nov 7', ['Every read an agent makes comes back with "Step N of M", so it can wrap up before the cap does']),
+        ('Rules are append-only', 'Nov 7', ['The app can add a standing rule to this board and move its cards; it can never rewrite or remove one: such a change is refused and nothing is written',
+            'Only you change a rule, on the board. A rewrite would drop a lesson without anyone seeing it go (the warning from Agentic Context Engineering)']),
         ('Not doing', 'Nov 7', ['The intent card names the one or two things an eager team would do that you did not ask for; the Lead and every part carry the same line',
             'Said before the yes when there is one: "It hands back X, and does not Y"']),
         ('One question first', 'Nov 7', ['When your words could mean two different jobs, the Assistant asks one question with the choices instead of guessing; it never asks twice for one job']),
