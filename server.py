@@ -310,6 +310,43 @@ def describe_old_pictures():
 
 
 threading.Thread(target=describe_old_pictures, daemon=True).start()
+
+
+def settle_draft_questions(draft_id, how):
+    """A Lead that asked "publish draft N?" and is still waiting gets its answer when the draft was published another way
+    (the Publish card, or Substack itself). Two Leads waited nine hours on posts the user had put live by hand (2026-11-08)."""
+    if not draft_id:
+        return 0
+    n = 0
+    for r in list(RUNNER.runs.values()):
+        q = (r.get('question') or {}).get('text', '') if r.get('status') == 'waiting' else ''
+        if q and draft_id in q and RUNNER.answer(r['id'], '%s; the post is live, so nothing is left to publish. Finish without publishing again.' % how):
+            n += 1
+    return n
+
+
+def settle_published_drafts():
+    """At start: every waiting "publish?" question whose Substack draft is already published, or gone, is answered; a
+    question nobody answered in two days is stopped (four Leads waited for days on drafts the user had published or
+    deleted by hand, 2026-11-08)."""
+    time.sleep(20)
+    for r in list(RUNNER.runs.values()):
+        q = (r.get('question') or {}).get('text', '') if r.get('status') == 'waiting' else ''
+        if not q:
+            continue
+        for did in set(re.findall(r'/publish/post/(\d{6,})', q)):
+            try:
+                if integrations.substack_read(did).get('published'):
+                    settle_draft_questions(did, 'the user published it')
+            except OSError as e:
+                if '404' in str(e):
+                    settle_draft_questions(did, 'the user deleted that draft on Substack')
+            except (ValueError, KeyError, AttributeError):
+                pass
+        r = RUNNER.runs.get(r['id']) or r
+        if r.get('status') == 'waiting' and now_ms() - (r['steps'][-1]['t'] if r.get('steps') else r.get('created', now_ms())) > 48 * 3600 * 1000:
+            RUNNER.step(r, 'No answer in two days: stopped')
+            RUNNER.stop(r['id'])
 FINDER = talk.Finder(BOARDS, READER)
 threading.Thread(target=FINDER.fresh, daemon=True).start()   # the first search would wait ~8 s to read every board
 
@@ -607,8 +644,9 @@ def sheet_words(path, cap=2_000_000):
     return '\n'.join(out).strip()
 
 
-def finish_upload(part, filename):
-    """A fully arrived upload becomes a content-addressed file; PDFs join the images so they get a first-page picture."""
+def finish_upload(part, filename, audio=False):
+    """A fully arrived upload becomes a content-addressed file; PDFs join the images so they get a first-page picture.
+    audio: the page recorded it as sound (a voice note is audio/webm, which mimetypes calls video/webm; the clip maker 500s on it)."""
     h = hashlib.sha256()
     with open(part, 'rb') as f:
         for block in iter(lambda: f.read(1 << 20), b''):
@@ -651,7 +689,7 @@ def finish_upload(part, filename):
         with open(READER.path(name) + '.tmp', 'w') as f:
             f.write(words)
         os.replace(READER.path(name) + '.tmp', READER.path(name))
-    kind = 'video' if mime.startswith('video/') else 'audio' if mime.startswith('audio/') else 'file'
+    kind = 'audio' if audio or mime.startswith('audio/') else 'video' if mime.startswith('video/') else 'file'
     return {'kind': kind, 'src': 'api/files/' + name, 'mime': mime, 'size': size,
             'preview': re.sub(r'[ \t]+', ' ', words[:600]).strip()}
 
@@ -1091,7 +1129,10 @@ class Handler(BaseHTTPRequestHandler):
             if not (integrations.load().get('substack') or {}).get('cookie'):
                 return self.reply(409, {'error': 'Substack is not connected. Open Settings, Connected apps, and connect it first.'})
             try:
-                return self.reply(200, integrations.substack_publish(json.loads(self.read_body())))
+                req = json.loads(self.read_body())
+                out = integrations.substack_publish(req)
+                settle_draft_questions(str(req.get('draft_id') or ''), 'the user published it from the Publish card on the board')
+                return self.reply(200, out)
             except OSError as e:   # 424, not 502: Cloudflare swaps an origin 502 for its own page and the words would never reach the canvas
                 print('%s substack: %s' % (time.strftime('%H:%M:%S'), e))
                 return self.reply(424, {'error': str(e)})
@@ -1122,7 +1163,7 @@ class Handler(BaseHTTPRequestHandler):
             if req.get('size') is not None and int(req['size']) != os.path.getsize(part):   # the page says how big the file is
                 os.remove(part)
                 return self.reply(409, {'error': 'the file did not arrive whole; drop it again'})
-            out = finish_upload(part, name)
+            out = finish_upload(part, name, audio=req.get('audio') is True)
             if out.get('kind') == 'video':
                 CLIPS_Q.put(out['src'].rsplit('/', 1)[1])
             return self.reply(201, out)
@@ -1573,6 +1614,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(503, {'error': 'the model did not answer'})
             if PENDING.get(talk_id):   # still waiting for their word (a question in between leaves it waiting)
                 result['pending_action'] = {'id': PENDING[talk_id]['id'], 'say': PENDING[talk_id]['say']}
+                if waiting_on and PENDING[talk_id] is waiting_on and result.get('answer') and result.get('route') not in ('team', 'confirm', 'clarify'):
+                    result['answer'] = result['answer'].rstrip() + ' The offer still stands: say yes when you want it to start, or no.'
             turn = {'q': question, 'a': result['answer'], 'sources': result['sources'], 'checked': result.get('checked'), 't': now_ms(),
                     'route': result.get('route') or 'boards',
                     **({'did': did} if did else {})}
@@ -1640,14 +1683,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(404, {'error': 'no such upload'})
             data = self.read_body()
             have = os.path.getsize(part)
+            if len(data) != int(self.headers.get('Content-Length') or 0):   # the connection broke mid-piece: a short piece appended and
+                return self.reply(400, {'error': 'the piece did not arrive whole; send it again', 'size': have})   # answered 200 left a silent hole (2026-11-08)
             at = (urllib.parse.parse_qs(self.path.partition('?')[2]).get('at') or [None])[0]   # where this piece belongs: a piece
             if at is not None:   # sent twice (the browser retries a PUT whose reply was lost) was appended twice and shifted the rest of a video, 2026-11-07
                 at = int(at)
                 if at < have:   # already here
                     return self.reply(200, {'size': have})
-                if at > have:   # a piece is missing before this one: the upload cannot be right
-                    os.remove(part)
-                    return self.reply(409, {'error': 'a piece of the file went missing; drop it again'})
+                if at > have:   # a piece is missing before this one: the page carries on from what is here (an upload resumes, 2026-11-08)
+                    return self.reply(409, {'error': 'a piece of the file is missing; carry on from size', 'size': have})
             if have + len(data) > MAX_FILE:
                 os.remove(part)
                 raise OverflowError
@@ -2258,6 +2302,16 @@ def frame_answer(question, board, frames):
     return {'answer': 'Here is the frame of "%s".' % short, 'show': [{'board': board['id'], 'item': r['frame']}]}
 
 
+def avoid_line(avoid):
+    """', and does not X or Y' from the intent's avoid list ('X; Y'): one clause, so the second thing is not heard as an
+    instruction ("...does not rebuild the demo page from scratch. Redo the earlier research." 2026-11-08)."""
+    parts = [p.strip().rstrip('.') for p in re.split(r';|\.\s+', str(avoid or '')) if p.strip()]
+    if not parts:
+        return ''
+    parts = [p[0].lower() + p[1:] for p in parts]
+    return ', and does not ' + (parts[0] if len(parts) == 1 else ' or '.join([', '.join(parts[:-1]), parts[-1]]))
+
+
 def pending_reply(text):
     """'yes', 'no' or None (a change, or something else) for a reply while an action waits."""
     t = ' '.join(str(text).split())
@@ -2368,7 +2422,7 @@ def propose_team(plan, here_board, here_space, spaces, sel=None):
         lead += "A team can hand back %s, but it can't %s. " % (
             it['deliver'].rstrip('.'), it['cannot'][0].lower() + it['cannot'][1:].rstrip('.'))
     elif it.get('deliver') and (it.get('avoid') or it.get('acts')):   # the plan before the yes, when there is something to know (idea-to-spec's playback, 2026-11-07)
-        lead += 'It hands back %s%s.%s ' % (it['deliver'].rstrip('.'), (', and does not %s' % (it['avoid'][0].lower() + it['avoid'][1:])) if it.get('avoid') else '',
+        lead += 'It hands back %s%s.%s ' % (it['deliver'].rstrip('.'), avoid_line(it.get('avoid')),
                                            ' Each send or post waits for your yes.' if it.get('acts') else '')
     if here_board:
         a['board'] = here_board['id']
@@ -2613,6 +2667,7 @@ def clips_worker():
                 print('clip made for %s: %d KB, %ss' % (name[:16], int(out.get('mp4_bytes') or 0) // 1024, out.get('seconds')), flush=True)
             except (OSError, ValueError, KeyError) as e:
                 print('clip not made for %s: %s' % (name[:16], str(e)[:200]), flush=True)   # tried again at the next start
+                done.add(name)   # not again this run: a voice note queued by every board save hit the GX10 five times a day (2026-11-08)
                 continue
         done.add(name)
         try:   # every card that shows this video, on every board
@@ -2635,6 +2690,7 @@ BRIEFER = briefs.Briefer(DATA, READER, read_board, lambda: [b['id'] for b in sor
 rules_board()   # made once, with the rules the user has already given
 RUNNER = agents.Runner(DATA, type('Store', (), {'read_board': staticmethod(read_board), 'edit_board': staticmethod(edit_board)}),
                        READER, BRIEFER.load, BRIEFER.touch)
+threading.Thread(target=settle_published_drafts, daemon=True).start()   # waiting "publish?" questions already settled by hand (2026-11-08)
 def builtins_frame():
     """A frame on the rules board that says what is built into the app for agent teams, written from the code's own
     settings each time the server starts, so it cannot drift from what the app really does. The user's rules stay theirs; these
@@ -2712,6 +2768,13 @@ def builtins_frame():
         ('One question first', 'Nov 7', ['When your words could mean two different jobs, the Assistant asks one question with the choices instead of guessing; it never asks twice for one job']),
         ('Checked at the source', 'Nov 7', ['A part that cites a web page is checked against that page, read again: a figure, name or quote the page does not hold fails the check and goes back',
             'A part that built a demo has it opened once in the browser; a demo that does not open cleanly fails the check']),
+        ('A question is not a no', 'Nov 8', ['While an offer waits for your word, a question about it ("does that mean...?", "what will they do?") is answered and the offer stays open; only a plain refusal drops it',
+            'The "does not" list is said as one clause, so its second item is never heard as an instruction']),
+        ('What no teammate can do', 'Nov 8', ['Run a shell or any command, run the app or its tests, hear or speak sound, use a microphone, push or deploy; an engineer\'s commits land on branch team/<job id> and on no other name',
+            'The designer, the critic and the checker all know this, and a part whose words ask for one of these gets the list added, so a done-when that could never pass is not chased for an hour (2026-11-08: six retries for a shell nobody has)',
+            'An engineer or checker whose job names an earlier team\'s branch or commit starts from that commit, so it reads the code it is asked about']),
+        ('Settled by hand', 'Nov 8', ['Publishing a Substack draft from the card answers the Lead that asked "publish?", and at start every such question whose draft is already live is answered',
+            'A video upload that breaks sends the piece again, carries on from what arrived, and pauses as a card you tap to resume; a short piece is refused, never kept']),
         ('Advice when stuck', 'Nov 7', ['When a part fails its check and goes back for the missing piece, or the Lead fails the final check, a stronger model (the Advisor in Settings) is asked once what to do differently; its advice rides along with the retry',
             'Off until an Advisor is picked in Settings; the step "Asked the advisor" shows where it came in']),
         ('Notes that proved themselves', 'Nov 7', ['A team note counted for 3 times with at most a third as many misses becomes a Lead skill on every board',
@@ -2876,7 +2939,17 @@ def cover_for(bid, ids, title, body):
     pics = [it for it in chosen if picture(it)]
     if len(pics) == 1:
         return picture(pics[0]), 'the picture on the board (%s)' % said(pics[0])[:60]
-    cands = pics or [it for it in items.values() if picture(it)]
+    if len(pics) > 1:   # several pictures chosen: the model says which one is the post's
+        try:
+            pick = talk.pick_cover(title, body, [{'id': it['id'], 'words': said(it)[:300]} for it in pics[:20]], len(chosen))
+        except (OSError, ValueError):
+            pick = ''
+        if pick in items and picture(items[pick]):
+            return picture(items[pick]), 'the picture on the board (%s)' % said(items[pick])[:60]
+    made, note = made_cover(title, body)   # no picture of its own: a hook line over a nature photo, never the newsletter logo (2026-11-06)
+    if made:   # before any other picture on the board: the pick took the app's own icon for a post about a voice note (2026-11-08)
+        return made, note
+    cands = [it for it in items.values() if picture(it)]
     if cands:
         try:
             pick = talk.pick_cover(title, body, [{'id': it['id'], 'words': said(it)[:300]} for it in cands[:20]], len(chosen))
@@ -2884,9 +2957,6 @@ def cover_for(bid, ids, title, body):
             pick = ''
         if pick in items and picture(items[pick]):
             return picture(items[pick]), 'the picture on the board (%s)' % said(items[pick])[:60]
-    made, note = made_cover(title, body)   # no picture of its own: a hook line over a nature photo, never the newsletter logo (2026-11-06)
-    if made:
-        return made, note
     shot = covershot(bid, [it['id'] for it in chosen])
     if shot:
         return shot, ('a screenshot of the %d chosen item%s' % (len(chosen), '' if len(chosen) == 1 else 's')) if chosen else 'a screenshot of the whole board'

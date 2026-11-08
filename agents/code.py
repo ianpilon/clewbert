@@ -33,16 +33,42 @@ def branch(rid):
     return 'team/' + rid
 
 
-def workspace(data_dir, repo, rid):
-    """The run's worktree of that code base (made on first use, from main)."""
+def workspace(data_dir, repo, rid, base=None):
+    """The run's worktree of that code base (made on first use, from main, or from base: an earlier team's branch or a
+    commit the job names, so a checker reads the code it is asked about; one read main and called the earlier team's
+    commit a lie, 2026-11-08)."""
     if repo not in repos(data_dir):
         raise ValueError('no code base called %r; there are: %s' % (repo, ', '.join(repos(data_dir)) or 'none'))
     bare = os.path.join(root(data_dir), repo + '.git')
     work = os.path.join(root(data_dir), 'work', '%s-%s' % (rid, repo))
     if not os.path.isdir(work):
         os.makedirs(os.path.dirname(work), exist_ok=True)
-        git(bare, 'worktree', 'add', '-b', branch(rid), work, 'main')
+        start = 'main'
+        if base:
+            try:
+                if git(bare, 'rev-parse', '--verify', '--quiet', base + '^{commit}').strip():
+                    start = base
+            except ValueError:   # not a ref in this code base: main
+                pass
+        git(bare, 'worktree', 'add', '-b', branch(rid), work, start)
     return work
+
+
+def named_base(text):
+    """A branch or commit a job's words name (team/r0123456789ab, 9abe0ca), or None."""
+    m = re.search(r'\b(team/r[0-9a-f]{12})\b', str(text or ''))
+    if m:
+        return m.group(1)
+    m = re.search(r'\b(?:commit|at|of)\s+([0-9a-f]{7,40})\b', str(text or ''))
+    return m.group(1) if m else None
+
+
+def where(work):
+    """'branch team/... at commit abc1234' for what a read came from."""
+    try:
+        return 'branch %s at commit %s' % (git(work, 'rev-parse', '--abbrev-ref', 'HEAD').strip(), git(work, 'rev-parse', '--short', 'HEAD').strip())
+    except (OSError, subprocess.SubprocessError):
+        return 'this branch'
 
 
 def inside(work, path):
@@ -82,8 +108,8 @@ def read(work, path, start=1, count=150):
     start = max(1, int(start or 1))
     count = max(1, min(int(count or 150), 400))
     shown = lines[start - 1:start - 1 + count]
-    return '%s, lines %d to %d of %d:\n%s' % (path, start, start + len(shown) - 1, len(lines),
-                                             '\n'.join('%d: %s' % (start + k, l) for k, l in enumerate(shown)))
+    return '%s (%s), lines %d to %d of %d:\n%s' % (path, where(work), start, start + len(shown) - 1, len(lines),
+                                                  '\n'.join('%d: %s' % (start + k, l) for k, l in enumerate(shown)))
 
 
 def edit(work, path, old, new):
@@ -135,7 +161,8 @@ def check(work):
                 json.loads(text)
                 out.append('%s: JSON loads' % n)
             else:
-                out.append('%s: no syntax check for this kind of file' % n)
+                out.append('%s: no syntax check here for this kind of file (nothing can be run here: the deploy script on the developer\'s own machine '
+                           'parses it; say so instead of trying)' % n)
         except SyntaxError as e:
             ok = False
             out.append('%s: SYNTAX ERROR line %s: %s' % (n, e.lineno, e.msg))

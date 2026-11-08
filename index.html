@@ -1356,8 +1356,8 @@ const cvView={x:60,y:40,s:1};
 // Saves are debounced and sent one at a time; a failed save is retried until it lands.
 const cvDirty=new Map();   // board id -> board object waiting to be saved
 let cvSaving=false, cvSaveTimer=null;
-function cvSaveState(s){const el=$('#cvSaveState');el.classList.toggle('error',s==='error'||s==='gone'||s==='upload'||s==='toolarge');
-  el.textContent=s==='saving'?'Saving…':s==='saved'?'Saved':s==='error'?'Not saved. Retrying. Reload the page if this stays.':s==='image'?'Screenshot not saved. Try pasting it again.':s==='upload'?'File not uploaded. Try dropping it again.':s==='toolarge'?'File not uploaded: files can be up to 4 GB.':s==='gone'?'Not saved: this board was deleted.':'';}
+function cvSaveState(s){const el=$('#cvSaveState');el.classList.toggle('error',s==='error'||s==='gone'||s==='upload'||s==='toolarge'||s==='paused');
+  el.textContent=s==='saving'?'Saving…':s==='saved'?'Saved':s==='error'?'Not saved. Retrying. Reload the page if this stays.':s==='image'?'Screenshot not saved. Try pasting it again.':s==='upload'?'File not uploaded. Try dropping it again.':s==='paused'?'Upload paused: the connection dropped. Tap the card to resume.':s==='toolarge'?'File not uploaded: files can be up to 4 GB.':s==='gone'?'Not saved: this board was deleted.':'';}
 function cvSave(now){
   if(!cvBoard)return;
   cvHistNote();
@@ -2283,7 +2283,8 @@ function cvItemEl(it){
       body.addEventListener('input',()=>{it.text=body.textContent;});
       body.addEventListener('blur',()=>{if(String(it.text||'').trim())cvDocFill(it,it.text);});
     }else
-    el.innerHTML=`<div class="frame"><div class="mbar"><span class="ext">${escapeHtml(ext)}</span><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'File')}</span>${it.src?`<a href="${escapeAttr(cvFileHref(it))}" target="_blank" rel="noopener">Open ↗</a>`:''}</div>${it.uploading?`<div class="upbar"><i></i></div><div class="fprev">Uploading…</div>`:`<div class="fprev">${escapeHtml(it.preview||'')}</div>`}</div>`;
+    el.innerHTML=`<div class="frame"><div class="mbar"><span class="ext">${escapeHtml(ext)}</span><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'File')}</span>${it.src?`<a href="${escapeAttr(cvFileHref(it))}" target="_blank" rel="noopener">Open ↗</a>`:''}</div>${it.uploading?`<div class="upbar"><i></i></div><div class="fprev">${it.paused?'Upload paused: the connection dropped. Tap here to resume.':'Uploading…'}</div>`:`<div class="fprev">${escapeHtml(it.preview||'')}</div>`}</div>`;
+    if(it.paused){const f=el.querySelector('.fprev');if(f)f.onclick=ev=>{ev.stopPropagation();cvUploadResume(it.id);};}
     if(it.size&&!it.uploading)el.querySelector('.fprev').insertAdjacentHTML(it.preview?'afterbegin':'beforeend',`<span class="fsize">${cvSize(it.size)}${it.preview?'\n':''}</span>`);
     if(it.src&&!it.uploading&&it.preview!==true&&CV_TEXT_EXT.test(ext))cvFileText(it.src).then(t=>{   // a text file shows the whole document, like the browser tab, not just its first lines
       const fp=el.querySelector('.fprev');if(t==null||!fp)return;
@@ -2549,7 +2550,7 @@ async function cvVoiceWhy(it){
       const blob=new Blob(chunks,{type:mr.mimeType||type||'audio/webm'}),ext=/mp4/.test(blob.type)?'m4a':'webm';
       let src='';
       if(blob.size)try{const {up}=await api('uploads',{method:'POST'});await api('uploads/'+up,{method:'PUT',body:blob});
-        const r=await api('uploads/'+up+'/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Why I added this.'+ext})});src=r.src||r.url||'';}
+        const r=await api('uploads/'+up+'/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Why I added this.'+ext,audio:true})});src=r.src||r.url||'';}
       catch(e){}   // the words are still kept
       p.hidden=true;$('#cvScrim').hidden=true;
       if(cvBoardId!==CV_REC.board||!cvBoard||!cvBoard.items.includes(it))return;
@@ -3060,20 +3061,45 @@ function cvAddFiles(files,p){
     const c=p||cvCenter();cvUploadFile(f,{x:c.x+(i%4)*520,y:c.y+Math.floor(i/4)*360});   // several at once: side by side, 4 to a row
   });
 }
+/* A big file goes up in 20 MB pieces, about 30 s each from a phone through the tunnel. The connection drops (a backyard,
+   a lock screen): a piece is sent again, a hole answers with where to carry on, and when it keeps failing the card stays
+   as "paused": tap it, or the browser coming back online, resumes it. Before, one failed fetch removed the card and the
+   whole file started again from zero (four videos lost that way on 2026-11-08). */
+const CV_UP={};   // paused uploads by item id
+async function cvPutPiece(up,file,o,PIECE){   // -> where the next piece starts
+  const waits=[2000,5000,10000,20000];
+  for(let t=0;;t++){
+    try{const r=await fetch('api/uploads/'+up+'?at='+o,{method:'PUT',body:file.slice(o,o+PIECE)});
+      if(r.ok)return o+PIECE;
+      let j={};try{j=await r.json();}catch(e){}
+      if(r.status===409&&typeof j.size==='number')return j.size;   // a piece is missing before this one: carry on from what is there
+      if(r.status===413||r.status===404)throw Object.assign(new Error('HTTP '+r.status),{status:r.status});
+      if(t>=waits.length)throw Object.assign(new Error('HTTP '+r.status),{status:r.status,retry:true});
+    }catch(e){if(e.status&&!e.retry)throw e;if(t>=waits.length)throw Object.assign(e,{retry:true});}
+    await new Promise(r=>setTimeout(r,waits[t]));
+  }
+}
+function cvUploadResume(id){const u=CV_UP[id];if(u&&!u.running)cvUploadRun(u);}
+window.addEventListener('online',()=>Object.keys(CV_UP).forEach(cvUploadResume));
 async function cvUploadFile(file,p,opts={}){   // opts.card: a PDF stays a file card (badge, name, first lines) instead of becoming its first page's picture
   const boardId=cvBoardId,c=p||cvCenter();
   const k=cvUnit(),it=cvAddItem({type:'file',label:file.name,size:file.size,uploading:true,x:c.x-130*k,y:c.y-60*k,w:260*k,h:120*k},true);
+  return cvUploadRun({file,it,k,c,boardId,opts,up:null,o:0});
+}
+async function cvUploadRun(u){
+  const {file,it,k,c,boardId,opts}=u;u.running=true;delete it.paused;
   const bar=()=>$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"] .upbar i`);
+  if(cvBoard&&cvBoardId===boardId)cvRender();
   try{
-    const {up}=await api('uploads',{method:'POST'});
+    if(!u.up)u.up=(await api('uploads',{method:'POST'})).up;
     const PIECE=20*1024*1024;
-    for(let o=0;o<file.size||o===0;o+=PIECE){
-      await api('uploads/'+up+'?at='+o,{method:'PUT',body:file.slice(o,o+PIECE)});   // at: so a piece the browser re-sends is not appended twice (2026-11-07)
-      const b=bar();if(b)b.style.width=Math.min(100,Math.round((o+PIECE)/Math.max(1,file.size)*100))+'%';
+    while(u.o<file.size||(u.o===0&&file.size===0)){
+      u.o=await cvPutPiece(u.up,file,u.o,PIECE);   // at: so a piece the browser re-sends is not appended twice (2026-11-07)
+      const b=bar();if(b)b.style.width=Math.min(100,Math.round(u.o/Math.max(1,file.size)*100))+'%';
       if(file.size===0)break;
     }
-    const r=await api('uploads/'+up+'/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,size:file.size})});
-    delete it.uploading;
+    const r=await api('uploads/'+u.up+'/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:file.name,size:file.size})});
+    delete it.uploading;delete CV_UP[it.id];
     if(r.kind==='pdf'&&opts.card){Object.assign(it,{src:r.url,size:r.size,mime:'application/pdf',preview:opts.preview||'',h:340*k});}   // a document made here keeps its header (2026-11-04)
     else if(r.kind==='pdf'&&r.src){   // like a PDF imported from Miro: its first page, a click opens the PDF
       Object.assign(it,{type:'img',src:r.src,url:r.url,label:file.name});delete it.size;
@@ -3083,9 +3109,12 @@ async function cvUploadFile(file,p,opts={}){   // opts.card: a PDF stays a file 
       if(r.kind==='video'){it.w=480*k;it.h=301*k;it.x=c.x-240*k;it.y=c.y-150*k;}else{it.w=320*k;it.h=96*k;}
     }else Object.assign(it,{src:r.src||r.url,size:r.size,preview:r.preview,h:(r.preview?(CV_TEXT_EXT.test(file.name.split('.').pop())?340:220):84)*k});
   }catch(e){
+    u.running=false;
+    if(e.retry&&cvBoard&&cvBoardId===boardId){it.paused=true;CV_UP[it.id]=u;cvRender();cvSaveState('paused');return null;}   // the connection: the card waits for a tap
     if(cvBoard&&cvBoardId===boardId){cvBoard.items=cvBoard.items.filter(i=>i!==it);cvSel.delete(it.id);cvRender();}
-    cvSaveState(e.status===413?'toolarge':'upload');return null;
+    delete CV_UP[it.id];cvSaveState(e.status===413?'toolarge':'upload');return null;
   }
+  u.running=false;
   if(cvBoardId===boardId&&cvBoard){cvSettle(it);cvRender();cvSave();}
   return it;
 }
@@ -3583,6 +3612,10 @@ function vcMuteToggle(force){
   $('#vcHeard').textContent='';VC.heardAt=Date.now();vcLevel(0);vcSetState(VC.state);
 }
 function vcNote(t){$('#vcNote').textContent=t||'';}
+function vcOffline(text){   // said by the browser itself: it works when the server cannot be reached (a question asked twice into silence, 2026-11-08)
+  if(!VC.speak||!window.speechSynthesis||!text)return;
+  try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang='en-US';u.rate=1.05;speechSynthesis.speak(u);}catch(e){}
+}
 /* Only your voice: the ears drop speech that clearly is not you (your voiceprint, a low bar) and
    speech from across the room. What they drop is shown here with "Ask it anyway", so your own question is never lost.
    "Anyone nearby" turns the voiceprint off (a demo, someone else asking); each device remembers the choice. */
@@ -3771,10 +3804,12 @@ function vcEarsRetry(n){
   if(!VC.on||VC.ws)return;
   if(n>=6){vcNote('Listening stopped. Close and reopen the mic to listen again, or type.');return;}
   vcNote('Listening stopped. Reconnecting…');
+  if(n===1&&!VC.lostSaid){VC.lostSaid=true;vcOffline('I lost the connection and cannot hear you right now. One moment.');}
   setTimeout(()=>{if(!VC.on||VC.ws)return;
     const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ears'+(VC.anyone?'?me=0':''));ws.binaryType='arraybuffer';let up=false;
     ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}
       if(m.type==='ready'){if(!VC.on||VC.ws){ws.close();return;}up=true;VC.ws=ws;vcWhoPaint(m.me);vcNote('');vcLog('ears-back',{tries:n+1});
+        if(VC.lostSaid){VC.lostSaid=false;vcOffline('I am back. Say that again if I missed it.');}
         if(VC.state==='')vcSetState('listening');agAnnounce();return;}
       vcEarsMsg(m);};
     ws.onclose=()=>{if(up)vcEarsLost(ws);else vcEarsRetry(n+1);};
@@ -3929,7 +3964,9 @@ async function vcAsk(q){
   const filler=setTimeout(()=>{if(seq===VC.askSeq&&VC.state==='thinking')vcSay(vcFiller(q),seq,true);},4000);
   let j;
   try{j=await api('ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,board,space,seen:vcSeen(),selected:board&&cvBoardId===board?[...cvSel].slice(0,300):[],since:board?undefined:VC.since||Date.now(),carry:(VC.carry||[]).slice(-3).map(t=>({q:t.q,a:t.a,t:t.t}))})});}
-  catch(e){clearTimeout(filler);if(seq!==VC.askSeq||VC.scope!==scope)return;VC.pending={q,a:e.message&&e.message.startsWith('No model')?e.message:'The model did not answer. Try again in a moment.'};vcThread(true);VC.pending=null;vcSetState(VC.ws?'listening':'');return;}
+  catch(e){clearTimeout(filler);if(seq!==VC.askSeq||VC.scope!==scope)return;
+    const a=e.message&&e.message.startsWith('No model')?e.message:e&&e.status?'The model did not answer. Try again in a moment.':'I could not reach the server, so that did not go through. Say it again in a moment.';
+    VC.pending={q,a};vcThread(true);VC.pending=null;vcSetState(VC.ws?'listening':'');vcOffline(a);return;}
   clearTimeout(filler);
   VC.waitAction=j.pending_action||null;   // an action said out loud, waiting for a yes
   if(VC.scope===scope){VC.pending=null;VC.turns.push(j.turn);vcThread(true);}   // the server saved it either way
@@ -4118,12 +4155,13 @@ function vcFocus(ids,close){
   cvView.s=s;cvView.x=left+(room-(x1-x0)*s)/2-x0*s;cvView.y=(tall-(y1-y0)*s)/2-y0*s;cvApplyView();
 }
 // speech is queued so a filler finishes before the answer starts; a new question or "stop" cuts everything
+function vcSpoken(t){return String(t||'').replace(/\b(?:api\/)?(?:[\w-]+\/)+[\w.-]+\.(?:html?|md|json|py|js|mp4|pdf|webm|txt|csv)\b/gi,'that card').replace(/\bhttps?:\/\/\S+/gi,'a link').replace(/\s{2,}/g,' ');}   // a path read aloud is noise (2026-11-08); the text keeps it
 function vcSay(text,seq,isFiller){
   if(!vcVoice()||!VC.speak){if(!isFiller)vcSetState(VC.ws?'listening':'');return;}
   VC.chain=VC.chain.then(async()=>{
     if(seq!==VC.askSeq||!VC.on)return;
     if(!isFiller){vcSetState('speaking');VC.said=text;}
-    await vcPlay(text,seq);
+    await vcPlay(isFiller?text:vcSpoken(text),seq);
     if(!isFiller&&seq===VC.askSeq&&VC.on)vcSetState(VC.ws?'listening':'');
   });
 }
@@ -4138,21 +4176,25 @@ async function vcPlay(text,seq){
     p.end();await p.done;return;
   }
   const ctl=new AbortController();VC.ctls.push(ctl);let r;const t0=performance.now(),since=VC.tAnswer||t0;
-  try{r=await fetch('api/speak',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice:vcVoice()}),signal:ctl.signal});}catch(e){return;}
+  try{r=await fetch('api/speak',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice:vcVoice()}),signal:ctl.signal});}
+  catch(e){if(!ctl.signal.aborted&&seq===VC.askSeq&&VC.on)vcOffline(text);return;}   // the connection: the browser says it instead
   if(!r.ok||!r.body)return;
   const p=vcPlayer(+r.headers.get('X-Sample-Rate')||24000);VC.players.push(p);const rd=r.body.getReader();
-  let first=true;
-  try{for(;;){const {done,value}=await rd.read();if(done)break;if(seq!==VC.askSeq){p.stop();break;}
+  let first=true,complete=false;
+  try{for(;;){const {done,value}=await rd.read();if(done){complete=true;break;}if(seq!==VC.askSeq){p.stop();break;}
     if(first){first=false;const now=performance.now();
       console.log(`[voice] "${text.slice(0,40)}": waited ${Math.round(t0-since)} ms to start, first sound ${Math.round(now-t0)} ms after asking the voice server`);
       if(since===VC.tAnswer&&VC.tAsked)vcLog('timing',{q:text.slice(0,40),hold_ms:Math.round(VC.tAsked-(VC.tHeard||VC.tAsked)),answer_ms:Math.round(VC.tAnswer-VC.tAsked),
         to_speech_ms:Math.round(t0-VC.tAnswer),first_sound_ms:Math.round(now-t0),total_ms:Math.round(now-(VC.tHeard||VC.tAsked))});}
     p.push(value);}}catch(e){}
   p.end();await p.done;
+  if(!complete&&!ctl.signal.aborted&&seq===VC.askSeq&&VC.on){   // the stream broke (the connection): the rest is said by the browser (a sentence stopped half way, 2026-11-08)
+    const frac=Math.min(1,p.stats.audio/Math.max(1,text.length/14));
+    if(frac<0.9){const cut=Math.floor(text.length*frac),at=text.lastIndexOf('. ',cut);vcOffline('The connection cut me off. '+(at>0?text.slice(at+2):text).trim());}}
   if(p.stats.chunks){const st=p.stats;console.log(`[voice] playback: ${st.chunks} pieces, ${st.audio.toFixed(1)} s of sound, ${st.late} late (${Math.round(st.gap*1000)} ms of gaps)`);
     if(st.late)vcLog('playback',{q:text.slice(0,40),chunks:st.chunks,audio_s:+st.audio.toFixed(1),late:st.late,gap_ms:Math.round(st.gap*1000),device:CV_LIVE.device});}
 }
-function vcStopSpeaking(){VC.ctls.forEach(c=>{try{c.abort();}catch(e){}});VC.players.forEach(p=>p.stop());VC.ctls=[];VC.players=[];VC.chain=Promise.resolve();}
+function vcStopSpeaking(){VC.ctls.forEach(c=>{try{c.abort();}catch(e){}});VC.players.forEach(p=>p.stop());VC.ctls=[];VC.players=[];VC.chain=Promise.resolve();try{if(window.speechSynthesis)speechSynthesis.cancel();}catch(e){}}
 function vcPlayer(sr){
   // The speech arrives as raw sound in pieces of a third of a second and plays as it comes. A piece that arrives after
   // the last one has finished leaves a gap (a stutter, mid-word); stats counts those. A phone's path is slower and

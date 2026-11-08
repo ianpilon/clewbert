@@ -436,10 +436,17 @@ CODE_TOOLS = [
          'the line numbers); it becomes new.', {'repo': R, 'path': S, 'old': S, 'new': S}),
     tool('code_write', 'Write a whole file: a new file, or one replaced whole. Prefer code_edit for a change inside a file.',
          {'repo': R, 'path': S, 'content': S}),
-    tool('code_check', 'Check the syntax of every file you changed (nothing is run).', {'repo': R}),
-    tool('code_commit', 'Commit your changes on your branch, with a message that says what changed and why.', {'repo': R, 'message': S}),
+    tool('code_check', 'Check the syntax of every file you changed (Python parsed, JSON loaded; nothing is run: there is no shell here).', {'repo': R}),
+    tool('code_commit', 'Commit your changes on your branch, team/<job id> (the only branch; it cannot be named otherwise), with a message that says what changed and why.', {'repo': R, 'message': S}),
 ]
 CODE_NAMES = {t['function']['name'] for t in CODE_TOOLS}
+# words in a part that ask for what no teammate can do; the part gets CANNOT_NOTE so it says so and does the rest (2026-11-08)
+IMPOSSIBLE = re.compile(r"\b(?:shell|terminal|command line|node -e|node --check|npm\b|pytest|python3? \S|run (?:the |its |your |a )?(?:app|tests?|server|script|check|command)s?\b|"
+                        r"syntax[- ]check|(?:create|make|new|own) (?:a |the )?branch|branch (?:named|called)|named branch|branch [\w-]+-[\w-]+|microphone|\bmic\b|"
+                        r"hears? (?:it|the|an?) |speaks? (?:back|aloud)|audio comes back|deploy|push(?:es|ed)? to github)", re.I)
+CANNOT_NOTE = ('\nWhat you cannot do here, so do not try it and do not count it against yourself: run a shell or any command, run the '
+               'app or its tests, hear or speak sound, use a microphone, push or deploy. Commits land on branch team/<job id>, the only '
+               'branch name there is. If this part needs one of those, write ONE note saying so plainly, do the rest, and finish.')
 CODE_READ = [t for t in CODE_TOOLS if t['function']['name'] in ('code_files', 'code_search', 'code_read')]   # every teammate may read the team's branch
 ASSIGN = tool('assign', 'Hand parts of the task to teammates. Each part becomes their own task frame on the board, next to '
               'yours. You get their results back when every part has ended.',
@@ -1727,7 +1734,8 @@ class Runner:
         if avoid:
             about += '\nNot doing (the person did not ask for it): %s.' % avoid
         for p in parts[:8]:   # a team once built from a look-alike card instead of the one the person pointed at (2026-11-07 mining: 4 jobs)
-            c = self.start(r['board'], str(p.get('task', '')) + about, r.get('selected', []), {'x': frame['x'] + frame['w'] + 200 * u, 'y': frame['y'], 'unit': u},
+            limits = CANNOT_NOTE if IMPOSSIBLE.search('%s %s' % (p.get('task', ''), p.get('done_when', ''))) else ''   # six retries chased a shell nobody has (2026-11-08)
+            c = self.start(r['board'], str(p.get('task', '')) + about + limits, r.get('selected', []), {'x': frame['x'] + frame['w'] + 200 * u, 'y': frame['y'], 'unit': u},
                            member=team[str(p['teammate']).lower()], parent=r['id'], done_when=p.get('done_when'))
             r['children'].append(c['id'])
             r['round'].append(c['id'])
@@ -2360,7 +2368,7 @@ class Runner:
         repo = str(a.get('repo') or '').strip()
         team = self.root(r)['id']   # one branch per team: the checker reads what the engineer wrote, a second round carries on
         try:
-            work = code.workspace(data, repo, team)
+            work = code.workspace(data, repo, team, code.named_base(self.root(r).get('task')))   # from the branch or commit the job names, else main
             if name == 'code_files':
                 self.step(r, 'Listed the files of %s%s' % (repo, ' in ' + str(a.get('folder')) if a.get('folder') else ''))
                 return code.files(work, a.get('folder'))
@@ -2549,8 +2557,9 @@ class Runner:
             r['skills_read'], r['skills_used'] = skillfiles.pick(os.path.dirname(self.dir), r['task'])   # skills earlier teams wrote, when the job fits (2026-11-08)
             want = talk.team_design(r['task'], r.get('intent'), ((
                 '- engineer: writes real code in one of these code bases: %s. It works on its own branch, which the user reviews '
-                'before anything goes live: it can read, search, edit, check syntax and commit, but cannot run the app or '
-                'deploy. Say in "does" which code base.\n' % ', '.join(have)) if have else '') + custom_kinds_text(), notes,
+                'before anything goes live: it can read, search, edit, check syntax (code_check: parsed, not run) and commit on '
+                'branch team/<job id>, the only branch name; it has no shell, cannot run the app or its tests, cannot deploy. Say in '
+                '"does" which code base.\n' % ', '.join(have)) if have else '') + custom_kinds_text(), notes,
                 apps=integrations.can_act(r['board']))   # a post in a connected app is the app's draft call, not text on the board (2026-11-06)
         except (OSError, ValueError, KeyError):
             want = []

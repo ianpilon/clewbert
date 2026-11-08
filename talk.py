@@ -449,7 +449,8 @@ the other items in that frame and say something new, not what you already said. 
 board has, never read them all out: say how many there are and name the three or four that matter most. Screenshot and PDF items are the words read out of the picture, so they can
 have broken lines or small reading mistakes.
 Your answer is spoken aloud: plain sentences, no lists, no markdown, at most four short sentences, and say numbers the
-way they are written in the items. If the items do not answer the question, say plainly that you could not find it on
+way they are written in the items. Never say a file path, a file name with its ending or a web address aloud: name the
+card ("the working demo card") and put it in "show" so the board goes to it. If the items do not answer the question, say plainly that you could not find it on
 the board(s); never guess and never use outside knowledge.
 Answer only about what they asked for. When they name a kind of thing ("YouTube links", "the PDF"), talk about and list
 in "sources" only the items that match; never describe the other items to rule them out ("the other link is GitHub").
@@ -1065,12 +1066,17 @@ def small_talk(question, history=(), waiting=(), here='', apps=(), pending=''):
         msgs[0]['content'] += ('\n- change: you just said "%s" and are waiting for their word. Their message changes that '
                                '(another board, another space, fewer or other things, another name). Reply {"intent": "change"}.'
                                '\n- yes / no: their message agrees to it ("sure", "go on", "sounds good") or turns it down ("not now", '
-                               '"skip it"). Reply {"intent": "yes"} or {"intent": "no"}, never a chat reply.' % pending)
+                               '"skip it"). Reply {"intent": "yes"} or {"intent": "no"}, never a chat reply.'
+                               '\n- A QUESTION IS NOT A NO: "does that mean...?", "are there outstanding tasks?", "what will they do?", '
+                               '"why?" asks about what you said or about the job. Reply {"intent": "boards"}: it is answered and the offer '
+                               'stays open. Only a plain refusal is "no".' % pending)
     if history and history[-1].get('route') == 'clarify' and not pending:   # the user is answering the one question asked about their job: on to the plan
         return 'team', None
     msgs.append({'role': 'user', 'content': question + (' (An agent is waiting on the user\'s answer right now.)' if waiting else '')})
     out = chat(msgs, 150, timeout=20)
     intent, reply = out.get('intent'), ' '.join(str(out.get('reply') or '').split())
+    if intent == 'no' and pending and (question.rstrip().endswith('?') or re.match(r'^\W*(?:does|do|is|are|what|why|how|which|will|would|can|could|so)\b', question, re.I)):
+        intent = 'boards'   # a question, whatever the model made of it: "are there outstanding tasks...?" dropped a team offer (2026-11-08)
     if intent in ('change', 'yes', 'no') and pending:
         return intent, None
     if intent == 'chat' and reply:
@@ -1178,7 +1184,10 @@ def intent_of(out, asked=''):
 PART_CHECK = """You check one part of an AI team's work on the user's Clewbert board. You get the part (what the teammate
 was asked to do), its "done when" (what must be in its frame for the part to count as done) and everything the teammate
 put in its frame. Decide whether the "done when" is met by what is actually in the frame. Be strict about what it asks
-for (every item, every source it says), not about style. Words like "I could not find" do not meet it.
+for (every item, every source it says), not about style. Words like "I could not find" do not meet it. But no teammate
+can run a shell or a command, run the app or its tests, hear sound, push, deploy or name a branch (commits land on
+team/<job id>): when the "done when" asks for one of those, a frame that says so plainly and does the rest PASSES; never
+send it back for the impossible piece.
 "missing" is handed to the teammate as its whole next job, so write it as ONE small piece of work someone could do on its
 own: which item or source, from which words to which, what exactly to add. Not "the rest", not a repeat of the whole part.
 Reply with JSON only: {"pass": true or false, "missing": "<the one missing piece, as a small job; empty when it passed>",
@@ -1288,6 +1297,12 @@ members working under the Lead. Each member is one of these kinds:
   voice: strips filler and repeats, sets asides apart, adds nothing. One member, alone, when the job is to clean up,
   structure or make sense of something the person said or wrote; never a researcher, writer or checker beside it.
 %sPick only the kinds this job needs. Two members of one kind are fine when the work splits (one researcher per platform).
+WHAT NO TEAMMATE CAN DO (a done_when that needs one of these can never pass, so never write one): run a shell or any
+command, run the app or its tests, hear or speak sound, use a microphone (the demo tester is a headless browser: it
+clicks, types and reads the page), push to GitHub, deploy, or name a branch (an engineer's commits always land on the
+team's own branch, team/<job id>). A syntax check an engineer can do is code_check (Python parsed, JSON loaded; nothing
+run); anything else is said plainly in a note, not attempted.
+
 Name each by its part of the job ("LinkedIn API researcher"), not by its kind alone.
 WHAT THE TOOLS CAN CARRY (size every part by this): a member reads an item 2,000 words at a time; a note holds one
 paragraph and a text block about 6,000 characters; nobody can retype a file or a long card word for word, so never ask

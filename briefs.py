@@ -149,10 +149,8 @@ def summarize(board_name, where, notes):
     out = talk.chat([{'role': 'system', 'content': FRAME_SYSTEM + skills.text('board-brief-writer')},
                      {'role': 'user', 'content': 'Board: "%s". These notes are on %s.\n\nNOTES:\n%s' % (board_name, where, '\n\n'.join(lines))}],
                     500, timeout=300, background=True)
-    if '_text' in out:
-        raise RuntimeError('the frame reply was not readable')
-    source = ' '.join(notes)
-    return ' '.join(x for x in _sentences(clean_notes(out.get('notes') or '')) if not talk.unsupported_numbers(x, [source], ''))
+    source = ' '.join(notes)   # prose instead of JSON is read as the notes, like read_part does (576 tracebacks a day for it, 2026-11-08)
+    return ' '.join(x for x in _sentences(clean_notes(out.get('notes') or out.get('_text', ''))) if not talk.unsupported_numbers(x, [source], ''))
 
 
 def _batches(nodes, size):
