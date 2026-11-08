@@ -897,15 +897,23 @@
   .agv-tabs{display:flex;gap:4px;margin:14px 0 4px;border-bottom:1px solid var(--border)}
   .agv-tabs button{border:none;background:none;padding:9px 12px;font:inherit;font-size:14px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer}
   .agv-tabs button.on{color:var(--ink);border-bottom-color:var(--primary)}
-  .agv-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;margin-bottom:6px}
-  .agv-card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-top:5px solid var(--c);border-radius:var(--radius);
-    padding:12px 14px;color:inherit;text-decoration:none;box-shadow:var(--shadow);min-height:150px}
-  .agv-card:hover{border-color:var(--border-strong);border-top-color:var(--c)}
-  .agv-card .top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-  .agv-card .top .agbot{width:24px;height:24px;flex:0 0 auto}
-  .agv-card .top b{font-size:15px;font-weight:700;line-height:1.25}
-  .agv-card .w{font-size:13px;line-height:1.45;color:var(--ink);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-  .agv-card .f{margin-top:auto;padding-top:10px;font-size:12px;color:var(--muted)}
+  .agv-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin-bottom:8px}
+  /* an agent's card: a profile card. Its robot on a disc of its colour, name and status beside it, what it does below;
+     a soft lift, a hairline edge, no colour stripe (the stripe-and-border card looked dated; redrawn 2026-11-08) */
+  .agv-card{position:relative;display:flex;flex-direction:column;gap:12px;background:var(--card);border:1px solid var(--hair);border-radius:20px;padding:18px;color:inherit;text-decoration:none;
+    box-shadow:0 1px 2px rgba(0,0,0,.04),0 12px 32px -18px rgba(16,20,28,.28);transition:transform .15s,box-shadow .15s,border-color .15s}
+  .agv-card:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(0,0,0,.05),0 22px 44px -20px rgba(16,20,28,.38);border-color:color-mix(in srgb,var(--c) 35%,var(--hair))}
+  .agv-card .hd{display:flex;align-items:center;gap:14px}
+  .agv-card .av{flex:0 0 auto;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 16%,var(--card));box-shadow:0 0 0 4px color-mix(in srgb,var(--c) 7%,transparent)}
+  .agv-card .av .agbot{width:30px;height:30px}
+  .agv-card .nm{min-width:0;flex:1}
+  .agv-card .row{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px}
+  .agv-card .nm b{font-size:17px;font-weight:650;line-height:1.2;letter-spacing:-.01em;color:var(--ink)}
+  .agv-card .sub{display:block;margin-top:3px;font-size:12.5px;line-height:1.35;color:var(--muted)}
+  .agv-card .w{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-size:13.5px;line-height:1.5;color:var(--ink);opacity:.86}
+  :root[data-theme="dark"] .agv-card{box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 14px 34px -20px rgba(0,0,0,.9);border-color:rgba(255,255,255,.06)}
+  :root[data-theme="dark"] .agv-card:hover{box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 22px 44px -20px rgba(0,0,0,1)}
+  :root[data-theme="dark"] .agv-card .av{background:color-mix(in srgb,var(--c) 22%,var(--card))}
   .agv-prof .hd{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--border);border-top:6px solid var(--c);border-radius:var(--radius);padding:16px;margin:16px 0 10px}
   .agv-prof .hd .agbot{width:52px;height:52px;flex:0 0 auto}
   .agv-prof .hd h2{margin:0;font-size:20px}.agv-prof .hd p{margin:4px 0 0;color:var(--muted);font-size:13.5px;line-height:1.45}
@@ -968,7 +976,7 @@
   .agv-how .up button{border:none;border-radius:8px;background:var(--primary);color:var(--on-primary);font-weight:600;font-size:13px;padding:9px 12px;cursor:pointer}
   .agv-skill{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid var(--hair);font-size:13.5px}
   .agv-skill:first-of-type{border-top:none}.agv-skill span{color:var(--muted);text-align:right}
-  .agv-card .badge{margin-left:auto;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber);white-space:nowrap}
+  .agv-card .badge{font-size:10.5px;font-weight:700;letter-spacing:.02em;padding:3px 9px;border-radius:999px;background:var(--c);color:#fff;white-space:nowrap;box-shadow:0 4px 10px -4px color-mix(in srgb,var(--c) 60%,transparent)}   /* the one accent on the card: its own colour */
   .agv-res{display:inline-block;padding:1px 8px;border-radius:999px;font-weight:600;font-size:11.5px;background:var(--hover);color:var(--muted)}
   .agv-res.ok{background:var(--green-bg);color:var(--green)}.agv-res.no{background:var(--amber-bg);color:var(--amber)}
   .agv-body h5{font-size:12px;font-weight:600;color:var(--muted);margin:12px 2px 6px}
@@ -4804,8 +4812,8 @@ function agvPaint(force){
 function agvLibrary(){   // every agent in the app, from the server's own settings (api/library); one line each, a click opens it
   const L=AGV.lib;if(!L)return '';
   const one=a=>{const foot=a.stat||a.status||(a.last?'Last looked '+vcAgo(a.last):'');   // a card like a teammate's on the board; a click opens its profile
-    return `<a class="agv-card" style="--c:${escapeAttr(a.color)}" href="#agents/agent/${escapeAttr(a.key)}"><div class="top">${agvBot(a.color)}<b>${escapeHtml(a.name)}</b>${a.badge?`<span class="badge">${escapeHtml(a.badge)}</span>`:''}</div>
-      <div class="w">${escapeHtml(a.what)}</div><div class="f">${escapeHtml(foot)}</div></a>`;};
+    return `<a class="agv-card" style="--c:${escapeAttr(a.color)}" href="#agents/agent/${escapeAttr(a.key)}"><div class="hd"><span class="av">${agvBot(a.color)}</span><div class="nm"><div class="row"><b>${escapeHtml(a.name)}</b>${a.badge?`<span class="badge">${escapeHtml(a.badge)}</span>`:''}</div>${foot?`<span class="sub">${escapeHtml(foot)}</span>`:''}</div></div>
+      <div class="w">${escapeHtml(a.what)}</div></a>`;};
   return `<h5>Run on their own</h5><div class="agv-cards">${L.always.map(one).join('')}</div>`
     +`<h5>Teammates for agent teams</h5><div class="agv-cards">${L.team.map(one).join('')}</div>`;
 }
