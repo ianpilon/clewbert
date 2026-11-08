@@ -4735,26 +4735,26 @@ const agvWaitingRuns=r=>[r,...agvKids(r.id).flatMap(agvWaitingRuns)].filter(x=>x
 const agvState=r=>agvWaitingRuns(r).length?'waiting':agvActive(r)?'working':r.status;
 const agvLabel=r=>agvState(r)==='waiting'?'Waiting on you':AG_LABEL[r.status]||r.status;
 function agvShow(rid){
-  AGV.page=null;$('#home').hidden=true;$('#agv').hidden=false;
+  $('#home').hidden=true;$('#agv').hidden=false;
   const prof=rid&&rid.startsWith('agent/')?rid.slice(6):null;if(prof)rid='';   // #agents/agent/<key>: one agent's profile page
   if(AGV.profile!==prof){AGV.profile=prof;AGV.prof=null;AGV.profAt=0;$('#agvBody').scrollTop=0;if(prof)AGV.tab='library';}
   if(AGV.open!==(rid||null)){AGV.open=rid||null;AGV.form=null;AGV.all=false;$('#agvBody').scrollTop=0;}
   $('#agvBack').textContent=rid||prof?'‹ Agents':'‹ Boards';$('#agvBack').href=rid||prof?'#agents':'#';
   agvPaint(true);agvPoll();
 }
-function agvHide(){$('#agv').hidden=true;AGV.page=null;clearTimeout(AGV.timer);}
+function agvHide(){$('#agv').hidden=true;clearTimeout(AGV.timer);}
 /* The Skills and Tools pages share the Agents screen's shell. Skills: what each agent carries beyond its charter (added
    by you, from a rule being tried, or from a team note that proved itself) and the rules the failure miner is trying.
    Tools: every tool an agent can call, who has it, whether it writes, and the connected apps with what needs your yes. */
-async function pgShow(id){
-  AGV.page=id;clearTimeout(AGV.timer);$('#home').hidden=true;$('#agv').hidden=false;$('#agvBack').textContent='‹ Boards';$('#agvBack').href='#';
-  $('#agvTitle').textContent=id==='skills'?'Skills':'Tools';const box=$('#agvBody');box.innerHTML='<p class="agv-msg">Loading…</p>';box.scrollTop=0;
-  let d=null;try{d=await api(id);}catch(e){}
-  if(AGV.page!==id)return;
-  box.innerHTML=d?(id==='skills'?pgSkills(d):pgTools(d)):'<p class="agv-msg">Could not load this page. Try again in a moment.</p>';
+function pgShow(id){AGV.tab=id;AGV.pgd=AGV.pgd||{};AGV.pgd[id]=null;agvShow('');}   // #skills / #tools: the Agents screen on that tab
+async function pgLoad(id){   // the tab's data, once per opening; the next paint shows it
+  AGV.pgd=AGV.pgd||{};if(AGV.pgd[id+':loading'])return;AGV.pgd[id+':loading']=true;
+  try{AGV.pgd[id]=await api(id);}catch(e){AGV.pgd[id]={error:true};}
+  AGV.pgd[id+':loading']=false;if(AGV.tab===id&&!$('#agv').hidden)agvPaint(true);
 }
 const pgDate=t=>t?new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'';
 function pgSkills(d){
+  if(d.error)return '<p class="agv-msg">Could not load the skills. Try the tab again in a moment.</p>';
   const src={you:'You added it',proposal:'From a rule being tried',note:'From a team note that proved itself'};
   const agents=d.agents.map(a=>`<div class="sec" style="--c:${escapeAttr(a.color)}"><h3>${escapeHtml(a.name)}${a.skills.length?` · ${a.skills.length}`:''}</h3>${a.what?`<p class="pg-what">${escapeHtml(a.what)}</p>`:''}
     ${a.skills.length?a.skills.map(x=>`<div class="pg-row"><div class="l">${escapeHtml(x.text)}</div><div class="m">${escapeHtml(src[x.source]||'')}${x.added?' · '+pgDate(x.added):''}</div></div>`).join(''):'<p class="pg-none">No skills beyond its charter yet.</p>'}
@@ -4765,6 +4765,7 @@ function pgSkills(d){
     <div class="sec"><h3>Rules being tried · ${d.proposals.filter(x=>x.status==='proposed').length}</h3>${props}</div>${agents}</div>`;
 }
 function pgTools(d){
+  if(d.error)return '<p class="agv-msg">Could not load the tools. Try the tab again in a moment.</p>';
   const tool=t=>`<div class="pg-row"><div class="l"><code>${escapeHtml(t.name)}</code>${t.writes?'<span class="pg-tag">writes</span>':''}${t.yes?'<span class="pg-tag yes">needs your yes</span>':''}</div><div class="m">${escapeHtml(t.what||'')}</div></div>`;
   const group=g=>`<div class="sec${g.on?'':' off'}"><h3>${escapeHtml(g.name)}${g.tools.length?` · ${g.tools.length}`:''}${g.on?'':' · off'}</h3>${g.note?`<p class="pg-what">${escapeHtml(g.note)}</p>`:''}${g.tools.map(tool).join('')}</div>`;
   const apps=d.apps.length?d.apps.map(group).join(''):'<div class="sec"><h3>Connected apps</h3><p class="pg-none">None connected. Settings on the home page connects Google, Substack or one of your own tool servers.</p></div>';
@@ -4783,7 +4784,6 @@ async function agvPoll(){
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('#agv').hidden)agvPoll();});   // back in the app: fresh at once
 function agvPaint(force){
-  if(AGV.page)return;   // the Skills or Tools page is showing in this shell
   const box=$('#agvBody');
   if($('#agv').hidden||!force&&[...box.querySelectorAll('textarea')].some(t=>t===document.activeElement||t.value.trim()))return;   // never redraw under your typing
   if(!AGV.runs){box.innerHTML='<p class="agv-msg">Loading…</p>';return;}
@@ -4794,8 +4794,11 @@ function agvPaint(force){
   const groups=[['Waiting on you',tops.filter(r=>agvState(r)==='waiting')],['Working',tops.filter(r=>agvState(r)==='working')],
     ['Ended this week',tops.filter(r=>!agvActive(r)&&(r.ended||r.created)>week)]];
   const n=AGV.lib?AGV.lib.always.length+AGV.lib.team.length:0,tabs=`<div class="agv-tabs"><button data-tab="tasks"${AGV.tab==='tasks'?' class="on"':''}>Tasks</button>`
-    +`<button data-tab="library"${AGV.tab==='library'?' class="on"':''}>Agent library${n?' · '+n:''}</button></div>`;   // tasks and the library are separate tabs
-  box.innerHTML=tabs+(AGV.tab==='library'?agvLibrary()||'<p class="agv-msg">Loading…</p>':(groups.filter(g=>g[1].length).map(([h,rs])=>`<h4>${h} · ${rs.length}</h4>`+rs.map(agvRow).join('')).join('')
+    +`<button data-tab="library"${AGV.tab==='library'?' class="on"':''}>Agent library${n?' · '+n:''}</button>`
+    +`<button data-tab="skills"${AGV.tab==='skills'?' class="on"':''}>Skills</button><button data-tab="tools"${AGV.tab==='tools'?' class="on"':''}>Tools</button></div>`;   // four tabs: tasks, the library, skills, tools (2026-11-08)
+  AGV.pgd=AGV.pgd||{};
+  const page=id=>AGV.pgd[id]?(id==='skills'?pgSkills(AGV.pgd[id]):pgTools(AGV.pgd[id])):(pgLoad(id),'<p class="agv-msg">Loading…</p>');
+  box.innerHTML=tabs+(AGV.tab==='library'?agvLibrary()||'<p class="agv-msg">Loading…</p>':AGV.tab==='skills'||AGV.tab==='tools'?page(AGV.tab):(groups.filter(g=>g[1].length).map(([h,rs])=>`<h4>${h} · ${rs.length}</h4>`+rs.map(agvRow).join('')).join('')
     ||'<p class="agv-msg">No agent tasks this week. Open a board and give the team a job, or ask the voice.</p>'))+pushFoot();
 }
 function agvLibrary(){   // every agent in the app, from the server's own settings (api/library); one line each, a click opens it
@@ -4806,7 +4809,7 @@ function agvLibrary(){   // every agent in the app, from the server's own settin
   return `<h5>Run on their own</h5><div class="agv-cards">${L.always.map(one).join('')}</div>`
     +`<h5>Teammates for agent teams</h5><div class="agv-cards">${L.team.map(one).join('')}</div>`;
 }
-$('#agvBody').addEventListener('click',e=>{const b=e.target.closest('.agv-tabs button');if(!b)return;AGV.tab=b.dataset.tab;agvPaint(true);});
+$('#agvBody').addEventListener('click',e=>{const b=e.target.closest('.agv-tabs button');if(!b)return;AGV.tab=b.dataset.tab;if(AGV.pgd)AGV.pgd[AGV.tab]=null;agvPaint(true);});   // a tab opened again is fetched again
 const agvBot=c=>AG_BOT.replace('<svg','<svg style="color:'+escapeAttr(c)+'"');
 function agvProfile(a){   // an agent's page, like a profile: who it is, why it exists, what it can do, and the work it has done
   if(!a)return '<p class="agv-msg">Loading…</p>';
