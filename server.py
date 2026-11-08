@@ -2016,7 +2016,7 @@ def local_models(picked=True):
     """Each job's model on your own machines: [(model, address)] in the order tried; the one picked in Settings first,
     else as the app was started with (builders keep their startup models as fallbacks)."""
     start = {'voice': [(talk.MODEL, talk.MODEL_URL)] if talk.MODEL_URL else [],   # none until set up
-             'agents': [(agents.MODEL, agents.MODEL_URL)] if agents.MODEL_URL else [],
+             'agents': [(agents.MODEL, agents.MODEL_URL)] if agents.MODEL_URL else [], 'advisor': [],   # advisor: none until picked
              'builders': [(m, u) for u, m in agents.CODE_MODELS],
              'vision': [(agents.VISION_MODEL, agents.VISION_MODEL_URL)] if agents.VISION_MODEL_URL else []}
     if not picked:
@@ -2656,6 +2656,8 @@ def builtins_frame():
             'Judged after 6 more jobs: recurring at half its old rate or less = kept as a rule note; otherwise dropped. At most 2 new a night',
             'Listed in the Proposed rules card next to this frame; delete a line in proposals.json or the note to stop one']),
         ('Cost in view', 'Nov 7', ['Every read an agent makes comes back with "Step N of M", so it can wrap up before the cap does']),
+        ('Advice when stuck', 'Nov 7', ['When a part fails its check and goes back for the missing piece, or the Lead fails the final check, a stronger model (the Advisor in Settings) is asked once what to do differently; its advice rides along with the retry',
+            'Off until an Advisor is picked in Settings; the step "Asked the advisor" shows where it came in']),
         ('Notes that proved themselves', 'Nov 7', ['A team note counted for 3 times with at most a third as many misses becomes a Lead skill on every board',
             'The note stays; the skill no longer needs to fit the task by words']),
         ('Router', 'Nov 3', ['Reads: new inbox email and calendar changes in the next 3 days, every 3 minutes',

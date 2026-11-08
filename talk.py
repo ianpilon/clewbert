@@ -556,13 +556,13 @@ def interrupt_background():
             pass
 
 
-def chat(msgs, max_tokens, timeout=90, background=False):
-    """One model call that should come back as JSON; {'_text': ...} when it does not."""
-    if not models.choice('voice') and not models.local('voice') and not MODEL_URL:
-        raise models.NoModel('voice')
-    if models.choice('voice'):   # an outside provider picked in Settings
-        return parse_json(models.complete('voice', {'messages': msgs, 'max_tokens': max_tokens}, timeout)['choices'][0]['message']['content'] or '')
-    url, model = models.local('voice') or (MODEL_URL, MODEL)   # picked in Settings, else as set at startup
+def chat(msgs, max_tokens, timeout=90, background=False, job='voice'):
+    """One model call that should come back as JSON; {'_text': ...} when it does not. job: whose model in Settings answers."""
+    if not models.choice(job) and not models.local(job) and not MODEL_URL:
+        raise models.NoModel(job)
+    if models.choice(job):   # an outside provider picked in Settings
+        return parse_json(models.complete(job, {'messages': msgs, 'max_tokens': max_tokens}, timeout)['choices'][0]['message']['content'] or '')
+    url, model = models.local(job) or (MODEL_URL, MODEL)   # picked in Settings, else as set at startup
     body = json.dumps({'model': model, 'messages': msgs, 'temperature': .2, 'max_tokens': max_tokens,
                        'chat_template_kwargs': {'enable_thinking': False}}).encode()
     u = urllib.parse.urlsplit(url)
@@ -1188,6 +1188,32 @@ def check_part(task, done_when, frame_text):
     out = out if isinstance(out, dict) else {}
     return {'pass': out.get('pass') is True, 'missing': ' '.join(str(out.get('missing') or '').split())[:300],
             'why': ' '.join(str(out.get('why') or '').split())[:300]}
+
+
+ADVISE = """You are the advisor: a stronger model asked once, briefly, when an AI agent working on the user's Clewbert board has
+fallen short of its task and is about to try again. You see the task, what done looks like, what the checker said is
+missing, what the agent put on the board, and its recent steps. Say what to do differently THIS time, concretely: which
+of its tools to use and on what (read_item on the selected item, search_board, open_page on a named address, transcribe,
+assign a teammate), what to stop doing, and what to write if the thing truly cannot be had. Do not repeat the task back.
+Under 700 characters, plain words, addressed to the agent. Reply with JSON only: {"advice": "<the advice>"}"""
+
+
+def advise(task, done_when, missing, frame_text, steps):
+    """What a stronger model would do differently; '' when none is picked or it does not answer."""
+    if not models.advisor():
+        return ''
+    try:
+        out = chat([{'role': 'system', 'content': ADVISE}, {'role': 'user', 'content':
+                    'THE TASK: %s\n\nDONE WHEN: %s\n\nTHE CHECKER SAID IS MISSING: %s\n\nWHAT THE AGENT PUT ON THE BOARD:\n%s\n\nITS RECENT STEPS:\n%s'
+                    % (task, done_when or '(not stated)', missing, (frame_text or '(nothing)')[:6000], '\n'.join('- ' + x for x in steps[-14:]))}],
+                   700, timeout=180, job='advisor')
+    except (OSError, ValueError, KeyError):
+        return ''
+    text = ' '.join(str((out if isinstance(out, dict) else {}).get('advice') or '').split())
+    if len(text) > 700:   # whole sentences only
+        cut = text[:700].rfind('. ')
+        text = text[:cut + 1] if cut > 300 else text[:700]
+    return text
 
 
 TEAM_CONFLICTS = """An AI agent team just finished a job on the user's Clewbert board. You get every teammate's frame. Find the

@@ -3331,7 +3331,8 @@ async function cvNoteToDoc(it,kind){
 /* ---------------- Settings: which model does each job, and outside keys ----------------
    The server keeps the keys (settings.json, owner-only) and only ever sends back their last 4 characters. */
 const STG_JOBS=[['voice','Voice','answers you and writes board briefs'],['agents','Agents','the usual teammates'],
-  ['builders','Builders','the Developer and the designers'],['vision','Vision','looks at screenshots of demos']];
+  ['builders','Builders','the Developer and the designers'],['vision','Vision','looks at screenshots of demos'],
+  ['advisor','Advisor','a stronger model, asked once when a part falls short; none picked = nobody is asked']];
 const STG={data:null,lists:{},drop:new Set()};
 const stgAn=n=>(/^[AEIOUx]/.test(n)?'an ':'a ')+n;   // an OpenAI, an Anthropic, an xAI ("ex-A-I") key
 

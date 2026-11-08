@@ -20,16 +20,16 @@ class NoModel(OSError):
     """No model is set up for this job yet: neither an address at startup nor a provider in Settings."""
     def __init__(self, job):
         super().__init__('No model is set up for %s yet. Open Settings (the gear on the home page) and pick one.' % job)
-JOBS = ('voice', 'agents', 'builders', 'vision')
+JOBS = ('voice', 'agents', 'builders', 'vision', 'advisor')   # advisor: a stronger model asked once when a part falls short (2026-11-07); off until picked
 PROVIDERS = {
     'openai': {'name': 'OpenAI', 'url': 'https://api.openai.com/v1/chat/completions', 'models': 'https://api.openai.com/v1/models'},
     'xai': {'name': 'xAI (Grok)', 'url': 'https://api.x.ai/v1/chat/completions', 'models': 'https://api.x.ai/v1/models'},
     'anthropic': {'name': 'Anthropic', 'url': 'https://api.anthropic.com/v1/messages', 'models': 'https://api.anthropic.com/v1/models'},
 }
 # how hard Claude thinks per job: voice and vision answer fast, builders take their time
-EFFORT = {'voice': 'low', 'vision': 'low', 'agents': 'medium', 'builders': 'high'}
+EFFORT = {'voice': 'low', 'vision': 'low', 'agents': 'medium', 'builders': 'high', 'advisor': 'high'}
 # room for thinking plus the answer: a reasoning model spends part of max_tokens before it writes anything
-FLOOR = {'voice': 4000, 'vision': 2000, 'agents': 8000, 'builders': 16000}
+FLOOR = {'voice': 4000, 'vision': 2000, 'agents': 8000, 'builders': 16000, 'advisor': 8000}
 _lock = threading.Lock()
 _cache = {'mtime': None, 'data': None}
 
@@ -96,6 +96,11 @@ def local(job):
     if j.get('provider') == 'local' and j.get('model') and j.get('url'):
         return j['url'], j['model']
     return None
+
+
+def advisor():
+    """Is an advisor picked in Settings? Without one, nobody is asked and the agents carry on as before."""
+    return bool(choice('advisor') or local('advisor'))
 
 
 def choice(job):

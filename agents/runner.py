@@ -1040,12 +1040,27 @@ class Runner:
         piece = c['check']['missing'] or c['check']['why']
         task = ('SECOND TRY, ONE PIECE ONLY. Your first try fell short; everything it put in its frame still counts. Do ONLY this '
                 'missing piece now, nothing else, in this frame: %s\n\n(The whole part, for context, was: %s)' % (piece, c['task']))
+        advice = self.advice(c, piece)   # effort scaling: the same approach failed once, so a stronger model says what to change (2026-11-07)
+        if advice:
+            task += '\n\nADVICE FROM THE ADVISOR (a stronger model, asked once because the first try fell short; follow it): ' + advice
         x = self.start(p['board'], task, p.get('selected', []), {'x': frame['x'] + frame['w'] + 200 * u, 'y': frame['y'], 'unit': u},
                        member=c.get('member'), parent=p['id'], done_when='this piece is in the frame, complete: %s' % piece)   # a small piece with its own small check (2026-11-05)
         x['retry_of'] = c['id']
         p['children'].append(x['id'])
         self.save(x)
         return x
+
+    def advice(self, c, missing):
+        """Ask the advisor (a stronger model picked in Settings) once per run what to do differently, when a part or the
+        Lead has fallen short of its check. '' when no advisor is picked. The step says it was asked, so the record shows
+        where the stronger model came in (OpenAI's effort scaling rung, 2026-11-07)."""
+        if c.get('advised') or not models.advisor():
+            return ''
+        c['advised'] = True
+        text = talk.advise(c['task'], c.get('done_when') or (c.get('intent') or {}).get('deliver'), missing, self.frame_words(c),
+                           [x['text'] for x in c['steps']])
+        self.step(c, ('Asked the advisor what to change: ' + text[:160]) if text else 'Asked the advisor; it had nothing to add')
+        return text
 
     def frame_words(self, c):
         """Everything a part put in its frame, as text (its notes, texts, links, code-change cards)."""
@@ -1596,9 +1611,11 @@ class Runner:
                 v = self.final_check(r, str(a.get('summary') or ''))
                 if not v['pass'] and not r.get('final_retry'):
                     r['final_retry'] = True
+                    advice = self.advice(r, v['missing'] or v['why'])
                     return ('Not finished: the final check read the work against what the user was promised (%s) and found this '
                             'missing: %s. Hand out one more round for it if it can be had, or say plainly in your frame that '
-                            'it is missing and why; then finish again.' % (it['deliver'], v['missing'] or v['why']))
+                            'it is missing and why; then finish again.' % (it['deliver'], v['missing'] or v['why'])
+                            + ('\n\nADVICE FROM THE ADVISOR (a stronger model, asked once; follow it): ' + advice if advice else ''))
                 r['final_done'] = True
                 r['gaps'] = None if v['pass'] else (v['missing'] or v['why'])
             r['summary'] = str(a.get('summary') or '')[:2000]
