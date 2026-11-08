@@ -1105,7 +1105,11 @@ class Handler(BaseHTTPRequestHandler):
             part = os.path.join(UPLOADS, parts[2])
             if not os.path.exists(part):
                 return self.reply(404, {'error': 'no such upload'})
-            name = str(json.loads(self.read_body() or b'{}').get('name') or '')
+            req = json.loads(self.read_body() or b'{}')
+            name = str(req.get('name') or '')
+            if req.get('size') is not None and int(req['size']) != os.path.getsize(part):   # the page says how big the file is
+                os.remove(part)
+                return self.reply(409, {'error': 'the file did not arrive whole; drop it again'})
             return self.reply(201, finish_upload(part, name))
         if parts == ['api', 'boards']:
             req = json.loads(self.read_body() or b'{}')
@@ -1620,7 +1624,16 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.exists(part):
                 return self.reply(404, {'error': 'no such upload'})
             data = self.read_body()
-            if os.path.getsize(part) + len(data) > MAX_FILE:
+            have = os.path.getsize(part)
+            at = (urllib.parse.parse_qs(self.path.partition('?')[2]).get('at') or [None])[0]   # where this piece belongs: a piece
+            if at is not None:   # sent twice (the browser retries a PUT whose reply was lost) was appended twice and shifted the rest of a video, 2026-11-07
+                at = int(at)
+                if at < have:   # already here
+                    return self.reply(200, {'size': have})
+                if at > have:   # a piece is missing before this one: the upload cannot be right
+                    os.remove(part)
+                    return self.reply(409, {'error': 'a piece of the file went missing; drop it again'})
+            if have + len(data) > MAX_FILE:
                 os.remove(part)
                 raise OverflowError
             with open(part, 'ab') as f:
