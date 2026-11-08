@@ -914,13 +914,17 @@
   :root[data-theme="dark"] .agv-card{box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 14px 34px -20px rgba(0,0,0,.9);border-color:rgba(255,255,255,.06)}
   :root[data-theme="dark"] .agv-card:hover{box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 22px 44px -20px rgba(0,0,0,1)}
   :root[data-theme="dark"] .agv-card .av{background:color-mix(in srgb,var(--c) 22%,var(--card))}
-  .agv-prof .hd{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--border);border-top:6px solid var(--c);border-radius:var(--radius);padding:16px;margin:16px 0 10px}
-  .agv-prof .hd .agbot{width:52px;height:52px;flex:0 0 auto}
-  .agv-prof .hd h2{margin:0;font-size:20px}.agv-prof .hd p{margin:4px 0 0;color:var(--muted);font-size:13.5px;line-height:1.45}
-  .agv-prof .facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:10px}
-  .agv-prof .facts div{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px}
-  .agv-prof .facts b{display:block;font-size:20px;font-weight:700}.agv-prof .facts span{font-size:12px;color:var(--muted)}
-  .agv-prof .sec{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px;font-size:13.5px;line-height:1.5}
+  /* the profile page follows the cards: the robot on its colour disc, soft lifted surfaces, no colour stripe (2026-11-08) */
+  .agv-prof .hd{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--hair);border-radius:20px;padding:20px;margin:16px 0 12px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 12px 32px -18px rgba(16,20,28,.28)}
+  .agv-prof .hd .av{flex:0 0 auto;width:68px;height:68px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--c) 16%,var(--card));box-shadow:0 0 0 5px color-mix(in srgb,var(--c) 7%,transparent)}
+  .agv-prof .hd .agbot{width:40px;height:40px}
+  .agv-prof .hd h2{margin:0;font-size:22px;font-weight:650;letter-spacing:-.01em}.agv-prof .hd p{margin:5px 0 0;color:var(--muted);font-size:14px;line-height:1.5}
+  .agv-prof .facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:12px}
+  .agv-prof .facts div{background:var(--card);border:1px solid var(--hair);border-radius:16px;padding:12px 14px;box-shadow:0 1px 2px rgba(0,0,0,.03),0 8px 24px -18px rgba(16,20,28,.22)}
+  .agv-prof .facts b{display:block;font-size:22px;font-weight:500;letter-spacing:-.01em}.agv-prof .facts span{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .agv-prof .sec{background:var(--card);border:1px solid var(--hair);border-radius:16px;padding:14px 16px;margin-bottom:12px;font-size:13.5px;line-height:1.5;box-shadow:0 1px 2px rgba(0,0,0,.03),0 8px 24px -18px rgba(16,20,28,.22)}
+  :root[data-theme="dark"] .agv-prof .hd,:root[data-theme="dark"] .agv-prof .facts div,:root[data-theme="dark"] .agv-prof .sec{border-color:rgba(255,255,255,.06);box-shadow:0 1px 0 rgba(255,255,255,.04) inset,0 14px 34px -20px rgba(0,0,0,.9)}
+  :root[data-theme="dark"] .agv-prof .hd .av{background:color-mix(in srgb,var(--c) 22%,var(--card))}
   .agv-prof .sec h3{margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
   .agv-prof .sec p{margin:0 0 6px}.agv-prof .sec ul{margin:2px 0 6px;padding-left:18px}
   .agv-prof .job{display:block;padding:9px 0;border-top:1px solid var(--hair);color:inherit;text-decoration:none}
@@ -4833,7 +4837,7 @@ function agvProfile(a){   // an agent's page, like a profile: who it is, why it 
     return `<${href?'a href="'+escapeAttr(href)+'"':'div'} class="job"><div class="l">${escapeHtml(x.task)}</div>
       ${x.madeFor?`<div class="mf">Made for this job as <b>${escapeHtml(x.madeFor)}</b>${x.why?': '+escapeHtml(x.why):''}</div>`:''}${x.line?`<div class="mf">${escapeHtml(x.line)}</div>`:''}
       <div class="m">${pill(x)}${escapeHtml([x.boardName,x.when?vcAgo(x.when):''].filter(Boolean).join(' · '))}</div></${href?'a':'div'}>`;};
-  return `<div class="agv-prof"><div class="hd" style="--c:${escapeAttr(a.color)}">${agvBot(a.color)}<div><h2>${escapeHtml(a.name)}</h2><p>${escapeHtml(a.what)}</p></div></div>
+  return `<div class="agv-prof"><div class="hd" style="--c:${escapeAttr(a.color)}"><span class="av">${agvBot(a.color)}</span><div><h2>${escapeHtml(a.name)}</h2><p>${escapeHtml(a.what)}</p></div></div>
     ${a.facts.length?`<div class="facts">${a.facts.map(([k,v])=>`<div><b>${escapeHtml(v)}</b><span>${escapeHtml(k)}</span></div>`).join('')}</div>`:''}
     ${a.value?`<div class="val"><div><b>${agvDur(a.value.human)}</b><span>of a person's work</span></div>${a.value.ran==null?'':`<div><b>${agvDur(a.value.ran)}</b><span>its own working time</span></div>
       <div class="save"><b>~${agvDur(Math.max(0,a.value.human-a.value.ran))}</b><span>saved</span></div>`}</div>
