@@ -853,6 +853,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, RUNNER.steps(parts[2]) or {'error': 'no such task'})
         if parts == ['api', 'library']:   # the Agents screen's library: every agent and what it can do
             return self.reply(200, agent_library())
+        if parts == ['api', 'skills']:   # the Skills page: what each agent has learned, and the rules being tried
+            return self.reply(200, skills_page())
+        if parts == ['api', 'tools']:   # the Tools page: every tool an agent can call, and the connected apps
+            return self.reply(200, tools_page())
         if len(parts) == 3 and parts[:2] == ['api', 'library'] and re.match(r'^[a-z][a-z0-9-]{0,40}$', parts[2]):   # one agent's profile page
             p = agent_profile(parts[2])
             return self.reply(200, p) if p else self.reply(404, {'error': 'no such agent'})
@@ -3065,6 +3069,67 @@ def put_away_agent_boards():
 
 ROUTER = router.Router(DATA, incoming_board(), read_board, edit_board, RUNNER, PUSH or _NoPush())
 threading.Thread(target=put_away_agent_boards, daemon=True).start()
+
+
+def skills_page():
+    """The Skills page (beside Agents): every skill an agent carries beyond its charter, where it came from, and the rules
+    the failure miner is trying (2026-11-08)."""
+    from agents import propose
+    got = skillbook.load()
+    kinds = [('assistant', 'Assistant', '#2563eb', 'answers you and plans the teams')] + [
+        (k, v['name'], v.get('color') or '#475569', ' '.join(str(v.get('role') or '').split())[:140]) for k, v in agents.STARTERS.items()]
+    seen = {k for k, _, _, _ in kinds}
+    kinds += [(k, k.replace('-', ' ').title(), '#475569', '') for k in got if k not in seen]
+    out = []
+    for key, name, color, what in kinds:
+        sk = []
+        for x in got.get(key) or []:
+            src = 'proposal' if x.get('proposal') else 'note' if x.get('note') else 'you'
+            sk.append({'id': x.get('id'), 'text': x.get('text'), 'added': x.get('added'), 'source': src})
+        out.append({'key': key, 'name': name, 'color': color, 'what': what, 'skills': sk})
+    props = [{k: x.get(k) for k in ('id', 'rule', 'applies', 'status', 'pattern', 'count', 'jobs', 'jobs_since', 'rate', 't', 'judged')} for x in propose.load(DATA)]
+    try:
+        rules = len(rule_notes(read_board(rules_board()).get('items') or []))
+    except (OSError, ValueError, KeyError):
+        rules = 0
+    return {'agents': out, 'proposals': props, 'rules': {'board': rules_board(), 'count': rules, 'min_jobs': propose.MIN_JOBS}}
+
+
+def tools_page():
+    """The Tools page (beside Agents): every tool an agent can call, who has it, whether it writes, and the connected apps
+    with their tools and whether each needs your yes (2026-11-08)."""
+    def row(t, who):
+        f = t['function']
+        d = ' '.join(str(f.get('description') or '').split())
+        cut = d.find('. ')
+        return {'name': f['name'], 'what': (d[:cut + 1] if 0 < cut < 200 else d[:200]), 'who': who,
+                'writes': f['name'] in agents.WRITES or f['name'].startswith(('code_edit', 'code_write', 'code_commit', 'browser_click', 'browser_type', 'browser_select'))}
+    groups = [
+        {'name': 'The Lead', 'on': True, 'note': 'What a Lead can do itself: read the board, hand out parts, write the answer. It does not search the web; teammates do.',
+         'tools': [row(t, 'Lead') for t in agents.LEAD_TOOLS]},
+        {'name': 'Teammates', 'on': True, 'note': 'Every teammate: the board, the web, and writing into its own frame.',
+         'tools': [row(t, 'Teammates') for t in agents.TOOLS]},
+        {'name': 'Browser', 'on': bool(agents.BROWSER_URL), 'note': 'A real browser on the browser machine, for pages that need clicking; a click or typed text that acts waits for your yes.' if agents.BROWSER_URL else 'No browser machine is set, so these are off.',
+         'tools': [row(t, 'Teammates') for t in agents.BROWSER_TOOLS]},
+        {'name': 'Code', 'on': True, 'note': 'The Engineer, on the team\'s own branch of a code base: read, change, check, commit. Nothing runs, nothing goes live. Other teammates may read the code.',
+         'tools': [row(t, 'Engineer') for t in agents.CODE_TOOLS]},
+    ]
+    s = integrations.load()
+    apps = []
+    if (s.get('google') or {}).get('refresh_token'):
+        apps.append({'name': 'Google', 'on': True, 'note': 'Gmail, Drive and Calendar, signed in.', 'tools': [
+            {'name': n, 'what': v[0][:200], 'who': 'Teammates', 'yes': bool(v[3])} for n, v in integrations.GOOGLE.items()]})
+    if (s.get('substack') or {}).get('cookie'):
+        apps.append({'name': 'Substack', 'on': True, 'note': 'Drafts and posts, each after your yes.', 'tools': [
+            {'name': n, 'what': v[0][:200], 'who': 'Teammates', 'yes': bool(v[3])} for n, v in integrations.SUBSTACK.items()]})
+    for srv in s.get('servers') or []:
+        try:
+            listed = integrations.server_tools(srv)
+            apps.append({'name': srv['name'], 'on': True, 'note': srv['url'], 'tools': [
+                {'name': t['name'], 'what': ' '.join(str(t.get('description') or '').split())[:200], 'who': 'Teammates', 'yes': integrations._mcp_needs_yes(t)} for t in listed]})
+        except (OSError, ValueError):
+            apps.append({'name': srv['name'], 'on': False, 'note': srv['url'] + ' is not answering right now (off, asleep, or unreachable)', 'tools': []})
+    return {'groups': groups, 'apps': apps}
 
 
 def agent_library():

@@ -919,6 +919,14 @@
   .agv-prof .job:first-of-type{border-top:none}
   .agv-prof .job .l{font-size:14px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .agv-prof .job .m{font-size:12px;color:var(--muted);margin-top:3px}
+  .pg .pg-intro{font-size:14px;line-height:1.5;color:var(--muted);margin:16px 0 10px}.pg .pg-intro a{color:var(--primary)}
+  .pg .sec{border-top:4px solid var(--c,var(--border))}.pg .sec.off{opacity:.6}.pg .pg-what{color:var(--muted);font-size:13px;margin:0 0 6px}
+  .pg .pg-row{padding:8px 0;border-top:1px solid var(--hair)}.pg .pg-row .l{font-size:14px;line-height:1.4}.pg .pg-row .m{font-size:12px;color:var(--muted);margin-top:2px}
+  .pg code{font-size:13px;background:var(--hair);padding:1px 6px;border-radius:6px}
+  .pg .pg-tag{display:inline-block;margin-left:8px;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--hair);color:var(--muted);vertical-align:middle}
+  .pg .pg-tag.yes{background:var(--indigo-bg);color:var(--indigo)}
+  .pg .pg-none{color:var(--muted);font-size:13px;margin:4px 0}.pg .pg-link{display:inline-block;margin-top:8px;font-size:13px;color:var(--primary);text-decoration:none}
+  .pg h5{margin:18px 0 6px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
   .agv-prof .job .mf{font-size:12px;color:var(--ink);margin-top:3px}
   /* the Experience section, like a LinkedIn profile: each board is a project, its jobs on a timeline under it */
   .agv-prof .val{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
@@ -1630,6 +1638,8 @@ function hbPaint(){
     return kids?`<div class="hb-row">${btn}<button class="hb-fold${shut.has(id)?' shut':''}" data-fold="${escapeAttr(id)}" title="${shut.has(id)?'Show':'Hide'} its sub-spaces">▼</button></div>`:btn;};
   const rows=list=>list.filter(x=>!x.parent||!shut.has(x.parent)).map(x=>sp(x.id,x.name,!!x.parent,!x.parent&&subsOf(x.id).length>0)).join('');   // a folded parent hides its sub-spaces, as on the desktop
   $('#hbBody').innerHTML=`<button class="hb-r" data-act="agents">${AG_BOT}<span class="nm">Agents</span>${n?`<span class="n wait">${n} waiting</span>`:''}</button>
+    <button class="hb-r" data-act="skills">${ic('<path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"/>')}<span class="nm">Skills</span></button>
+    <button class="hb-r" data-act="tools">${ic('<path d="M14.7 6.3a4 4 0 0 0 5 5L13 18a2.1 2.1 0 0 1-3-3l6.7-6.7a4 4 0 0 0-2-2z"/><path d="M3 21l6-6"/>')}<span class="nm">Tools</span></button>
     <button class="hb-r" data-act="blank">${ic('<path d="M12 5v14M5 12h14"/>')}<span class="nm">New board</span></button>
     <button class="hb-r" data-act="miro">${ic('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>')}<span class="nm">Import from Miro</span></button><hr><h4>Spaces</h4>
     <div class="hb-row"><button class="hb-r${on===null?' on':''}" data-space=""><span class="nm">All spaces</span><span class="n">${HOME.spaces.filter(x=>!x.parent&&!x.archived).length}</span></button><button class="hb-fold${shut.has('all')?' shut':''}" data-fold="all" title="${shut.has('all')?'Show':'Hide'} what is under it">▼</button></div>
@@ -1654,7 +1664,7 @@ $('#hb').addEventListener('click',e=>{
   if(e.target===$('#hb')){hbClose();return;}   // a tap outside the panel
   const b=e.target.closest('.hb-r');if(!b)return;hbClose();
   if(b.dataset.space!==undefined){location.hash=b.dataset.space?'s/'+b.dataset.space:'';return;}
-  ({agents:()=>{location.hash='agents';},blank:newBlankBoard,miro:impOpen,space:newSpacePrompt,settings:stgOpen,theme:themeNext})[b.dataset.act]();
+  ({agents:()=>{location.hash='agents';},skills:()=>{location.hash='skills';},tools:()=>{location.hash='tools';},blank:newBlankBoard,miro:impOpen,space:newSpacePrompt,settings:stgOpen,theme:themeNext})[b.dataset.act]();
 });
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#hb').hidden)hbClose();});
 async function newBlankBoard(){
@@ -4709,6 +4719,7 @@ async function sbAsk(q){
 function route(){sbPlace();const id=location.hash.slice(1);
   {const m=/^([0-9a-f]{12})\/([^/]+)$/.exec(id);if(m){VC.focus=[m[2]];history.replaceState(null,'','#'+m[1]);route();return;}}   // #<board>/<item>: that board, at that item
   if(id==='agents'||id.startsWith('agents/')){closeBoard();$('#cv').classList.remove('open');agvShow(id.slice(7));return;}
+  if(id==='skills'||id==='tools'){closeBoard();$('#cv').classList.remove('open');pgShow(id);return;}   // the Skills and Tools pages, beside Agents (2026-11-08)
   agvHide();
   if(id.startsWith('s/')){closeBoard();showHome(id.slice(2));}else if(id)openBoard(id);else{closeBoard();showHome(null);}}
 $('#homeLink').onclick=e=>{e.preventDefault();if(location.hash)location.hash='';else route();};   // the logo always goes home: all boards
@@ -4724,14 +4735,41 @@ const agvWaitingRuns=r=>[r,...agvKids(r.id).flatMap(agvWaitingRuns)].filter(x=>x
 const agvState=r=>agvWaitingRuns(r).length?'waiting':agvActive(r)?'working':r.status;
 const agvLabel=r=>agvState(r)==='waiting'?'Waiting on you':AG_LABEL[r.status]||r.status;
 function agvShow(rid){
-  $('#home').hidden=true;$('#agv').hidden=false;
+  AGV.page=null;$('#home').hidden=true;$('#agv').hidden=false;
   const prof=rid&&rid.startsWith('agent/')?rid.slice(6):null;if(prof)rid='';   // #agents/agent/<key>: one agent's profile page
   if(AGV.profile!==prof){AGV.profile=prof;AGV.prof=null;AGV.profAt=0;$('#agvBody').scrollTop=0;if(prof)AGV.tab='library';}
   if(AGV.open!==(rid||null)){AGV.open=rid||null;AGV.form=null;AGV.all=false;$('#agvBody').scrollTop=0;}
   $('#agvBack').textContent=rid||prof?'‹ Agents':'‹ Boards';$('#agvBack').href=rid||prof?'#agents':'#';
   agvPaint(true);agvPoll();
 }
-function agvHide(){$('#agv').hidden=true;clearTimeout(AGV.timer);}
+function agvHide(){$('#agv').hidden=true;AGV.page=null;clearTimeout(AGV.timer);}
+/* The Skills and Tools pages share the Agents screen's shell. Skills: what each agent carries beyond its charter (added
+   by you, from a rule being tried, or from a team note that proved itself) and the rules the failure miner is trying.
+   Tools: every tool an agent can call, who has it, whether it writes, and the connected apps with what needs your yes. */
+async function pgShow(id){
+  AGV.page=id;clearTimeout(AGV.timer);$('#home').hidden=true;$('#agv').hidden=false;$('#agvBack').textContent='‹ Boards';$('#agvBack').href='#';
+  $('#agvTitle').textContent=id==='skills'?'Skills':'Tools';const box=$('#agvBody');box.innerHTML='<p class="agv-msg">Loading…</p>';box.scrollTop=0;
+  let d=null;try{d=await api(id);}catch(e){}
+  if(AGV.page!==id)return;
+  box.innerHTML=d?(id==='skills'?pgSkills(d):pgTools(d)):'<p class="agv-msg">Could not load this page. Try again in a moment.</p>';
+}
+const pgDate=t=>t?new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric'}):'';
+function pgSkills(d){
+  const src={you:'You added it',proposal:'From a rule being tried',note:'From a team note that proved itself'};
+  const agents=d.agents.map(a=>`<div class="sec" style="--c:${escapeAttr(a.color)}"><h3>${escapeHtml(a.name)}${a.skills.length?` · ${a.skills.length}`:''}</h3>${a.what?`<p class="pg-what">${escapeHtml(a.what)}</p>`:''}
+    ${a.skills.length?a.skills.map(x=>`<div class="pg-row"><div class="l">${escapeHtml(x.text)}</div><div class="m">${escapeHtml(src[x.source]||'')}${x.added?' · '+pgDate(x.added):''}</div></div>`).join(''):'<p class="pg-none">No skills beyond its charter yet.</p>'}
+    ${a.key!=='assistant'&&a.key!=='lead'?`<a class="pg-link" href="#agents/agent/${escapeAttr(a.key)}">Open its profile, add a skill</a>`:''}</div>`).join('');
+  const st=x=>x.status==='proposed'?`Being tried · ${x.jobs_since||0} of ${d.rules.min_jobs} jobs run so far`:x.status==='trusted'?'Trusted: now a standing rule':x.status==='retired'?'Retired: the failure did not fall by half':x.status==='rejected'?'Rejected by the replay check':x.status||'';
+  const props=d.proposals.length?d.proposals.slice().sort((a,b)=>(b.t||0)-(a.t||0)).map(x=>`<div class="pg-row"><div class="l">${escapeHtml(x.rule||'')}</div><div class="m">${escapeHtml(st(x))}${x.pattern?' · for: '+escapeHtml(x.pattern):''}${x.applies?' · when: '+escapeHtml(x.applies):''}</div></div>`).join(''):'<p class="pg-none">None yet. The nightly failure miner proposes at most two a night, from patterns seen in two or more jobs.</p>';
+  return `<div class="agv-prof pg"><p class="pg-intro">Each agent starts from its charter. What it carries beyond that is here: skills you added on its profile, rules the failure miner is trying on every team, and team notes that proved themselves. <a href="#${escapeAttr(d.rules.board)}">The ${d.rules.count} standing rules</a> live on the rules board.</p>
+    <div class="sec"><h3>Rules being tried · ${d.proposals.filter(x=>x.status==='proposed').length}</h3>${props}</div>${agents}</div>`;
+}
+function pgTools(d){
+  const tool=t=>`<div class="pg-row"><div class="l"><code>${escapeHtml(t.name)}</code>${t.writes?'<span class="pg-tag">writes</span>':''}${t.yes?'<span class="pg-tag yes">needs your yes</span>':''}</div><div class="m">${escapeHtml(t.what||'')}</div></div>`;
+  const group=g=>`<div class="sec${g.on?'':' off'}"><h3>${escapeHtml(g.name)}${g.tools.length?` · ${g.tools.length}`:''}${g.on?'':' · off'}</h3>${g.note?`<p class="pg-what">${escapeHtml(g.note)}</p>`:''}${g.tools.map(tool).join('')}</div>`;
+  const apps=d.apps.length?d.apps.map(group).join(''):'<div class="sec"><h3>Connected apps</h3><p class="pg-none">None connected. Settings on the home page connects Google, Substack or one of your own tool servers.</p></div>';
+  return `<div class="agv-prof pg"><p class="pg-intro">What an agent can do is exactly these tools and nothing else. Reading and searching run freely; a tool marked <span class="pg-tag">writes</span> changes the board or the team\'s branch, and one marked <span class="pg-tag yes">needs your yes</span> is asked about first.</p>${d.groups.map(group).join('')}<h5>Connected apps</h5>${apps}</div>`;
+}
 async function agvPoll(){
   clearTimeout(AGV.timer);if($('#agv').hidden)return;
   if(Date.now()-AGV.libAt>30000)try{AGV.lib=await api('library');AGV.libAt=Date.now();}catch(e){}   // the agent library: every 30 s is plenty
@@ -4745,6 +4783,7 @@ async function agvPoll(){
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('#agv').hidden)agvPoll();});   // back in the app: fresh at once
 function agvPaint(force){
+  if(AGV.page)return;   // the Skills or Tools page is showing in this shell
   const box=$('#agvBody');
   if($('#agv').hidden||!force&&[...box.querySelectorAll('textarea')].some(t=>t===document.activeElement||t.value.trim()))return;   // never redraw under your typing
   if(!AGV.runs){box.innerHTML='<p class="agv-msg">Loading…</p>';return;}
