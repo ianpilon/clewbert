@@ -12,7 +12,7 @@ ended, then reads their results and either hands out a next round or writes the 
 """
 import base64, hashlib, json, os, queue, re, secrets, subprocess, threading, time, urllib.error, urllib.request
 import integrations, models, skills, talk
-from . import code, web
+from . import code, skillfiles, web
 
 MODEL_URL = os.environ.get('AGENT_MODEL_URL', '')   # a chat/completions address with tool calls on your own machine, or pick a provider in Settings
 MODEL = os.environ.get('AGENT_MODEL', '')
@@ -2520,6 +2520,16 @@ class Runner:
         except (OSError, ValueError, KeyError):
             return
         self.note_outcomes(r)   # first: how the notes this job was given fared
+        passed = r.get('status') == 'done' and not r.get('gaps')
+        try:
+            skillfiles.outcomes(os.path.dirname(self.dir), r.get('skills_used'), passed)
+            if passed and (len(r.get('children') or []) >= 2 or len(r['steps']) >= 12):   # a job with some shape to it: maybe a procedure worth keeping
+                sk = skillfiles.consider(os.path.dirname(self.dir), r, '\n'.join(log))
+                if sk:
+                    self.card(r, 'Skill written for next time: %s\n%s' % (sk['name'], sk['description']), '#eef2ff')
+                    self.step(r, 'Wrote a skill for next time: ' + sk['name'])
+        except (OSError, ValueError, KeyError) as e:
+            self.step(r, 'Could not weigh a skill from this job (%s)' % type(e).__name__)
         if not (note['worked'] or note['failed']):
             return
         with open(os.path.join(os.path.dirname(self.dir), 'team_notes.jsonl'), 'a') as f:
@@ -2536,6 +2546,7 @@ class Runner:
             have = code.repos(os.path.dirname(self.dir))
             notes, r['notes_used'] = self.notes_for(r['board'], r['task'])
             r['team_notes_read'] = notes
+            r['skills_read'], r['skills_used'] = skillfiles.pick(os.path.dirname(self.dir), r['task'])   # skills earlier teams wrote, when the job fits (2026-11-08)
             want = talk.team_design(r['task'], r.get('intent'), ((
                 '- engineer: writes real code in one of these code bases: %s. It works on its own branch, which the user reviews '
                 'before anything goes live: it can read, search, edit, check syntax and commit, but cannot run the app or '
@@ -2583,8 +2594,12 @@ class Runner:
                                           'tools (a copy of a card or file = one add_file call with from_item; otherwise read what is needed and write the result in your frame with add_text or add_file) and finish. Do not use assign. Read the named items once, then act: this job is usually one or two calls.'
                                           if not crew[1:] else '\nThis team was put together for this job; each line says what that teammate is for.')
                                        + ('\nNOTES FROM EARLIER TEAMS ON SIMILAR JOBS (learn from them):\n' + r['team_notes_read']
-                                          if r.get('team_notes_read') else ''))
+                                          if r.get('team_notes_read') else '')
+                                       + ('\n\nSKILLS EARLIER TEAMS WROTE FOR JOBS LIKE THIS (follow the steps when they fit; say in your summary if you used one):\n' + r['skills_read']
+                                          if r.get('skills_read') else ''))
         self.crew_chart(r, crew)
+        if r.get('skills_used'):
+            self.step(r, 'Given %d skill%s earlier teams wrote: %s' % (len(r['skills_used']), '' if len(r['skills_used']) == 1 else 's', ', '.join(r['skills_used'])))
         self.step(r, ('Put a team together for this job: ' + ', '.join(m['name'] for m in crew[1:])) if crew[1:] else 'No team: the Lead does this job alone')
 
     def crew_chart(self, r, crew):

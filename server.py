@@ -857,6 +857,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, skills_page())
         if parts == ['api', 'tools']:   # the Tools page: every tool an agent can call, and the connected apps
             return self.reply(200, tools_page())
+        if len(parts) == 4 and parts[:2] == ['api', 'skillfiles'] and re.match(r'^[a-z0-9-]{3,48}$', parts[2]) and parts[3] == 'SKILL.md':   # one written skill, as the file it is
+            path = os.path.join(DATA, 'skills', parts[2], 'SKILL.md')
+            if not os.path.exists(path):
+                return self.reply(404, {'error': 'no such skill'})
+            with open(path, 'rb') as f:
+                return self.reply(200, f.read(), 'text/plain; charset=utf-8')
         if len(parts) == 3 and parts[:2] == ['api', 'library'] and re.match(r'^[a-z][a-z0-9-]{0,40}$', parts[2]):   # one agent's profile page
             p = agent_profile(parts[2])
             return self.reply(200, p) if p else self.reply(404, {'error': 'no such agent'})
@@ -2696,6 +2702,9 @@ def builtins_frame():
             'Judged after 6 more jobs: recurring at half its old rate or less = kept as a rule note; otherwise dropped. At most 2 new a night',
             'Listed in the Proposed rules card next to this frame; delete a line in proposals.json or the note to stop one']),
         ('Cost in view', 'Nov 7', ['Every read an agent makes comes back with "Step N of M", so it can wrap up before the cap does']),
+        ('Skills the teams write', 'Nov 8', ['After a job ends done with no gaps, a writer reads its log and, when it holds a procedure a later team could follow, writes it as a skill file (the Agent Skills format: a folder with a SKILL.md) in the data folder, marked provisional',
+            'A Lead whose task fits the description gets the skill in its brief; the job\'s outcome counts for or against it; three hits make it trusted, three misses or 60 quiet days retire it',
+            'At most three new skills a day; one written again under other words is skipped. Listed on the Skills tab; any of them can be copied into another agent\'s skills folder as it is']),
         ('Rules are append-only', 'Nov 7', ['The app can add a standing rule to this board and move its cards; it can never rewrite or remove one: such a change is refused and nothing is written',
             'Only you change a rule, on the board. A rewrite would drop a lesson without anyone seeing it go (the warning from Agentic Context Engineering)']),
         ('Not doing', 'Nov 7', ['The intent card names the one or two things an eager team would do that you did not ask for; the Lead and every part carry the same line',
@@ -3092,7 +3101,9 @@ def skills_page():
         rules = len(rule_notes(read_board(rules_board()).get('items') or []))
     except (OSError, ValueError, KeyError):
         rules = 0
-    return {'agents': out, 'proposals': props, 'rules': {'board': rules_board(), 'count': rules, 'min_jobs': propose.MIN_JOBS}}
+    from agents import skillfiles
+    return {'agents': out, 'proposals': props, 'rules': {'board': rules_board(), 'count': rules, 'min_jobs': propose.MIN_JOBS},
+            'written': skillfiles.listing(DATA)}   # the skills the teams wrote for themselves (Agent Skills format, <data>/skills)
 
 
 def tools_page():
