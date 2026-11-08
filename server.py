@@ -1771,11 +1771,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not it.get('added') and not it.get('agent'):
                         it['added'] = now_ms()
                 else:
-<<<<<<< server.py
-                    for k in ('added', 'why', 'voice'):   # voice: the user's recorded reason for adding it
-=======
-                    for k in ('added', 'why', 'voice', 'clip', 'poster'):   # voice: Ian's recorded reason for adding it; clip, poster: made here
->>>>>>> /tmp/new_server.py
+                    for k in ('added', 'why', 'voice', 'clip', 'poster'):   # voice: the user's recorded reason for adding it; clip, poster: made here
                         if k in old and k not in it:
                             it[k] = old[k]
                 clip_fill(it)
