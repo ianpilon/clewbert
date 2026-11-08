@@ -1873,7 +1873,8 @@ def board_cards():
             if bid not in CARDS or CARDS[bid][0] != mtime:
                 try:
                     card = light(read_board(bid))
-                except (OSError, ValueError):
+                except (OSError, ValueError, AttributeError, KeyError, TypeError):   # one board that will not read must not hide the rest
+                    print('board %s left out of the list: it did not read' % bid, flush=True)
                     continue
                 del card['items']
                 CARDS[bid] = (mtime, card)
@@ -1949,7 +1950,7 @@ def made_by(b):
     items = [i for i in (b.get('items') or []) if i.get('type') != 'arrow']
     if len(items) < 3:
         return None
-    agent = sum(1 for i in items if i.get('agent') or (i.get('why') or {}).get('run'))
+    agent = sum(1 for i in items if i.get('agent') or (isinstance(i.get('why'), dict) and i['why'].get('run')))   # why is a record, but one card with it as text blanked the whole home page (2026-11-07)
     added = sum(1 for i in items if i.get('why') and not i.get('agent'))
     # one item of the person's own and the board is theirs, however much the teams added to it since: the person made
     # the board themselves and the teams filled it, and the badge called it an agent's (2026-11-05)
