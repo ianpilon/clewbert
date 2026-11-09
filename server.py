@@ -2735,6 +2735,10 @@ def builtins_frame():
         ('Notes from earlier teams', 'Nov 7', ['Each note says when it applies; a new job gets the last 3 on its board and the 2 that fit best',
             'A note is counted for when the job it went to ended done, against when it fell short',
             'Retired (never given out again): 3 misses and more misses than hits, or 60 days without a hit']),
+        ('Pictures', 'Nov 9', ['Made by: the image generator set for this install (IMAGE_URL, an OpenAI-style /v1/images/generations)',
+            'Takes: about a minute a picture; square, wide or tall',
+            'Lands: as a picture card in the team\'s frame, read and searchable like a dropped photo',
+            'Generator: ' + (S.IMAGE_URL or 'off (no IMAGE_URL set)')]),
         ('Failure patterns', 'Nov 7', ['Nightly at 3:45: reads the last 14 days of jobs and their checks, notes and questions',
             'Looks for: jobs that stopped, failed or fell short, parts that did not pass their check, a job asked again within the hour, '
             'questions marked bad, and one-agent jobs over 30 model calls',

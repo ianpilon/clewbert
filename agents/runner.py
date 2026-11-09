@@ -26,6 +26,7 @@ VISION_MODEL_URL = os.environ.get('AGENT_VISION_MODEL_URL', '')
 VISION_MODEL = os.environ.get('AGENT_VISION_MODEL', '')
 WORKERS = int(os.environ.get('AGENT_WORKERS', '3'))
 TRANSCRIBE_URL = os.environ.get('TRANSCRIBE_URL', '').rstrip('/')   # a whisper service (see transcribe/serve.py in the private app): empty = no transcriber
+IMAGE_URL = os.environ.get('IMAGE_URL', '').rstrip('/')   # an OpenAI-style image generator (POST /v1/images/generations -> b64_json): empty = no pictures
 MAX_STEPS = 40
 RETRY_STEPS = 12         # a job the Watchdog starts again gets a short second go, from what it already found (a restarted Lead once ran 46 more steps of the same search, 2026-11-05)
  # a page that turns automated readers away: Cloudflare and the like ("Sorry, you have been blocked", Nov 2: 3 of 6 tries
@@ -62,7 +63,7 @@ def card_text(text):
 ON_THE_BOARD = re.compile(r'\b(paste|the (full|whole|complete|entire|rest of the|end of the|final|last|middle)[^?]{0,40}'
                           r'(text|words|content|quote|sentence|reason|note|file|transcript)|unverified|cut off|truncat|preview|'
                           r'send me|share the|provide the|give me the|confirm (the|that|what)|the exact (text|wording))\b', re.I)
-WRITES = ('add_note', 'add_card', 'add_text', 'add_link', 'add_file', 'transcribe', 'finish', 'ask_user', 'assign', 'make_demo', 'group_items')
+WRITES = ('add_note', 'add_card', 'add_text', 'add_link', 'add_file', 'transcribe', 'make_picture', 'finish', 'ask_user', 'assign', 'make_demo', 'group_items')
 # a task that asks to rearrange what is on the board (it once ended "Done, restructured" with nothing moved)
 REARRANGE = re.compile(r"\b(re-?arrang\w*|restructur\w*|re-?organi[sz]\w*|regroup\w*|cluster\w*|"
                        r"(?:group|sort|move|organi[sz]e)\w* (?:the |these |those |all |every )?(?:items|notes|stickies|cards|links|content|frame|board|them|it)\b|"
@@ -391,6 +392,10 @@ TOOLS = [
          'reading pages or captions): url = a YouTube or other video link, or from_item = the id of a link, video or audio '
          'card on the board. The whole transcript lands in your frame as a Markdown file with timestamps. An hour of audio '
          'takes about a minute. Never try to transcribe or fetch captions any other way.', {'url': S, 'from_item': S, 'name': S}),
+    tool('make_picture', 'Make a picture from words with the image generator set up for this install (about a minute a picture). '
+         'It lands as a picture card in your task frame. prompt = what the picture shows, in plain detailed English: subject, '
+         'setting, light, style (photo, sketch, poster, diagram). shape = square, wide or tall. name = a short title for the card.',
+         {'prompt': S, 'shape': S, 'name': S}, ['prompt']),
     tool('add_file', 'Make a real Markdown (.md) file on the board: it sits in your task frame as a file card the person can open, '
          'download and share. To COPY a file or card that is on the board, give from_item = its id and leave text out: the '
          'server copies its whole content, word for word, any size, in this one call (never retype a file yourself). '
@@ -453,7 +458,7 @@ ASSIGN = tool('assign', 'Hand parts of the task to teammates. Each part becomes 
               {'assignments': {'type': 'array', 'items': {'type': 'object', 'properties': {'teammate': S, 'task': S, 'done_when': S},
                                                           'required': ['teammate', 'task', 'done_when']}}})
 # the Lead plans, hands out and puts the answer together; it has no web tools, so it cannot do the parts itself
-LEAD_TOOLS = [t for t in TOOLS if t['function']['name'] in ('search_board', 'read_item', 'read_frame', 'add_text', 'add_file', 'transcribe', 'ask_user', 'finish')] + [ASSIGN]
+LEAD_TOOLS = [t for t in TOOLS if t['function']['name'] in ('search_board', 'read_item', 'read_frame', 'add_text', 'add_file', 'transcribe', 'make_picture', 'ask_user', 'finish')] + [ASSIGN]
 
 
 def board_unit(board):
@@ -1529,6 +1534,34 @@ class Runner:
             made = self.add_file(r, str(a.get('name') or '') or title + ' - transcript.md', md)
             return ('Transcribed "%s" (%d min of audio, %d words) into the file %s in your frame; it is the whole thing. Say its name in your summary.'
                     % (title, mins, len(out.get('text', '').split()), made['label'])) if made else 'Not done: the frame is gone.'
+        if name == 'make_picture':   # a picture from words, by the image generator set for this install (2026-11-09): a picture card, searchable like a dropped photo
+            if not IMAGE_URL:
+                return 'Not done: no image generator is set up on this install (IMAGE_URL). Say so in your frame and finish.'
+            prompt = ' '.join(str(a.get('prompt') or '').split())
+            if len(prompt) < 3:
+                return 'Not done: say what the picture shows.'
+            w, h = {'wide': (1216, 832), 'tall': (832, 1216)}.get(str(a.get('shape') or '').lower(), (1024, 1024))
+            self.step(r, 'Making a picture: %s' % prompt[:80])
+            try:
+                req = urllib.request.Request(IMAGE_URL + '/v1/images/generations', data=json.dumps({'prompt': prompt, 'size': '%dx%d' % (w, h)}).encode(),
+                                             headers={'Content-Type': 'application/json'}, method='POST')
+                with urllib.request.urlopen(req, timeout=900) as resp:
+                    png = base64.b64decode(json.loads(resp.read().decode())['data'][0]['b64_json'])
+            except (OSError, ValueError, KeyError, IndexError) as e:
+                return 'Not done: the image generator could not make it (%s). Say so in your frame; do not look for a picture elsewhere.' % str(e)[:200]
+            fn = hashlib.sha256(png).hexdigest() + '.png'
+            images = os.path.join(os.path.dirname(self.dir), 'images')
+            os.makedirs(images, exist_ok=True)
+            path = os.path.join(images, fn)
+            if not os.path.exists(path):
+                with open(path + '.tmp', 'wb') as f:
+                    f.write(png)
+                os.replace(path + '.tmp', path)
+            self.reader.add(fn)
+            label = ' '.join(str(a.get('name') or '').split())[:60] or prompt[:60]
+            u = r['lay']['u']
+            it = self.place(r, {'type': 'img', 'src': 'api/images/' + fn, 'label': label, 'ratio': h / w}, 480 * u, 480 * u * h / w, wide=True)
+            return ('Made the picture "%s" (%dx%d) in your frame. Say in your summary what it shows.' % (label, w, h)) if it else 'Not done: the frame is gone.'
         if name == 'add_file' and a.get('from_item'):   # a copy of a board item, made by the server: no model retypes a file (2026-11-05)
             it = next((i for i in self.board_items(r['board']) if i['id'] == a.get('from_item')), None)
             if not it:
