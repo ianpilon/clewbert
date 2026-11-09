@@ -2609,7 +2609,7 @@ def edit_board(bid, fn):
     return out
 
 
-CLIP_URL = os.environ.get('CLIP_URL', 'http://100.121.91.119:8097').rstrip('/')   # the media service on the GX10 head (transcribe/serve.py there)
+CLIP_URL = os.environ.get('CLIP_URL', 'http://100.108.156.8:8097').rstrip('/')   # the media service on the training GX10 (transcribe/serve.py there)
 CLIPS_Q = queue.Queue()
 
 
