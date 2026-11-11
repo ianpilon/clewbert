@@ -3713,12 +3713,12 @@ async function vcOpen(){
     catch(e){prog.hidden=true;vcNote("Clewbert's voice did not load ("+e.message+"). Close and reopen the mic to try again, or type below.");return;}
     if(!VC.on)return;
   }
-  try{await vcEars();vcSetState('listening');newsPoll();}
+  try{await lvCfg();if(lvActive())await lvStart();else await vcEars();vcSetState('listening');newsPoll();}
   catch(e){vcSetState('');vcNote(e&&e.name==='NotAllowedError'?'Microphone blocked. Allow it in the address bar, or type below.':'Listening is not available right now. You can type a question below.');}
 }
 function vcClose(){
   if(GD.on)gdEnd();
-  VC.on=false;VC.askSeq++;vcStopSpeaking();
+  VC.on=false;VC.askSeq++;vcStopSpeaking();lvEnd();
   if(VC.ws){try{VC.ws.close();}catch(e){}VC.ws=null;}
   if(VC.node){try{VC.node.disconnect();}catch(e){}VC.node=null;}
   if(VC.src){try{VC.src.disconnect();}catch(e){}VC.src=null;}vcLevel(0);
@@ -3727,6 +3727,101 @@ function vcClose(){
   if(VC.hl.size){VC.hl.clear();if(cvBoard)cvRender();}
 }
 const VC_MIC={audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:false}};
+
+/* ---------------- Live voice (beta) ----------------
+   A full-duplex voice engine (it hears you while it talks; you can cut in) in front of the same brain. The engine does the
+   listening, the turn-taking, small talk and the speaking. A question about the boards is handed to this page
+   (session.delegation.created), asked through vcAsk as always, and the checked answer is sent back to be spoken word for word
+   (session.say.append), so sources, the number check and the voice's hands on the canvas all stay as they are.
+   Off unless the server names a gateway (api/live) and the switch in the voice card's menu is on. */
+const LV={cfg:null,want:false,on:false,ws:null,player:null,mod:false,did:null,asking:false,direct:false,heard:'',heardAt:0,reply:'',replyQ:'',loudAt:0,askedAt:0};
+try{LV.want=localStorage.getItem('cc_live')==='1';}catch(e){}
+async function lvCfg(){if(!LV.cfg){try{LV.cfg=await api('live');}catch(e){LV.cfg={url:''};}}return LV.cfg;}
+function lvActive(){return !!(LV.want&&LV.cfg&&LV.cfg.url);}
+function lvVoice(){let v='';try{v=localStorage.getItem('cc_live_voice')||'';}catch(e){}const all=(LV.cfg&&LV.cfg.voices)||[];return all.includes(v)?v:(LV.cfg&&LV.cfg.voice)||all[0]||'';}
+function lvVoiceName(v){return String(v).replace(/_en$/,'').split('_').map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' ');}
+const LV_PERSONA=`You are the voice of Clewbert, the user's own app of boards. Always speak English. Keep every reply to one or two short, natural sentences.
+You work with a partner inside the app that sees everything: the boards, the card the user has selected, and what is on their screen. You reach it with the delegate tool.
+Call delegate for anything about their boards, spaces, notes, cards, documents, pictures, people, companies, numbers, tasks or agents; for anything the user points at with words like this, that, these, here or it ("what is this", "can you see this", "read that"); and for any request to find, show, open, go to, move, add, start, stop or change something. First say a very short phrase such as "Let me look." Then call delegate with the request in the user's own words.
+Never say that you cannot see something. Never answer such a question from your own knowledge, and never guess what a board says. Call delegate instead.
+Greetings, thanks, goodbyes and small talk you answer yourself. When you are not sure which it is, call delegate.
+Examples. User: "Can you see this?" You: "Let me look." and call delegate. User: "What's this one about?" You: "One moment." and call delegate. User: "Show me the pricing card." You: "Sure, let me find it." and call delegate. User: "Thanks, that's great." You: "You're welcome."`;
+// the sound comes as one unbroken stream of 100 ms pieces (silence included), so it plays from one buffer: no seams between pieces
+const LV_WORKLET=`class LVP extends AudioWorkletProcessor{
+ constructor(){super();this.N=16000*6;this.b=new Float32Array(this.N);this.w=0;this.r=0;this.go=false;
+  this.port.onmessage=e=>{const d=e.data;if(d==='flush'){this.r=this.w;this.go=false;return;}
+   for(let i=0;i<d.length;i++){this.b[this.w%this.N]=d[i];this.w++;}
+   if(this.w-this.r>16000*1.5)this.r=this.w-16000*0.3;};}
+ process(_,o){const out=o[0][0],st=16000/sampleRate;
+  if(!this.go){if(this.w-this.r<16000*0.15)return true;this.go=true;}
+  for(let n=0;n<out.length;n++){const i=Math.floor(this.r);if(i+1>=this.w){this.go=false;break;}
+   const a=this.r-i;out[n]=this.b[i%this.N]*(1-a)+this.b[(i+1)%this.N]*a;this.r+=st;}
+  return true;}}
+registerProcessor('lv-player',LVP);`;
+async function lvStart(){
+  const cfg=LV.cfg,ac=vcAudio();
+  // level control ON here (the ears want it off): a quiet microphone reached the engine too low to be transcribed (2026-11-11)
+  VC.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+  if(!LV.mod){const u=URL.createObjectURL(new Blob([LV_WORKLET],{type:'application/javascript'}));await ac.audioWorklet.addModule(u);URL.revokeObjectURL(u);LV.mod=true;}
+  LV.player=new AudioWorkletNode(ac,'lv-player');LV.player.connect(vcOut());
+  const ws=new WebSocket(cfg.url);
+  await new Promise((res,rej)=>{
+    ws.onopen=()=>ws.send(JSON.stringify({type:'session.start',session:{model:'gpt-live-1',audio:{format:{type:'audio/pcm',rate:16000},output:{voice:lvVoice()}},delegation:{type:'client'},store:false,instructions:LV_PERSONA}}));
+    ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}if(m.type==='session.started')res();else if(m.type==='error')rej(new Error('live'));};
+    ws.onerror=()=>rej(new Error('live'));ws.onclose=()=>rej(new Error('live'));});
+  if(!VC.on){ws.close();return;}
+  ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}lvMsg(m);};
+  ws.onclose=()=>{if(VC.ws!==ws)return;VC.ws=null;LV.on=false;if(VC.on){vcSetState('');vcNote('The live voice dropped. Close the voice and open it again, or type below.');}};
+  VC.ws=ws;LV.ws=ws;LV.on=true;LV.did=null;LV.asking=false;LV.direct=false;LV.heard='';LV.reply='';
+  const node=ac.createScriptProcessor(4096,1,1),sink=ac.createGain();sink.gain.value=0;const ratio=ac.sampleRate/16000;let acc=new Int16Array(0);
+  node.onaudioprocess=e=>{const x=e.inputBuffer.getChannelData(0);let pk=0;for(let i=0;i<x.length;i++){const v=Math.abs(x[i]);if(v>pk)pk=v;}
+    vcLevel(VC.muted?0:pk);if(VC.muted||ws.readyState!==1)return;   // muted: nothing is sent, and the gateway hears silence
+    const n=Math.floor(x.length/ratio),out=new Int16Array(acc.length+n);out.set(acc);
+    for(let i=0;i<n;i++){const p=i*ratio,j=Math.floor(p),a=p-j;const v=x[j]+((x[j+1]??x[j])-x[j])*a;out[acc.length+i]=Math.max(-32768,Math.min(32767,Math.round(v*32767)));}
+    let o=0;for(;out.length-o>=1600;o+=1600){const u=new Uint8Array(out.buffer,o*2,3200);let s='';for(let k=0;k<u.length;k++)s+=String.fromCharCode(u[k]);
+      ws.send(JSON.stringify({type:'session.input_audio.append',audio:btoa(s)}));}
+    acc=out.slice(o);};
+  VC.src=ac.createMediaStreamSource(VC.stream);VC.src.connect(node);node.connect(sink);sink.connect(ac.destination);VC.node=node;
+  vcNote('Live voice (beta): it hears you while it talks, so you can cut in.');
+}
+function lvMsg(m){
+  const t=m.type,now=performance.now();
+  if(t==='session.output_audio.delta'){
+    const b=atob(m.delta),n=b.length>>1,f=new Float32Array(n);let pk=0;
+    for(let i=0;i<n;i++){let v=b.charCodeAt(2*i)|(b.charCodeAt(2*i+1)<<8);if(v>32767)v-=65536;f[i]=v/32768;if(v>pk)pk=v;else if(-v>pk)pk=-v;}
+    if(LV.player)LV.player.port.postMessage(f,[f.buffer]);
+    if(pk>600){LV.loudAt=now;if(VC.state==='listening'||VC.state==='')vcSetState('speaking');}
+    else if(VC.state==='speaking'&&now-LV.loudAt>1500){vcSetState('listening');lvReplyEnd();}   // 1.5 s: longer than the pause between two sentences
+    return;}
+  if(t==='session.input_transcript.delta'){   // the words of one stretch of speech arrive together
+    if(now-LV.heardAt>1500){LV.heard='';LV.asking=false;}
+    LV.heard+=m.delta;LV.heardAt=now;$('#vcHeard').textContent='“'+LV.heard.trim()+'”';return;}
+  if(t==='session.output_transcript.delta'){
+    if(LV.direct||LV.asking)return;   // this page's own answer being spoken (already in the conversation), or the "let me look" before it
+    if(!LV.reply)LV.replyQ=LV.heard.trim()||'…';
+    LV.reply+=m.delta;VC.pending={q:LV.replyQ,a:LV.reply.trim()};vcThread(true);return;}
+  if(t==='session.delegation.created'){   // a question for the boards: ask it the usual way, in the words that were heard
+    const d=m.delegation||{},heard=LV.heard.trim(),ok=/[a-z]{2}/i.test(heard)&&!/[^\u0000-ɏ -⁯]/.test(heard);
+    if(LV.asking&&now-LV.askedAt<4000)return;   // one question is handed over once
+    LV.did=d.id||null;LV.asking=true;LV.askedAt=now;LV.reply='';VC.pending=null;$('#vcHeard').textContent='';
+    const lt=VC.turns[VC.turns.length-1];if(lt&&lt.lv&&Date.now()-lt.t<8000)VC.turns.pop();   // the "let me look" just before the hand-off is not an answer
+    const q=ok?heard:String(d.task||heard).trim();if(q)vcAsk(q);return;}
+  if(t==='error')console.warn('[live voice]',m.error);
+}
+function lvReplyEnd(){   // the voice has gone quiet
+  if(LV.direct){LV.direct=false;LV.reply='';return;}
+  if(LV.reply.trim()&&!LV.asking){VC.turns.push({q:LV.replyQ,a:LV.reply.trim(),t:Date.now(),lv:true});VC.pending=null;vcThread(true);$('#vcHeard').textContent='';}
+  LV.reply='';
+}
+function lvSay(text){   // the checked answer, spoken word for word by the live voice
+  VC.said=text;LV.direct=true;LV.asking=false;
+  if(!VC.speak||!LV.ws||LV.ws.readyState!==1){LV.direct=false;LV.did=null;vcSetState(VC.ws?'listening':'');return;}
+  vcSetState('speaking');LV.loudAt=performance.now()+4000;   // the first sound takes a moment
+  LV.ws.send(JSON.stringify({type:'session.say.append',content:vcSpoken(text),delegation_id:LV.did||undefined}));LV.did=null;
+}
+function lvStop(){if(LV.on&&LV.ws&&LV.ws.readyState===1){try{LV.ws.send(JSON.stringify({type:'session.output.stop'}));}catch(e){}if(LV.player)LV.player.port.postMessage('flush');LV.direct=false;}}
+function lvEnd(){if(!LV.on&&!LV.player)return;LV.on=false;try{if(LV.ws&&LV.ws.readyState===1)LV.ws.send(JSON.stringify({type:'session.close'}));}catch(e){}
+  if(LV.player){try{LV.player.disconnect();}catch(e){}LV.player=null;}LV.ws=null;}
 async function vcEars(){
   VC.stream=await navigator.mediaDevices.getUserMedia(VC_MIC);vcWatch(VC.stream);
   const t0=VC.stream.getAudioTracks()[0];VC.micId=(t0&&t0.getSettings&&t0.getSettings().deviceId)||VC.micId;   // the microphone you chose: a reconnect asks for that one again
@@ -3766,6 +3861,7 @@ navigator.mediaDevices&&navigator.mediaDevices.addEventListener&&navigator.media
       want=def&&ins.find(d=>d.deviceId!=='default'&&'Default - '+d.label===def.label);
     if(want&&want.label!==t.label){VC.micId=want.deviceId;vcMicRecover('back');}}catch(e){}});
 async function vcMicRecover(why){
+  if(LV.on)return;   // live voice has its own connection
   // Chrome ending or muting the mic is certain, so it is always answered (at most 6 times a minute); a silent mic is a guess, so once per 15 s
   VC.recoveries=(VC.recoveries||[]).filter(x=>Date.now()-x<60000);
   if(!VC.on||VC.recovering||VC.recoveries.length>=6||(why==='silent'&&Date.now()-(VC.recoveredAt||0)<15000))return;
@@ -3788,20 +3884,20 @@ async function vcMicRecover(why){
   finally{VC.recovering=false;VC.recoveredAt=Date.now();}
 }
 function vcEarsReconnect(){   // a fresh connection to the ears (they judge "near or far" against the level they learned)
-  const old=VC.ws;if(!old||old.cloud)return;
+  const old=VC.ws;if(!old||old.cloud||LV.on)return;
   const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ears'+(VC.anyone?'?me=0':''));ws.binaryType='arraybuffer';
   ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}if(m.type==='ready'){if(VC.on){VC.ws=ws;vcWhoPaint(m.me);try{old.close();}catch(e){}}else ws.close();return;}vcEarsMsg(m);};
   ws.onclose=()=>vcEarsLost(ws);
 }
 /* The ears' connection can drop (the network, the tunnel). It used to stay down until you reopened the mic, and the
    voice said nothing meanwhile, team news included (a team's "done" came 19 minutes late). Now it reconnects. */
-setInterval(()=>{try{if(VC.ws&&VC.ws.readyState===1)VC.ws.send('{"type":"ping"}');}catch(e){}},25000);   // muted or quiet, nothing else crosses the tunnel, and Cloudflare closed it every 2 minutes
+setInterval(()=>{try{if(VC.ws&&VC.ws.readyState===1&&!LV.on)VC.ws.send('{"type":"ping"}');}catch(e){}},25000);   // muted or quiet, nothing else crosses the tunnel, and Cloudflare closed it every 2 minutes
 function vcEarsLost(ws){
   if(VC.ws!==ws)return;VC.ws=null;if(!VC.on)return;
   vcSetState('');vcLog('ears-lost',{});vcEarsRetry(0);
 }
 function vcEarsRetry(n){
-  if(!VC.on||VC.ws)return;
+  if(!VC.on||VC.ws||LV.on)return;
   if(n>=6){vcNote('Listening stopped. Close and reopen the mic to listen again, or type.');return;}
   vcNote('Listening stopped. Reconnecting…');
   if(n===1&&!VC.lostSaid){VC.lostSaid=true;vcOffline('I lost the connection and cannot hear you right now. One moment.');}
@@ -4157,6 +4253,7 @@ function vcFocus(ids,close){
 // speech is queued so a filler finishes before the answer starts; a new question or "stop" cuts everything
 function vcSpoken(t){return String(t||'').replace(/\b(?:api\/)?(?:[\w-]+\/)+[\w.-]+\.(?:html?|md|json|py|js|mp4|pdf|webm|txt|csv)\b/gi,'that card').replace(/\bhttps?:\/\/\S+/gi,'a link').replace(/\s{2,}/g,' ');}   // a path read aloud is noise (2026-11-08); the text keeps it
 function vcSay(text,seq,isFiller){
+  if(LV.on){if(!isFiller&&seq===VC.askSeq&&VC.on)lvSay(text);return;}   // live voice: no filler (the engine says its own "let me look")
   if(!vcVoice()||!VC.speak){if(!isFiller)vcSetState(VC.ws?'listening':'');return;}
   VC.chain=VC.chain.then(async()=>{
     if(seq!==VC.askSeq||!VC.on)return;
@@ -4194,7 +4291,7 @@ async function vcPlay(text,seq){
   if(p.stats.chunks){const st=p.stats;console.log(`[voice] playback: ${st.chunks} pieces, ${st.audio.toFixed(1)} s of sound, ${st.late} late (${Math.round(st.gap*1000)} ms of gaps)`);
     if(st.late)vcLog('playback',{q:text.slice(0,40),chunks:st.chunks,audio_s:+st.audio.toFixed(1),late:st.late,gap_ms:Math.round(st.gap*1000),device:CV_LIVE.device});}
 }
-function vcStopSpeaking(){VC.ctls.forEach(c=>{try{c.abort();}catch(e){}});VC.players.forEach(p=>p.stop());VC.ctls=[];VC.players=[];VC.chain=Promise.resolve();try{if(window.speechSynthesis)speechSynthesis.cancel();}catch(e){}}
+function vcStopSpeaking(){lvStop();VC.ctls.forEach(c=>{try{c.abort();}catch(e){}});VC.players.forEach(p=>p.stop());VC.ctls=[];VC.players=[];VC.chain=Promise.resolve();try{if(window.speechSynthesis)speechSynthesis.cancel();}catch(e){}}
 function vcPlayer(sr){
   // The speech arrives as raw sound in pieces of a third of a second and plays as it comes. A piece that arrives after
   // the last one has finished leaves a gap (a stutter, mid-word); stats counts those. A phone's path is slower and
@@ -4225,10 +4322,13 @@ $('#vcMute').onclick=()=>vcMuteToggle();
 $('#vcMore').onclick=e=>{
   const sel=$('#vcVoice'),opts=[...sel.options];
   const can=VC.speech==='openai'||VC.speech==='xai';
-  menuOpen(e.currentTarget,`<div class="mh">Voice volume</div><div class="vc-vol"><input type="range" min="0" max="100" step="5" value="${Math.round(VC.vol*100)}" aria-label="Voice volume"></div><hr>${opts.length?`<div class="mh">Voice</div>${opts.map(o=>`<button data-voice="${escapeAttr(o.value)}"${o.value===sel.value?' class="cur"':''}>${escapeHtml(o.textContent)}</button>`).join('')}<hr>`:''}
+  menuOpen(e.currentTarget,`<div class="mh">Voice volume</div><div class="vc-vol"><input type="range" min="0" max="100" step="5" value="${Math.round(VC.vol*100)}" aria-label="Voice volume"></div><hr>${LV.cfg&&LV.cfg.url?`<div class="mh">Live voice (beta): you can talk over it</div><button data-live="1"${LV.want?' class="cur"':''}>${LV.want?'On (press to turn off)':'Off (press to turn on)'}</button><hr>`:''}${lvActive()?((LV.cfg.voices||[]).length?`<div class="mh">Voice</div>${LV.cfg.voices.map(v=>`<button data-lvoice="${escapeAttr(v)}"${v===lvVoice()?' class="cur"':''}>${escapeHtml(lvVoiceName(v))}</button>`).join('')}<hr>`:''):opts.length?`<div class="mh">Voice</div>${opts.map(o=>`<button data-voice="${escapeAttr(o.value)}"${o.value===sel.value?' class="cur"':''}>${escapeHtml(o.textContent)}</button>`).join('')}<hr>`:''}
     ${can?`<button data-here="1">${vcHere()?'Use the '+(VC.speech==='xai'?'xAI':'OpenAI')+' voice':'Keep my voice on this computer'}</button><hr>`:''}
     <button class="danger" data-clear="1"${VC.turns.length?'':' disabled'}>Clear the conversation</button>`,m=>{
     m.querySelectorAll('[data-voice]').forEach(x=>x.onclick=()=>{menuClose();sel.value=x.dataset.voice;sel.onchange();});
+    const again=()=>{if(VC.on){vcClose();vcOpen();}};   // the live voice is one connection: a change starts it afresh
+    m.querySelectorAll('[data-live]').forEach(x=>x.onclick=()=>{menuClose();LV.want=!LV.want;try{localStorage.setItem('cc_live',LV.want?'1':'0');}catch(err){}again();});
+    m.querySelectorAll('[data-lvoice]').forEach(x=>x.onclick=()=>{menuClose();try{localStorage.setItem('cc_live_voice',x.dataset.lvoice);}catch(err){}again();});
     m.querySelector('[data-clear]').onclick=()=>{menuClose();vcClearTalk();};
     m.querySelector('.vc-vol input').oninput=ev=>{VC.vol=ev.target.value/100;if(VC.out)VC.out.gain.value=VC.vol;try{localStorage.setItem('cc_vol',ev.target.value);}catch(err){}};
     const h=m.querySelector('[data-here]');if(h)h.onclick=()=>{menuClose();try{localStorage.setItem('cb_voice_here',vcHere()?'0':'1');}catch(e){}

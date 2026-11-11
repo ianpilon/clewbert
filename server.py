@@ -874,6 +874,9 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ['api', 'setup']:   # the welcome screen shows until a model answers
             return self.reply(200, {'ready': bool(models.choice('voice') or models.local('voice') or talk.MODEL_URL),
                                     'speech': (models.speech() or [None])[0] if not talk.TTS_URL else 'local'})
+        if parts == ['api', 'live']:   # live voice (beta): where the page finds the full-duplex voice gateway. No address = the feature is off
+            return self.reply(200, {'url': os.environ.get('LIVE_VOICE_URL', ''), 'voice': os.environ.get('LIVE_VOICE_VOICE', ''),
+                                    'voices': [v.strip() for v in os.environ.get('LIVE_VOICE_VOICES', '').split(',') if v.strip()]})
         if parts == ['api', 'voices']:
             try:
                 return self.reply(200, talk.voices() if talk.TTS_URL else models.voices() if models.speech() else {'voices': []})
@@ -2850,7 +2853,7 @@ threading.Thread(target=board_cards, daemon=True).start()   # the board list is 
 
 # ---------- board pictures: the board list shows one small picture of each board ----------
 BOARDSHOTS = os.path.join(DATA, 'boardshots')
-CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+CHROME = os.environ.get('CANVAS_CHROME', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')   # a test copy sets a path that does not exist: no board photos
 BOARDSHOT_FAILED = {}
 BOARDSHOT_SEEN = [None, False]   # the board being photographed, and whether its page got the items
 

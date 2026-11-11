@@ -58,6 +58,7 @@ for the agent team). Their content is made up. Change them or delete them; delet
 | `SEARXNG_URL` | Your own SearXNG for web search (json format on) |
 | `BROWSER_URL`, `BROWSER_TOKEN` | A real browser for agents: run `browser/service.py PORT` on any machine with Playwright |
 | `CANVAS_TTS_URL` | Your own text-to-speech server (otherwise the OpenAI or xAI key speaks) |
+| `LIVE_VOICE_URL`, `LIVE_VOICE_VOICE`, `LIVE_VOICE_VOICES` | Experimental live voice (it hears you while it talks, and you can talk over it): the WebSocket address of a GPT-Live style voice gateway, the default voice, and a comma list of voices. The gateway must also accept `session.say.append` (speak this text word for word) and `session.output.stop`. Leave unset and nothing changes: the switch does not appear |
 | `CF_ACCESS_TEAM`, `CF_ACCESS_AUD` | If the app sits behind Cloudflare Access |
 
 Choices made in Settings win over these. Hearing and speaking use the OpenAI or xAI key, or Clewbert's own voice.
