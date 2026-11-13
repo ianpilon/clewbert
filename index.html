@@ -433,6 +433,27 @@
   .cv-media .mbar a:hover,.cv-file .mbar a:hover{text-decoration:underline}
   .cv-media video{flex:1;min-height:0;width:100%;background:#000;display:block}
   .cv-media audio{width:calc(100% - 16px);margin:auto 8px}
+  /* the video's own controls, sized to the video (Chrome's strip stayed a few pixels tall on a zoomed-out board, 2026-11-13) */
+  .cv-media .vbox{position:relative;flex:1;min-height:0;container-type:size;background:#000;overflow:hidden}
+  .cv-media .vbox video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+  .cv-media .vbig{position:absolute;left:50%;top:50%;width:18cqmin;height:18cqmin;transform:translate(-50%,-50%);border-radius:50%;border:0;padding:0;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;cursor:pointer;transition:opacity .2s}
+  .cv-media .vbig svg{width:46%;height:46%}
+  .cv-media .vbox.paused .vbig svg{margin-left:8%}
+  .cv-media .vbar{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:.7em;padding:1.6em 1em .7em;font-size:3.4cqmin;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.72));transition:opacity .2s}
+  .cv-media .vbar button{background:none;border:0;padding:0;color:#fff;width:1.9em;height:1.9em;display:grid;place-items:center;cursor:pointer;flex:none}
+  .cv-media .vbar svg{width:100%;height:100%}
+  .cv-media .vt{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .cv-media .vtrack{position:relative;flex:1;height:.42em;border-radius:.21em;background:rgba(255,255,255,.3);cursor:pointer;touch-action:none}
+  .cv-media .vtrack::before{content:'';position:absolute;inset:-.8em 0}
+  .cv-media .vtrack i{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:inherit}
+  .cv-media .vtrack .vbuf{background:rgba(255,255,255,.35)}
+  .cv-media .vtrack .vdone{background:#fff}
+  .cv-media .vtrack b{position:absolute;left:0;top:50%;width:1.1em;height:1.1em;border-radius:50%;background:#fff;transform:translate(-50%,-50%)}
+  /* paused: the big play button always, the bar while the pointer is on the video; playing: both only while the pointer moves on it */
+  .cv-media .vbox.paused .vbar,.cv-media .vbox:not(.paused) .vbig,.cv-media .vbox:not(.paused) .vbar{opacity:0;pointer-events:none}
+  .cv-media .vbox.paused:hover .vbar,.cv-media .vbox:not(.paused):hover:not(.idle) .vbig,.cv-media .vbox:not(.paused):hover:not(.idle) .vbar{opacity:1;pointer-events:auto}
+  .cv-media audio.vn{margin:8px 8px 0;flex:none}
+  .cv-media .vsaid{margin:8px 12px 10px;font-size:12.5px;line-height:1.45;color:var(--ink);overflow:auto;flex:1;min-height:0}
   /* a file card scales as a whole, like a picture: its text and spacing are sized from the card's width (12px at 260px wide) */
   .cv-item.cv-file{container-type:inline-size}
   .cv-file .frame{font-size:4.615cqw}
@@ -593,6 +614,15 @@
   .cv-shot .shotbar i{width:.6em;height:.6em;border-radius:50%;background:#22c55e}
   .cv-shot .shotbar span{color:#94a3b8;overflow:hidden;text-overflow:ellipsis}
   .cv-shot img{flex:1;min-height:0;width:100%;object-fit:cover;object-position:top}
+  .cv-term .frame{background:#0b1020;border-radius:calc(8px / var(--zs,1));overflow:hidden;display:flex;flex-direction:column;container-type:inline-size}
+  .cv-term .shotbar{display:flex;align-items:center;gap:.5em;padding:.45em .7em;font-size:2.1cqw;color:#e2e8f0;background:#1e293b;white-space:nowrap}
+  .cv-term .shotbar i{width:.6em;height:.6em;border-radius:50%;background:#22c55e}
+  .cv-term .shotbar span{color:#94a3b8;overflow:hidden;text-overflow:ellipsis}
+  .cv-term pre.term{flex:1;min-height:0;margin:0;padding:1.6cqw 2cqw;overflow:auto;font:1.9cqw/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cbd5e1;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text}
+  .cv-term pre.term b{color:#86efac;font-weight:600}
+  .cv-term pre.term .dim{color:#64748b}
+  .cv-term pre.term .cur{display:inline-block;width:.6em;height:1.1em;background:#cbd5e1;vertical-align:text-bottom;animation:termcur 1s steps(1) infinite}
+  @keyframes termcur{50%{opacity:0}}
   .cv-arrow{cursor:default;pointer-events:none}
   .cv-arrow svg{position:absolute;left:0;top:0;overflow:visible}
   .cv-arrow .hit{pointer-events:stroke;cursor:pointer}
@@ -1051,6 +1081,8 @@
     .cv-head{padding:8px 10px;gap:6px}
     .cv-title{width:auto;flex:1;max-width:none;min-width:0}
     .cv-crumb{max-width:calc(100vw - 84px)}   /* the view switch moved into ⋯: the title gets the room */
+    .cv-crumb:has(.cv-save.error) .cv-title{display:none}   /* a save problem takes the title's place and wraps: "Reload the pa…" was cut off on the phone (2026-11-08) */
+    .cv-save.error{white-space:normal;line-height:1.25}
     .cv-views{display:none}
     /* the voice card: a sheet at the bottom with three heights; slim = one line, so the board shows what the voice points at */
     #vc{left:0;right:0;top:auto;bottom:0;width:auto;max-width:none;border-radius:16px 16px 0 0;
@@ -1220,7 +1252,7 @@
       <button class="tbmic" id="micTb" title="Talk to your assistant"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></button>
       <button data-tool="note" draggable="true" title="Sticky note (N): click the board to place it, or drag it there"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 4h16v10l-6 6H4z"/><path d="M14 20v-6h6"/></svg></button>
       <button data-tool="text" draggable="true" title="Text (T): click for a title, drag a box for a paragraph"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 5h14M12 5v15"/></svg></button>
-      <button data-tool="doc" draggable="true" title="Document (D): click the board to place a card you paste into, or drag this onto the board; it becomes a .md or PDF file"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h7M9 17h5" stroke-linecap="round"/></svg></button>
+      <button data-tool="doc" draggable="true" title="Document (D): click the board to place a card you paste into, or drag this onto the board; it becomes a .md or PDF file, or a voice note you record"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h7M9 17h5" stroke-linecap="round"/></svg></button>
       <button data-tool="frame" draggable="true" title="Frame (F): click the board to place one, drag the area it should cover, or drag this onto the board; double-click its title to name it"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="1.5"/><path d="M3 4h8" stroke-linecap="round"/></svg></button>
       <button data-tool="pen" title="Marker (P): draw on the board"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4l5 5L9 20H4v-5z"/><path d="M12.5 6.5l5 5"/></svg></button>
       <button data-tool="emoji" title="Stickers: click one to add it, or drag it onto the board"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 14.5c1.8 2 5.2 2 7 0"/><circle cx="9.2" cy="10" r=".6" fill="currentColor"/><circle cx="14.8" cy="10" r=".6" fill="currentColor"/></svg></button>
@@ -1316,6 +1348,7 @@ function cvDownload(it){
   }
   if((it.type==='media'||it.type==='file')&&/^api\//.test(it.src||''))return {href:it.src,name:named(it.label,it.type==='media'?'Video':'file',ext(it.src))};
   if(it.type==='shot')return {href:'api/shots/'+it.run+'.jpg',name:named("Agent's browser "+(it.label||''),'Agent browser','jpg')};
+  if(it.type==='term')return {href:'api/terms/'+it.run+'.txt',name:named("Agent's terminal "+(it.label||''),'Agent terminal','txt')};
   if(it.type==='web'&&it.demo)return {href:it.url,name:named(it.label,'Demo','html')};
   if(it.type==='note'&&String(it.text||'').trim())return {name:named(String(it.text).split(/\s+/).slice(0,6).join(' '),'Note','txt'),text:()=>it.text};
   if(it.type==='area')return {name:named(it.text,'Frame','txt'),text:()=>[it.text||'Frame',...cvInside(it).filter(i=>i.type==='note'&&String(i.text||'').trim())
@@ -1326,6 +1359,7 @@ function cvOpenTarget(it){   // what opening an item does (double-click, or Open
   if(it.type==='link'||(it.type==='img'&&it.url))return ()=>cvGo(cvOpenUrl(it));
   if(it.type==='file'&&it.src)return ()=>window.open(cvFileHref(it),'_blank','noopener');
   if(it.type==='shot')return ()=>window.open('api/shots/'+it.run+'.jpg','_blank','noopener');
+  if(it.type==='term')return ()=>window.open('api/terms/'+it.run+'.txt','_blank','noopener');
   return null;}
 function cvOpenUrl(it){   // where clicking an item goes: a PDF opens in a page titled with its name, anything else at its address
   const m=/^api\/images\/([0-9a-f]{64}\.pdf)$/.exec(it.url||'');
@@ -2203,6 +2237,41 @@ function cvArrowsFollow(){if(cvArrowRaf||!cvBoard||!cvBoard.items.some(i=>i.type
     const els=new Map([...w.querySelectorAll('.cv-arrow')].map(e=>[e.dataset.id,e]));
     items.filter(i=>i.type==='arrow').forEach(i=>{const el=els.get(i.id);if(el)cvArrowDraw(i,el);});});}
 const CV_MEDIA=new Map();   // item id -> its <video>/<audio>, kept across redraws
+const CV_VI={play:'<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z" fill="currentColor"/></svg>',
+  pause:'<svg viewBox="0 0 24 24"><path d="M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z" fill="currentColor"/></svg>',
+  vol:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
+  mute:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4z" fill="currentColor"/><path d="M16 9l5 6M21 9l-5 6"/></svg>',
+  full:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>'};
+const cvClock=s=>{s=Math.max(0,Math.floor(s||0));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
+// a video card's controls: a big play/pause in the middle, and a bar with play/pause, time, a seek bar, mute and full screen.
+// The box goes with the <video> across redraws, so its listeners are added once
+function cvVideoControls(v){
+  const box=document.createElement('div');box.className='vbox paused';
+  box.innerHTML=`<button class="vbig" title="Play">${CV_VI.play}</button><div class="vbar"><button class="vpp" title="Play">${CV_VI.play}</button><span class="vt">0:00</span><div class="vtrack" title="Go to a point in the video"><i class="vbuf"></i><i class="vdone"></i><b></b></div><span class="vt vdur"></span><button class="vmute" title="Mute">${CV_VI.vol}</button><button class="vfull" title="Full screen">${CV_VI.full}</button></div>`;
+  box.insertBefore(v,box.firstChild);
+  const q=c=>box.querySelector(c),big=q('.vbig'),pp=q('.vpp'),tr=q('.vtrack'),mu=q('.vmute');
+  let idle;const wake=()=>{box.classList.remove('idle');clearTimeout(idle);idle=setTimeout(()=>{if(!v.paused)box.classList.add('idle');},2500);};
+  const paint=()=>{const p=v.paused;box.classList.toggle('paused',p);big.innerHTML=pp.innerHTML=p?CV_VI.play:CV_VI.pause;big.title=pp.title=p?'Play':'Pause';};
+  const tick=()=>{const d=v.duration,ok=d&&isFinite(d),f=ok?v.currentTime/d:0;q('.vdone').style.width=f*100+'%';q('b').style.left=f*100+'%';
+    q('.vt').textContent=cvClock(v.currentTime);q('.vdur').textContent=ok?cvClock(d):'';
+    if(ok&&v.buffered.length)q('.vbuf').style.width=Math.min(100,v.buffered.end(v.buffered.length-1)/d*100)+'%';};
+  ['play','pause','ended'].forEach(k=>v.addEventListener(k,()=>{paint();wake();}));
+  ['timeupdate','durationchange','loadedmetadata','progress'].forEach(k=>v.addEventListener(k,tick));
+  v.addEventListener('volumechange',()=>{mu.innerHTML=v.muted?CV_VI.mute:CV_VI.vol;mu.title=v.muted?'Unmute':'Mute';});
+  v.addEventListener('fullscreenchange',()=>{v.controls=document.fullscreenElement===v;});   // full screen: the browser's own controls
+  box.querySelectorAll('button,.vtrack').forEach(b=>b.addEventListener('pointerdown',e=>e.stopPropagation()));   // a control is not a drag of the card
+  big.onclick=pp.onclick=e=>{e.stopPropagation();v.paused?v.play():v.pause();};
+  mu.onclick=e=>{e.stopPropagation();v.muted=!v.muted;};
+  q('.vfull').onclick=e=>{e.stopPropagation();if(v.requestFullscreen)v.requestFullscreen();else if(v.webkitEnterFullscreen)v.webkitEnterFullscreen();};
+  const seek=e=>{const r=tr.getBoundingClientRect(),f=Math.min(1,Math.max(0,(e.clientX-r.left)/r.width)),d=v.duration;
+    if(d&&isFinite(d)){v.currentTime=f*d;tick();}
+    else{v.preload='auto';v.addEventListener('loadedmetadata',()=>{v.currentTime=f*v.duration;tick();},{once:true});}};   // nothing loaded yet (a card with a still)
+  tr.addEventListener('pointerdown',e=>{tr.setPointerCapture(e.pointerId);seek(e);tr.onpointermove=seek;});
+  tr.addEventListener('pointerup',()=>{tr.onpointermove=null;});
+  tr.addEventListener('click',e=>e.stopPropagation());
+  box.addEventListener('pointermove',wake);
+  v._box=box;
+}
 function cvItemEl(it){
   const el=document.createElement('div');
   el.className='cv-item cv-'+it.type+(cvBoard&&cvSel.has(it.id)&&cvBoard.items.includes(it)?' sel':'')+(cvBoard&&VC.hl.has(it.id)&&cvBoard.items.includes(it)?' hl':'');
@@ -2257,14 +2326,13 @@ function cvItemEl(it){
     if(th)th.addEventListener('error',()=>{if(!th.dataset.retried){th.dataset.retried=1;setTimeout(()=>{th.src=u.img+(u.img.includes('?')?'&':'?')+'r=1';},4000);}
       else th.closest('.thumb').remove();});   // one more try, then the card shows its words without a broken picture
   }else if(it.type==='media'){ // a dropped video or sound: drags like an image, a click plays or pauses, the player's own strip still works
-    const ext=escapeAttr(it.src),play=it.clip||it.src;   // the card streams the board-sized copy when the server has made one; Open gives the original
+    const ext=escapeAttr(it.open||it.src),play=it.clip||it.src;   // an OpenLoom card opens the video in OpenLoom   // the card streams the board-sized copy when the server has made one; Open gives the original
     el.innerHTML=`<div class="frame"><div class="mbar"><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'Video')}</span><a href="${ext}" target="_blank" rel="noopener">Open ↗</a></div></div>`;
     // the player lives on across redraws: a new one would fetch the video's headers again through the tunnel and stop what was playing (2026-11-07)
     let v=CV_MEDIA.get(it.id);
     if(!v||v.dataset.src!==play){
-      v=document.createElement(it.kind==='audio'?'audio':'video');v.controls=true;v.dataset.src=play;v.src=play;
-      if(it.kind!=='audio'){v.playsInline=true;
-        v.addEventListener('click',e=>{if(e.clientY<v.getBoundingClientRect().bottom-44*cvView.s)e.preventDefault();});   // our click plays or pauses, not Chrome's as well
+      v=document.createElement(it.kind==='audio'?'audio':'video');v.controls=it.kind==='audio';v.dataset.src=play;v.src=play;
+      if(it.kind!=='audio'){v.playsInline=true;cvVideoControls(v);
         v.addEventListener('loadedmetadata',()=>{   // first time: fit the card to the video's shape
           const el2=v.closest('.cv-item');if(it.ar||!v.videoWidth||!cvBoard||!cvBoard.items.includes(it)||!el2)return;
           it.ar=v.videoHeight/v.videoWidth;it.h=Math.round(it.w*it.ar)+cvBarH(el2);el2.style.height=it.h+'px';cvSave();},{once:true});}
@@ -2272,7 +2340,8 @@ function cvItemEl(it){
     }
     if(it.poster)v.poster=it.poster;
     v.preload=it.poster||it.preview?'none':'metadata';   // with a still to show, nothing loads until you press play
-    el.querySelector('.frame').appendChild(v);
+    el.querySelector('.frame').appendChild(v._box||v);
+    if(it.vnote&&it.voice&&it.voice.text){v.classList.add('vn');el.querySelector('.frame').insertAdjacentHTML('beforeend',`<p class="vsaid">“${escapeHtml(it.voice.text)}”</p>`);}   // a voice note: what was said, under the player
     el.querySelector('.mbar a').addEventListener('pointerdown',e=>e.stopPropagation());
   }else if(it.type==='file'){ // any other dropped file: name, kind, size and the first lines of its text; a click opens it
     const ext=it.doc&&!it.src?it.doc:(String(it.label||'').match(/\.([a-z0-9]{1,6})$/i)||[,'file'])[1];
@@ -2318,6 +2387,10 @@ function cvItemEl(it){
   }else if(it.type==='shot'){ // an agent's browser, as it looks now (the page refreshes it while the agent works)
     const rr=agRun(it.run);
     el.innerHTML=`<div class="frame"><div class="shotbar"><i></i>Agent's browser<span>${escapeHtml(it.label||'')}</span></div><img src="api/shots/${escapeAttr(it.run)}.jpg?v=${rr?rr.steps:0}" draggable="false" onerror="this.style.visibility='hidden'"></div>`;
+  }else if(it.type==='term'){ // an engineer's terminal: what it typed and what came back (the page reads it again while the agent works)
+    el.innerHTML=`<div class="frame"><div class="shotbar"><i></i>Agent's terminal<span>${escapeHtml(it.label||'')}</span></div><pre class="term"></pre></div>`;
+    const pre=el.querySelector('pre');pre.addEventListener('wheel',e=>{if(!e.ctrlKey&&pre.scrollHeight>pre.clientHeight)e.stopPropagation();},{passive:true});   // the wheel scrolls its lines, a pinch still zooms the board
+    cvTermFill(el,it);
   }else if(it.type==='arrow'){ // a hand-off between two frames: drawn from where the frames are now
     el.classList.add('cv-arrow');cvArrowDraw(it,el);
   }else if(it.type==='area'){ // backdrop (a frame imported from Miro): moved by its title, clicks on it pan the board
@@ -2363,8 +2436,8 @@ function cvItemEl(it){
     if(e.button!==0)return;
     if(cvTool!=='select')return;   // a tool is on: the board handles the press (draw, place a note)
     if(it.type==='arrow'){e.stopPropagation();e.preventDefault();e.shiftKey?cvToggle(it.id):cvSelect(it.id);return;}
-    const vid=e.target.closest('video,audio');   // the player's control strip (bottom 40 px of it, at the board's zoom) keeps its clicks
-    if(vid&&(vid.tagName==='AUDIO'||e.clientY>vid.getBoundingClientRect().bottom-44*cvView.s))return;
+    const vid=e.target.closest('video,audio');   // a click on the video plays or pauses it; a sound's own strip keeps its clicks
+    if(vid&&vid.tagName==='AUDIO')return;
     e.stopPropagation();e.preventDefault();   // no native focus or text selection: this is a drag
     const ae=document.activeElement;if(ae&&ae.isContentEditable&&!el.contains(ae))ae.blur();
     if(e.shiftKey){cvToggle(it.id);return;}   // shift-click adds to or removes from the selection
@@ -2441,13 +2514,13 @@ function cvItemMenu(it,el,btn){
   const m=$('#menu');if(!m.hidden&&m.dataset.item===it.id){menuClose();return;}   // tap ⋯ again: close
   if(!cvSel.has(it.id))cvSelect(it.id);
   const ico=k=>`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${CV_MI[k]}</svg>`;
-  const pic=it.type==='img',dl=cvDownload(it),what=pic?(/\.pdf$/.test(it.url||'')?'PDF':'picture'):it.type==='note'?'note':it.type==='link'?'link card':it.type==='area'?'frame':it.type==='file'?'file':it.type==='shot'?'screenshot':'item';
+  const pic=it.type==='img',dl=cvDownload(it),what=pic?(/\.pdf$/.test(it.url||'')?'PDF':'picture'):it.type==='note'?'note':it.type==='link'?'link card':it.type==='area'?'frame':it.type==='file'?'file':it.type==='shot'?'screenshot':it.type==='term'?'terminal':'item';
   menuOpen(btn,`${cvOpenTarget(it)&&!it.uploading?`<button data-a="open">${ico('open')}Open this ${what}</button>`:''}
     ${pic?`<button data-a="link" title="${it.url?'Edit the link on this picture':'Add a link to this picture'}">${ico('link')}Link</button>`:''}
     ${pic&&!it.uploading?`<button data-a="crop">${ico('crop')}Crop</button>`:''}
     ${it.suggest?`<button data-a="suggest">${ico('doc')}Start this task</button>`:''}
     <button data-a="why">${ico('why')}Why is this here?</button>
-    <button data-a="voice">${ico('mic')}${it.voice?'Record your reason again':'Record why you added this'}</button>
+    ${it.vnote?'':`<button data-a="voice">${ico('mic')}${it.voice?'Record your reason again':'Record why you added this'}</button>`}
     ${it.type==='note'&&!it.card&&!it.ask&&String(it.text||'').trim()?`<button data-a="md">${ico('doc')}Turn into a .md document</button><button data-a="pdf">${ico('doc')}Turn into a PDF document</button><button data-a="sub">${ico('open')}Post on Substack (draft first)</button>`:''}
     ${dl?`<button data-a="dl">${ico('dl')}Download this ${what}</button>`:''}
     <button class="danger" data-a="del">${ico('del')}Delete this ${what}</button>`,mm=>{
@@ -2517,16 +2590,16 @@ function cvVPlayer(p){   // our own small player: the browser's one squeezes a v
   r.oninput=()=>{const d=dur();if(d)a.currentTime=r.value/1000*d;show();};
 }
 const CV_REC={};
-async function cvVoiceWhy(it){
+async function cvVoiceWhy(it,at){   // at: a place on the board = a voice note of its own (the document tool's Voice note), not a reason on an item
   if(CV_REC.on)return;
   const p=$('#cvRec');p.hidden=false;$('#cvScrim').hidden=false;$('#cvWhy').hidden=true;$('#cvMenu').hidden=true;
-  p.innerHTML='<b>Say why you are adding this</b><p class="cv-rheard" id="cvRecHeard">Opening the microphone…</p><div class="cv-rrow"><span class="cv-rdot"></span><span id="cvRecT">0:00</span><span style="flex:1"></span><button class="tx" id="cvRecX">Cancel</button><button class="go" id="cvRecOk">Done</button></div>';
+  p.innerHTML='<b>'+(at?'Record your voice note':'Say why you are adding this')+'</b><p class="cv-rheard" id="cvRecHeard">Opening the microphone…</p><div class="cv-rrow"><span class="cv-rdot"></span><span id="cvRecT">0:00</span><span style="flex:1"></span><button class="tx" id="cvRecX">Cancel</button><button class="go" id="cvRecOk">Done</button></div>';
   Object.assign(CV_REC,{on:true,it,board:cvBoardId,finals:[],partial:'',t0:Date.now()});
   const end=()=>{CV_REC.on=false;clearInterval(CV_REC.tick);try{CV_REC.node&&CV_REC.node.disconnect();CV_REC.src&&CV_REC.src.disconnect();}catch(e){}
     if(CV_REC.stream)CV_REC.stream.getTracks().forEach(t=>t.stop());try{CV_REC.ws&&CV_REC.ws.close();}catch(e){}Object.assign(CV_REC,{node:null,src:null,stream:null,ws:null});};
   $('#cvRecX').onclick=()=>{CV_REC.cancel=true;try{CV_REC.mr&&CV_REC.mr.state!=='inactive'&&CV_REC.mr.stop();}catch(e){}end();p.hidden=true;$('#cvScrim').hidden=true;};
   try{
-    CV_REC.stream=await navigator.mediaDevices.getUserMedia(VC_MIC);
+    CV_REC.stream=await navigator.mediaDevices.getUserMedia({audio:{...VC_MIC.audio,autoGainControl:true}});   // a recording is played back, so the browser levels it: with the Mac's input at 30 a note peaked 30 dB under the others and could not be heard (2026-11-11)
     const type=['audio/webm;codecs=opus','audio/mp4','audio/webm'].find(t=>window.MediaRecorder&&MediaRecorder.isTypeSupported(t))||'';
     const chunks=[],mr=new MediaRecorder(CV_REC.stream,type?{mimeType:type}:{});CV_REC.mr=mr;CV_REC.cancel=false;
     mr.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
@@ -2550,9 +2623,15 @@ async function cvVoiceWhy(it){
       const blob=new Blob(chunks,{type:mr.mimeType||type||'audio/webm'}),ext=/mp4/.test(blob.type)?'m4a':'webm';
       let src='';
       if(blob.size)try{const {up}=await api('uploads',{method:'POST'});await api('uploads/'+up,{method:'PUT',body:blob});
-        const r=await api('uploads/'+up+'/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Why I added this.'+ext,audio:true})});src=r.src||r.url||'';}
+        const r=await api('uploads/'+up+'/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:(at?'Voice note.':'Why I added this.')+ext,audio:true})});src=r.src||r.url||'';}
       catch(e){}   // the words are still kept
       p.hidden=true;$('#cvScrim').hidden=true;
+      if(at){   // the card: a player with the words under it; the Assistant and agents read the words
+        if(cvBoardId!==CV_REC.board||!cvBoard||(!src&&!text))return;
+        const u=cvUnit();
+        if(src)cvAddItem({type:'media',kind:'audio',vnote:true,label:'Voice note, '+cvWhen(Date.now()),src,x:at.x-160*u,y:at.y-48*u,w:320*u,h:(text?210:96)*u,voice:{text,src,when:Date.now(),secs}});
+        else cvAddItem({type:'note',text,fs:16*u,x:at.x-100*u,y:at.y-100*u,w:200*u,h:200*u});   // the sound did not upload: the words are still kept
+        return;}
       if(cvBoardId!==CV_REC.board||!cvBoard||!cvBoard.items.includes(it))return;
       it.voice={text,src,when:Date.now(),secs};cvSave();cvWhyOpen(it);};
   }catch(e){end();$('#cvRecHeard').textContent='The microphone could not be opened. Allow it for this site, then try again.';$('#cvRecOk').hidden=true;}
@@ -2674,7 +2753,7 @@ window.addEventListener('hashchange',()=>{if(CV_CROP)cvCropEnd(true);});
 
 // Left tool bar. Sizes are divided by the zoom so a new note, text, sticker or line looks the same on screen at any zoom.
 let cvTool='select';
-const CV_TOOL_KEYS={v:'select',n:'note',t:'text',d:'doc',f:'frame',p:'pen'};const CV_DOC={kind:'md'};   // the document tool: which file a card becomes
+const CV_TOOL_KEYS={v:'select',n:'note',t:'text',d:'doc',f:'frame',p:'pen'};const CV_DOC={kind:'md'},CV_DOC_ICO={doc:'<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h7M9 17h5" stroke-linecap="round"/>',voice:'<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 14.5v2M11.5 12.5v6M14 14v3M16.5 15v1" stroke-linecap="round"/>'};   // the document tool: which file a card becomes
 const CV_PEN={color:'#1f2430',size:3};
 // text: a size style and a font, both from fonts every Mac and iPhone already has
 const CV_TEXT={style:'body',font:'sans',fill:''};   // fill '' = see-through
@@ -2764,6 +2843,7 @@ function cvTextResize(e,it,el,c,hx,hy){   // corners scale the type (Miro); the 
 }
 // click = a title that grows as you type; w (a dragged width) = a paragraph box that wraps
 function cvPlaceDoc(p){   // the document tool: a file card waiting for its words, cursor in its body; it becomes the .md or PDF picked
+  if(CV_DOC.kind==='voice')return cvVoiceWhy(null,p);   // Voice note: the recorder opens where it landed
   const u=cvUnit(),it=cvAddItem({type:'file',doc:CV_DOC.kind,label:'',x:p.x-130*u,y:p.y-60*u,w:260*u,h:340*u});
   const body=$('#cvWorld').querySelector(`.cv-item[data-id="${it.id}"] .fprev`);if(body)body.focus({preventScroll:true});
 }
@@ -2877,8 +2957,9 @@ function cvUseTool(e){
   $('#cvPenSizes').innerHTML=[3,8].map(n=>`<button class="sz${n===CV_PEN.size?' on':''}" data-s="${n}" title="${n===3?'Fine':'Thick'} line"><i style="width:${n+2}px;height:${n+2}px"></i></button>`).join('');
   $('#cvTextStyles').innerHTML=Object.entries(CV_TEXT_STYLES).map(([k,v])=>`<button class="tx${k===CV_TEXT.style?' on':''}" data-k="${k}" style="font-weight:${v.fw}">${v.label}</button>`).join('');
   $('#cvTextFonts').innerHTML=Object.entries(CV_FONTS).map(([k,v])=>`<button class="tx${k===CV_TEXT.font?' on':''}" data-k="${k}" style="font-family:${escapeAttr(v.css||'inherit')}">${v.label}</button>`).join('');
-  $('#cvDocKinds').innerHTML='<span class="lbl">File</span>'+[['md','.md'],['pdf','PDF']].map(([k,l])=>`<button class="tx${k===CV_DOC.kind?' on':''}" data-k="${k}" title="${k==='md'?'The card becomes a Markdown file':'The card becomes a PDF'}">${l}</button>`).join('');
-  $('#cvDocKinds').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_DOC.kind=b.dataset.k;document.querySelectorAll('#cvDocKinds .tx').forEach(x=>x.classList.toggle('on',x===b));};
+  $('#cvDocKinds').innerHTML='<span class="lbl">File</span>'+[['md','.md'],['pdf','PDF'],['voice',`<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" style="vertical-align:-3px;margin-right:5px">${CV_DOC_ICO.voice}</svg>Voice note`]].map(([k,l])=>`<button class="tx${k===CV_DOC.kind?' on':''}" data-k="${k}" title="${k==='md'?'The card becomes a Markdown file':k==='pdf'?'The card becomes a PDF':'Records your voice: click the board or drag the tool onto it, speak, and it becomes a card that plays the recording and shows your words'}">${l}</button>`).join('');
+  $('#cvDocKinds').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_DOC.kind=b.dataset.k;document.querySelectorAll('#cvDocKinds .tx').forEach(x=>x.classList.toggle('on',x===b));
+    $('#cvTb [data-tool=doc] svg').innerHTML=CV_DOC_ICO[CV_DOC.kind==='voice'?'voice':'doc'];};   // the tool you drag shows what it will drop
   $('#cvTextStyles').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_TEXT.style=b.dataset.k;document.querySelectorAll('#cvTextStyles .tx').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvTextFonts').onclick=e=>{const b=e.target.closest('.tx');if(!b)return;CV_TEXT.font=b.dataset.k;document.querySelectorAll('#cvTextFonts .tx').forEach(x=>x.classList.toggle('on',x===b));};
   $('#cvTextFills').innerHTML='<span class="lbl">Fill</span>'+CV_TEXT_FILLS.map(([c,n])=>`<button class="sw${c?'':' none'}${c===CV_TEXT.fill?' on':''}" data-c="${c}" style="${c?'background:'+c:''}" title="${n}"></button>`).join('');
@@ -2964,7 +3045,20 @@ async function cvUnfurl(boardId,itemId,url){
     await patch(it=>{delete it.pending;});             // plain card stays
   }
 }
+// an OpenLoom video link: the card plays from OpenLoom and the voice and teams read OpenLoom's transcript (openloom.py)
+function cvLoomLink(u){return /^https?:\/\/[^\/]+\/(share|r|embed)\/[A-Za-z0-9_-]{4,64}([\/?#]|$)/i.test(String(u||'').trim());}   // looks like one; the server decides
+async function cvNewLoom(url,cx,cy){
+  const k=cvUnit(),boardId=cvBoardId;
+  const it=cvAddItem({type:'link',url,x:cx-140*k,y:cy-55*k,w:280*k,h:110*k,pending:true},true);   // "fetching preview" while OpenLoom answers
+  let r=null;try{r=await api('openloom/card',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});}catch(e){}
+  if(!cvBoard||cvBoardId!==boardId||!cvBoard.items.includes(it))return;
+  delete it.pending;
+  if(r&&r.loom){Object.assign(it,r);delete it.url;it.w=480*k;it.h=Math.round(480*k*(r.ar||0.5625))+31*k;it.x=cx-240*k;it.y=cy-it.h/2;}
+  else{it.pending=true;it.tries=1;cvUnfurl(boardId,it.id,url);}   // not an OpenLoom video (or OpenLoom said no): an ordinary link card
+  cvSettle(it);cvRender();cvSave();
+}
 function cvNewLink(url,cx,cy){   // centred on cx,cy
+  if(cvLoomLink(url)){cvNewLoom(url,cx,cy);return;}
   const k=cvUnit(),x=cx-140*k,y=cy-55*k;
   if(cvAppLink(url)){cvAddItem({type:'link',url,x,y,w:280*k,h:110*k},true);return;}   // nothing on the web to preview
   const it=cvAddItem({type:'link',url,x,y,w:280*k,h:110*k,pending:true,tries:1},true);
@@ -3610,6 +3704,10 @@ function vcMuteToggle(force){
   $('#vcMute').title=VC.muted?'Unmute your microphone (M)':'Mute your microphone (M): nothing you say reaches the voice until you unmute';
   if(VC.muted&&VC.ws&&VC.ws.readyState===1){try{VC.ws.send(JSON.stringify({type:'reset'}));}catch(e){}}   // drop anything half heard
   $('#vcHeard').textContent='';VC.heardAt=Date.now();vcLevel(0);vcSetState(VC.state);
+  if(VC.waitAction)vcThread();   // the waiting line says a spoken yes cannot be heard while muted (it sat two minutes, 2026-11-07)
+  if(VC.muted&&VC.state==='speaking'){   // mute is for the user's microphone only; it was once used to try to quiet the voice (2026-11-12)
+    vcNote('Your microphone is muted. To quiet the voice, tap the speaker button or Stop.');
+    clearTimeout(VC.muteNoteT);VC.muteNoteT=setTimeout(()=>{if(VC.on)vcNote((LV.on&&LV.note)||'');},6000);}
 }
 function vcNote(t){$('#vcNote').textContent=t||'';}
 function vcOffline(text){   // said by the browser itself: it works when the server cannot be reached (a question asked twice into silence, 2026-11-08)
@@ -3673,7 +3771,7 @@ function vcThread(toBottom){
   VC.turns.forEach(t=>add(t,false));
   if(VC.waitAction&&!VC.pending){   // said what it is about to do; waits for your word (a yes or no by voice works too)
     const p=document.createElement('div');p.className='vc-pend';
-    p.innerHTML=`<span>Waiting for your word</span><button class="no">Cancel</button><button class="go">Go</button>`;
+    p.innerHTML=`<span>${VC.muted?'Waiting for your word. Your microphone is muted: tap Go, or unmute and say yes.':'Waiting for your word'}</span><button class="no">Cancel</button><button class="go">Go</button>`;
     p.querySelector('.go').onclick=()=>vcAsk('Yes');p.querySelector('.no').onclick=()=>vcAsk('No');
     box.appendChild(p);}
   if(VC.pending)add(VC.pending,true);
@@ -3684,11 +3782,12 @@ function vcThread(toBottom){
 function vcVoice(){return $('#vcVoice').value;}
 /* Speak replies off: you keep talking, the answers only show as text (nothing is spoken, so nothing is made on the
    voice server). The volume is the voice's own, apart from the phone's. Each device remembers both. */
-try{VC.speak=localStorage.getItem('cc_speak')!=='0';VC.vol=Math.min(1,Math.max(0,+(localStorage.getItem('cc_vol')??100)/100));}catch(e){VC.speak=true;VC.vol=1;}
+// spoken replies are on every time the voice opens: a saved "off" made it start silent, which looked broken (2026-11-13)
+VC.speak=true;try{localStorage.removeItem('cc_speak');VC.vol=Math.min(1,Math.max(0,+(localStorage.getItem('cc_vol')??100)/100));}catch(e){VC.vol=1;}
 function vcOut(){const ac=vcAudio();if(!VC.out){VC.out=ac.createGain();VC.out.connect(ac.destination);}VC.out.gain.value=VC.vol;return VC.out;}
 function vcSpeakPaint(){const b=$('#vcSpk');b.classList.toggle('on',!VC.speak);
   b.title=VC.speak?'Speak replies is on. Tap to read the answers instead: nothing is spoken':'Speak replies is off: answers show as text only. Tap to hear them again';}
-function vcSpeakToggle(){VC.speak=!VC.speak;try{localStorage.setItem('cc_speak',VC.speak?'1':'0');}catch(e){}
+function vcSpeakToggle(){VC.speak=!VC.speak;
   if(!VC.speak){vcStopSpeaking();if(VC.on&&VC.state==='speaking')vcSetState(VC.ws?'listening':'');}
   vcSpeakPaint();}
 vcSpeakPaint();
@@ -3705,7 +3804,7 @@ async function vcVoices(){
 // server uses as history, only what was said since then. A board keeps its whole conversation.
 async function vcOpen(){
   if(VC.on){vcClose();return;}
-  VC.on=true;VC.since=Date.now();VC.carry=[];VC.carryNext=null;VC.muted=false;$('#vcMute').classList.remove('on');$('#vc').hidden=false;$('#vc').classList.toggle('tucked',!$('#agFly').hidden);if(vcMobile())vcSheet($('#agFly').hidden?'half':'slim');VC.scope=null;vcTitle();vcNote('');vcAudio();vcSetState('');vcVoices();newsAskPermission();NEWS.first=true;
+  VC.on=true;VC.since=Date.now();VC.carry=[];VC.carryNext=null;VC.muted=false;VC.speak=true;vcSpeakPaint();$('#vcMute').classList.remove('on');$('#vc').hidden=false;$('#vc').classList.toggle('tucked',!$('#agFly').hidden);if(vcMobile())vcSheet($('#agFly').hidden?'half':'slim');VC.scope=null;vcTitle();vcNote('');vcAudio();vcSetState('');vcVoices();newsAskPermission();NEWS.first=true;
   if(vcMode()==='browser'){   // Clewbert's own voice: downloaded the first time, from the browser's store after that
     const prog=$('#vcProg');prog.hidden=false;vcNote('');
     VB.progress=b=>{$('#vcProgN').textContent=Math.round(b/1e6)+' / 480 MB';$('#vcProgBar').style.width=Math.min(99,b/480e6*100)+'%';};VB.progress(0);
@@ -3713,7 +3812,15 @@ async function vcOpen(){
     catch(e){prog.hidden=true;vcNote("Clewbert's voice did not load ("+e.message+"). Close and reopen the mic to try again, or type below.");return;}
     if(!VC.on)return;
   }
-  try{await lvCfg();if(lvActive())await lvStart();else await vcEars();vcSetState('listening');newsPoll();}
+  try{await lvCfg();
+    if(lvActive()){
+      try{await lvStart();}
+      catch(e){   // the live engine could not be reached (or its sound path failed): the regular voice instead, said plainly
+        if(e&&e.name==='NotAllowedError')throw e;
+        lvEnd();if(VC.ws){try{VC.ws.close();}catch(x){}VC.ws=null;}if(VC.stream){VC.stream.getTracks().forEach(t=>t.stop());VC.stream=null;}
+        vcLog('live-fallback',{why:String(e&&e.message||e).slice(0,80)});await vcEars();vcNote('Live voice could not be reached, so this is the regular voice: it cannot hear you while it talks.');}
+    }else await vcEars();
+    vcSetState('listening');newsPoll();}
   catch(e){vcSetState('');vcNote(e&&e.name==='NotAllowedError'?'Microphone blocked. Allow it in the address bar, or type below.':'Listening is not available right now. You can type a question below.');}
 }
 function vcClose(){
@@ -3734,10 +3841,17 @@ const VC_MIC={audio:{echoCancellation:true,noiseSuppression:true,autoGainControl
    (session.delegation.created), asked through vcAsk as always, and the checked answer is sent back to be spoken word for word
    (session.say.append), so sources, the number check and the voice's hands on the canvas all stay as they are.
    Off unless the server names a gateway (api/live) and the switch in the voice card's menu is on. */
-const LV={cfg:null,want:false,on:false,ws:null,player:null,mod:false,did:null,asking:false,direct:false,heard:'',heardAt:0,reply:'',replyQ:'',loudAt:0,askedAt:0};
-try{LV.want=localStorage.getItem('cc_live')==='1';}catch(e){}
+const LV={cfg:null,want:null,on:false,ws:null,player:null,mod:false,did:null,asking:false,direct:false,directLen:0,directGot:0,heard:'',heardAt:0,reply:'',replyQ:'',loudAt:0,askedAt:0};
+// the switch is remembered per browser; a browser that never touched it follows the server's default (LIVE_VOICE_DEFAULT)
+try{const v=localStorage.getItem('cc_live');LV.want=v==='1'?true:v==='0'?false:null;}catch(e){LV.want=null;}
+// A phone on its own speaker feeds the voice back into the microphone (the regular ears drop it by voice print; the live engine would
+// answer itself), so the default applies to phones only when the server says its gateway can tell the owner's voice (cfg.phone).
+function lvWant(){return LV.want===null?!!(LV.cfg&&LV.cfg.default&&(CV_LIVE.device!=='phone'||LV.cfg.phone)):LV.want;}
 async function lvCfg(){if(!LV.cfg){try{LV.cfg=await api('live');}catch(e){LV.cfg={url:''};}}return LV.cfg;}
-function lvActive(){return !!(LV.want&&LV.cfg&&LV.cfg.url);}
+function lvActive(){return !!(lvWant()&&LV.cfg&&LV.cfg.url);}
+// Only my voice: the gateway passes on speech that matches the owner's voice print and drops the rest (other people, and this voice
+// coming back from a loudspeaker). On whenever the gateway can do it, unless this browser switched it off.
+function lvMe(){let v=null;try{v=localStorage.getItem('cc_live_me');}catch(e){}return !!(LV.cfg&&LV.cfg.gate)&&v!=='0';}
 function lvVoice(){let v='';try{v=localStorage.getItem('cc_live_voice')||'';}catch(e){}const all=(LV.cfg&&LV.cfg.voices)||[];return all.includes(v)?v:(LV.cfg&&LV.cfg.voice)||all[0]||'';}
 function lvVoiceName(v){return String(v).replace(/_en$/,'').split('_').map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' ');}
 const LV_PERSONA=`You are the voice of Clewbert, the user's own app of boards. Always speak English. Keep every reply to one or two short, natural sentences.
@@ -3753,7 +3867,7 @@ const LV_WORKLET=`class LVP extends AudioWorkletProcessor{
    for(let i=0;i<d.length;i++){this.b[this.w%this.N]=d[i];this.w++;}
    if(this.w-this.r>16000*1.5)this.r=this.w-16000*0.3;};}
  process(_,o){const out=o[0][0],st=16000/sampleRate;
-  if(!this.go){if(this.w-this.r<16000*0.15)return true;this.go=true;}
+  if(!this.go){if(this.w-this.r<16000*0.3)return true;this.go=true;}   // 0.3 s in hand before playing: through the public address frames came up to 0.43 s apart (0.15 s here let them crackle)
   for(let n=0;n<out.length;n++){const i=Math.floor(this.r);if(i+1>=this.w){this.go=false;break;}
    const a=this.r-i;out[n]=this.b[i%this.N]*(1-a)+this.b[(i+1)%this.N]*a;this.r+=st;}
   return true;}}
@@ -3766,13 +3880,13 @@ async function lvStart(){
   LV.player=new AudioWorkletNode(ac,'lv-player');LV.player.connect(vcOut());
   const ws=new WebSocket(cfg.url);
   await new Promise((res,rej)=>{
-    ws.onopen=()=>ws.send(JSON.stringify({type:'session.start',session:{model:'gpt-live-1',audio:{format:{type:'audio/pcm',rate:16000},output:{voice:lvVoice()}},delegation:{type:'client'},store:false,instructions:LV_PERSONA}}));
-    ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}if(m.type==='session.started')res();else if(m.type==='error')rej(new Error('live'));};
-    ws.onerror=()=>rej(new Error('live'));ws.onclose=()=>rej(new Error('live'));});
+    ws.onopen=()=>ws.send(JSON.stringify({type:'session.start',session:{model:'gpt-live-1',audio:{format:{type:'audio/pcm',rate:16000},output:{voice:lvVoice()}},delegation:{type:'client'},store:false,instructions:LV_PERSONA,voice_gate:lvMe(),handoff:'app'}}));   // handoff app: the gateway sends every turn but small talk here, in the words that were said
+    ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}if(m.type==='session.started'){LV.gated=!!(m.session&&m.session.voice_gate);res();}else if(m.type==='error')rej(new Error('live'));};
+    ws.onerror=()=>rej(new Error('live: no connection'));ws.onclose=()=>rej(new Error('live: closed'));setTimeout(()=>rej(new Error('live: no answer in 8 s')),8000);});
   if(!VC.on){ws.close();return;}
   ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}lvMsg(m);};
   ws.onclose=()=>{if(VC.ws!==ws)return;VC.ws=null;LV.on=false;if(VC.on){vcSetState('');vcNote('The live voice dropped. Close the voice and open it again, or type below.');}};
-  VC.ws=ws;LV.ws=ws;LV.on=true;LV.did=null;LV.asking=false;LV.direct=false;LV.heard='';LV.reply='';
+  VC.ws=ws;LV.ws=ws;LV.on=true;LV.frameAt=0;LV.lastDid=null;LV.did=null;LV.asking=false;LV.direct=false;LV.heard='';LV.reply='';
   const node=ac.createScriptProcessor(4096,1,1),sink=ac.createGain();sink.gain.value=0;const ratio=ac.sampleRate/16000;let acc=new Int16Array(0);
   node.onaudioprocess=e=>{const x=e.inputBuffer.getChannelData(0);let pk=0;for(let i=0;i<x.length;i++){const v=Math.abs(x[i]);if(v>pk)pk=v;}
     vcLevel(VC.muted?0:pk);if(VC.muted||ws.readyState!==1)return;   // muted: nothing is sent, and the gateway hears silence
@@ -3782,44 +3896,76 @@ async function lvStart(){
       ws.send(JSON.stringify({type:'session.input_audio.append',audio:btoa(s)}));}
     acc=out.slice(o);};
   VC.src=ac.createMediaStreamSource(VC.stream);VC.src.connect(node);node.connect(sink);sink.connect(ac.destination);VC.node=node;
-  vcNote('Live voice (beta): it hears you while it talks, so you can cut in.');
+  LV.note='Live voice (beta): it hears you while it talks, so you can cut in.'+(LV.gated?' It listens for your voice only.':lvMe()?' Listening for your voice only is not available right now, so it hears everyone.':'');vcNote(LV.note);
 }
 function lvMsg(m){
   const t=m.type,now=performance.now();
   if(t==='session.output_audio.delta'){
     const b=atob(m.delta),n=b.length>>1,f=new Float32Array(n);let pk=0;
     for(let i=0;i<n;i++){let v=b.charCodeAt(2*i)|(b.charCodeAt(2*i+1)<<8);if(v>32767)v-=65536;f[i]=v/32768;if(v>pk)pk=v;else if(-v>pk)pk=-v;}
-    if(LV.player)LV.player.port.postMessage(f,[f.buffer]);
+    if(LV.player&&!(LV.hushUntil&&now<LV.hushUntil))LV.player.port.postMessage(f,[f.buffer]);   // stopped: what was already on its way is dropped
+    // sound comes every 100 ms, silence included: a long gap means nothing from the gateway got through for that long
+    if(LV.frameAt&&now-LV.frameAt>2500){const gap=Math.round((now-LV.frameAt)/100)/10;vcLog('live-stall',{gap_s:gap,state:VC.state});
+      vcNote(`The connection to the live voice stalled for ${gap} seconds, so some of what it said may be missing.`);clearTimeout(LV.noteT);LV.noteT=setTimeout(()=>{if(LV.on)vcNote(LV.note||'');},8000);}
+    LV.frameAt=now;
     if(pk>600){LV.loudAt=now;if(VC.state==='listening'||VC.state==='')vcSetState('speaking');}
     else if(VC.state==='speaking'&&now-LV.loudAt>1500){vcSetState('listening');lvReplyEnd();}   // 1.5 s: longer than the pause between two sentences
     return;}
   if(t==='session.input_transcript.delta'){   // the words of one stretch of speech arrive together
     if(now-LV.heardAt>1500){LV.heard='';LV.asking=false;}
+    LV.hushUntil=0;   // the user is talking again: whatever the voice says next should be heard
+    LV.direct=false;   // and what it says next belongs to their new words, not to the answer they talked over
     LV.heard+=m.delta;LV.heardAt=now;$('#vcHeard').textContent='“'+LV.heard.trim()+'”';return;}
   if(t==='session.output_transcript.delta'){
-    if(LV.direct||LV.asking)return;   // this page's own answer being spoken (already in the conversation), or the "let me look" before it
+    // this page's own answer being spoken (already in the conversation) is counted off until all of it has come back
+    if(LV.direct){LV.directGot+=lvChars(m.delta);if(LV.directGot<=LV.directLen+3)return;LV.direct=false;LV.reply='';}
+    if(LV.asking)return;   // the "let me look" before the answer
     if(!LV.reply)LV.replyQ=LV.heard.trim()||'…';
     LV.reply+=m.delta;VC.pending={q:LV.replyQ,a:LV.reply.trim()};vcThread(true);return;}
   if(t==='session.delegation.created'){   // a question for the boards: ask it the usual way, in the words that were heard
     const d=m.delegation||{},heard=LV.heard.trim(),ok=/[a-z]{2}/i.test(heard)&&!/[^\u0000-ɏ -⁯]/.test(heard);
-    if(LV.asking&&now-LV.askedAt<4000)return;   // one question is handed over once
+    if(d.id&&d.id===LV.lastDid)return;LV.lastDid=d.id;   // the same hand-off twice is ignored. (A 4 s rule here once threw away a real question that arrived right behind another after a connection stall, 2026-11-11.)
     LV.did=d.id||null;LV.asking=true;LV.askedAt=now;LV.reply='';VC.pending=null;$('#vcHeard').textContent='';
     const lt=VC.turns[VC.turns.length-1];if(lt&&lt.lv&&Date.now()-lt.t<8000)VC.turns.pop();   // the "let me look" just before the hand-off is not an answer
-    const q=ok?heard:String(d.task||heard).trim();if(q)vcAsk(q);return;}
+    const q=d.words?String(d.task||'').trim():ok?heard:String(d.task||heard).trim();if(q)vcAsk(q);return;}
+  if(t==='session.input.ignored'){   // someone else's voice, or this voice coming back from the loudspeaker: said once, briefly
+    if(!m.while_speaking){vcNote('Ignored a voice that did not sound like you.');clearTimeout(LV.noteT);LV.noteT=setTimeout(()=>{if(LV.on)vcNote(LV.note||'');},4000);}
+    return;}
   if(t==='error')console.warn('[live voice]',m.error);
 }
+const lvChars=t=>String(t||'').replace(/\s+/g,'').length;
 function lvReplyEnd(){   // the voice has gone quiet
-  if(LV.direct){LV.direct=false;LV.reply='';return;}
+  // a pause inside the page's own answer is not its end: the rest of its words once showed up as a second copy of
+  // the question with half the answer under it (2026-11-12)
+  if(LV.direct){if(LV.directGot<LV.directLen*0.9)return;LV.direct=false;LV.reply='';return;}
   if(LV.reply.trim()&&!LV.asking){VC.turns.push({q:LV.replyQ,a:LV.reply.trim(),t:Date.now(),lv:true});VC.pending=null;vcThread(true);$('#vcHeard').textContent='';}
   LV.reply='';
 }
+async function lvAsk(ask,seq){   // the question's answer in pieces: {say} sentences to speak now, then {final, rest}
+  const r=await fetch('api/ask',ask);
+  if(!(r.headers.get('Content-Type')||'').includes('event-stream')){if(!r.ok)throw Object.assign(new Error('HTTP '+r.status),{status:r.status});return {j:await r.json()};}
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf='',fin=null;
+  for(;;){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
+    while((i=buf.indexOf('\n\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+2);if(!line.startsWith('data:'))continue;
+      let m;try{m=JSON.parse(line.slice(5));}catch(e){continue;}
+      if(m.say){if(seq===VC.askSeq&&VC.on){lvSay(m.say);
+          // the words appear as they are spoken, not after the whole answer is in (it sat on "Looking..." while talking, 2026-11-12)
+          if(VC.pending&&VC.pending.q){VC.pending={q:VC.pending.q,a:((VC.pending.a||'')+' '+m.say).trim()};vcThread(true);}}}
+      else if(m.final)fin=m;}}
+  if(!fin)throw new Error('the answer stopped half way');
+  if(fin.code>=400)throw Object.assign(new Error('HTTP '+fin.code),{status:fin.code});
+  return {j:fin.final,rest:fin.rest||''};
+}
 function lvSay(text){   // the checked answer, spoken word for word by the live voice
-  VC.said=text;LV.direct=true;LV.asking=false;
+  if(!LV.direct){LV.directLen=0;LV.directGot=0;}
+  VC.said=text;LV.direct=true;LV.asking=false;LV.hushUntil=0;LV.directLen+=lvChars(vcSpoken(text));
   if(!VC.speak||!LV.ws||LV.ws.readyState!==1){LV.direct=false;LV.did=null;vcSetState(VC.ws?'listening':'');return;}
   vcSetState('speaking');LV.loudAt=performance.now()+4000;   // the first sound takes a moment
   LV.ws.send(JSON.stringify({type:'session.say.append',content:vcSpoken(text),delegation_id:LV.did||undefined}));LV.did=null;
 }
-function lvStop(){if(LV.on&&LV.ws&&LV.ws.readyState===1){try{LV.ws.send(JSON.stringify({type:'session.output.stop'}));}catch(e){}if(LV.player)LV.player.port.postMessage('flush');LV.direct=false;}}
+// Stop: the gateway stops, the page's queue is emptied, and for up to 3 s the sound already on its way is dropped too
+// (about a second of it still played after the user silenced the voice, 2026-11-12)
+function lvStop(){if(LV.on&&LV.ws&&LV.ws.readyState===1){try{LV.ws.send(JSON.stringify({type:'session.output.stop'}));}catch(e){}if(LV.player)LV.player.port.postMessage('flush');LV.direct=false;LV.hushUntil=performance.now()+3000;}}
 function lvEnd(){if(!LV.on&&!LV.player)return;LV.on=false;try{if(LV.ws&&LV.ws.readyState===1)LV.ws.send(JSON.stringify({type:'session.close'}));}catch(e){}
   if(LV.player){try{LV.player.disconnect();}catch(e){}LV.player=null;}LV.ws=null;}
 async function vcEars(){
@@ -4059,7 +4205,8 @@ async function vcAsk(q){
   // a filler only for a real wait: small talk answers in 1-4 s and was getting "Checking the board." first
   const filler=setTimeout(()=>{if(seq===VC.askSeq&&VC.state==='thinking')vcSay(vcFiller(q),seq,true);},4000);
   let j;
-  try{j=await api('ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,board,space,seen:vcSeen(),selected:board&&cvBoardId===board?[...cvSel].slice(0,300):[],since:board?undefined:VC.since||Date.now(),carry:(VC.carry||[]).slice(-3).map(t=>({q:t.q,a:t.a,t:t.t}))})});}
+  let rest;   // live voice: what is still to be said once the whole answer is in (its first sentences are spoken as they are written)
+  try{const ask={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stream:LV.on||undefined,question:q,board,space,seen:vcSeen(),selected:board&&cvBoardId===board?[...cvSel].slice(0,300):[],since:board?undefined:VC.since||Date.now(),carry:(VC.carry||[]).slice(-3).map(t=>({q:t.q,a:t.a,t:t.t}))})};if(LV.on){const got=await lvAsk(ask,seq);j=got.j;rest=got.rest;}else j=await api('ask',ask);}
   catch(e){clearTimeout(filler);if(seq!==VC.askSeq||VC.scope!==scope)return;
     const a=e.message&&e.message.startsWith('No model')?e.message:e&&e.status?'The model did not answer. Try again in a moment.':'I could not reach the server, so that did not go through. Say it again in a moment.';
     VC.pending={q,a};vcThread(true);VC.pending=null;vcSetState(VC.ws?'listening':'');vcOffline(a);return;}
@@ -4068,13 +4215,14 @@ async function vcAsk(q){
   if(VC.scope===scope){VC.pending=null;VC.turns.push(j.turn);vcThread(true);}   // the server saved it either way
   if(seq!==VC.askSeq||!VC.on)return;
   VC.tAnswer=performance.now();VC.tAsked=tAsked;VC.tHeard=VC.askHeld||tAsked;
-  vcSay(j.answer,seq,false);   // speech first: moving or drawing the board below can hold the page up for a second or more
+  if(rest!==undefined){if(rest&&seq===VC.askSeq&&VC.on)lvSay(rest);}else vcSay(j.answer,seq,false);   // speech first: moving or drawing the board below can hold the page up for a second or more
   if(j.unread)vcNote(`Still reading ${j.unread} picture${j.unread===1?'':'s'} on ${board?'this board':'your boards'}, so the answer may miss what is in them.`);
   if(j.reading)vcNote(`Still reading ${board?'this board':'some boards'} for the brief (${j.reading.done} of ${j.reading.total} parts), so a broad answer may miss parts.`);
   if(j.web&&cvBoardId===board)vcWebCard(j.web);   // "open that site so we can look at it"
   if(j.team&&cvBoardId===board){if(j.team.added)vcNote(`Added ${j.team.added} to this board's team.`);if(!$('#org').hidden)api('teams/'+cvBoardId).then(t=>{AG.team=t;orgPaint();orgAddList();});}
   if((j.started||j.answered||j.followed||j.steered)&&cvBoardId===board)agPoll().then(()=>{if(j.started)agReveal(j.started.frame);});   // an agent task started or got its answer
   if(j.edited&&cvBoardId===board){if(cvDirty.has(board))cvFlush();else liveRefresh(true);}   // the voice moved cards: show where they are now
+  if(j.clear&&cvBoardId===board){VC.hl.clear();cvSelect([]);if(cvBoard)cvRender();}   // "deselect" / "take the outlines off": the voice's own marks and the selection both go
   vcCarryTo(j);
   if(j.started){}   // the view already went to the new task frame
   else if(j.show&&j.show.length&&cvBoardId===j.show[0].board&&cvBoard&&!cvBoard.items.some(i=>i.id===j.show[0].item)){   // just added
@@ -4251,7 +4399,11 @@ function vcFocus(ids,close){
   cvView.s=s;cvView.x=left+(room-(x1-x0)*s)/2-x0*s;cvView.y=(tall-(y1-y0)*s)/2-y0*s;cvApplyView();
 }
 // speech is queued so a filler finishes before the answer starts; a new question or "stop" cuts everything
-function vcSpoken(t){return String(t||'').replace(/\b(?:api\/)?(?:[\w-]+\/)+[\w.-]+\.(?:html?|md|json|py|js|mp4|pdf|webm|txt|csv)\b/gi,'that card').replace(/\bhttps?:\/\/\S+/gi,'a link').replace(/\s{2,}/g,' ');}   // a path read aloud is noise (2026-11-08); the text keeps it
+// a short month before or after a day number is said in full: "Nov 4" was read out as "nov" (2026-11-13)
+const VC_MONTHS={jan:'January',feb:'February',mar:'March',apr:'April',jun:'June',jul:'July',aug:'August',sep:'September',sept:'September',oct:'October',nov:'November',dec:'December'};
+const vcMonths=t=>t.replace(/\b(jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\.?(?=\s+\d{1,2}(?:st|nd|rd|th)?\b)/gi,(m,k)=>VC_MONTHS[k.toLowerCase()])
+  .replace(/\b(\d{1,2}(?:st|nd|rd|th)?\s+)(jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\b\.?/gi,(m,d,k)=>d+VC_MONTHS[k.toLowerCase()]);
+function vcSpoken(t){return vcMonths(String(t||'')).replace(/\b(?:api\/)?(?:[\w-]+\/)+[\w.-]+\.(?:html?|md|json|py|js|mp4|pdf|webm|txt|csv)\b/gi,'that card').replace(/\bhttps?:\/\/\S+/gi,'a link').replace(/\s{2,}/g,' ');}   // a path read aloud is noise ("I don't know what that means", 2026-11-08); the text keeps it
 function vcSay(text,seq,isFiller){
   if(LV.on){if(!isFiller&&seq===VC.askSeq&&VC.on)lvSay(text);return;}   // live voice: no filler (the engine says its own "let me look")
   if(!vcVoice()||!VC.speak){if(!isFiller)vcSetState(VC.ws?'listening':'');return;}
@@ -4322,12 +4474,13 @@ $('#vcMute').onclick=()=>vcMuteToggle();
 $('#vcMore').onclick=e=>{
   const sel=$('#vcVoice'),opts=[...sel.options];
   const can=VC.speech==='openai'||VC.speech==='xai';
-  menuOpen(e.currentTarget,`<div class="mh">Voice volume</div><div class="vc-vol"><input type="range" min="0" max="100" step="5" value="${Math.round(VC.vol*100)}" aria-label="Voice volume"></div><hr>${LV.cfg&&LV.cfg.url?`<div class="mh">Live voice (beta): you can talk over it</div><button data-live="1"${LV.want?' class="cur"':''}>${LV.want?'On (press to turn off)':'Off (press to turn on)'}</button><hr>`:''}${lvActive()?((LV.cfg.voices||[]).length?`<div class="mh">Voice</div>${LV.cfg.voices.map(v=>`<button data-lvoice="${escapeAttr(v)}"${v===lvVoice()?' class="cur"':''}>${escapeHtml(lvVoiceName(v))}</button>`).join('')}<hr>`:''):opts.length?`<div class="mh">Voice</div>${opts.map(o=>`<button data-voice="${escapeAttr(o.value)}"${o.value===sel.value?' class="cur"':''}>${escapeHtml(o.textContent)}</button>`).join('')}<hr>`:''}
+  menuOpen(e.currentTarget,`<div class="mh">Voice volume</div><div class="vc-vol"><input type="range" min="0" max="100" step="5" value="${Math.round(VC.vol*100)}" aria-label="Voice volume"></div><hr>${LV.cfg&&LV.cfg.url?`<div class="mh">Live voice (beta): you can talk over it</div><button data-live="1"${lvWant()?' class="cur"':''}>${lvWant()?'On (press to turn off)':'Off (press to turn on)'}</button>${lvActive()&&LV.cfg.gate?`<button data-lvme="1"${lvMe()?' class="cur"':''}>${lvMe()?'Only my voice: on (press to hear everyone)':'Only my voice: off (press to turn on)'}</button>`:''}<hr>`:''}${lvActive()?((LV.cfg.voices||[]).length?`<div class="mh">Voice</div>${LV.cfg.voices.map(v=>`<button data-lvoice="${escapeAttr(v)}"${v===lvVoice()?' class="cur"':''}>${escapeHtml(lvVoiceName(v))}</button>`).join('')}<hr>`:''):opts.length?`<div class="mh">Voice</div>${opts.map(o=>`<button data-voice="${escapeAttr(o.value)}"${o.value===sel.value?' class="cur"':''}>${escapeHtml(o.textContent)}</button>`).join('')}<hr>`:''}
     ${can?`<button data-here="1">${vcHere()?'Use the '+(VC.speech==='xai'?'xAI':'OpenAI')+' voice':'Keep my voice on this computer'}</button><hr>`:''}
     <button class="danger" data-clear="1"${VC.turns.length?'':' disabled'}>Clear the conversation</button>`,m=>{
     m.querySelectorAll('[data-voice]').forEach(x=>x.onclick=()=>{menuClose();sel.value=x.dataset.voice;sel.onchange();});
     const again=()=>{if(VC.on){vcClose();vcOpen();}};   // the live voice is one connection: a change starts it afresh
-    m.querySelectorAll('[data-live]').forEach(x=>x.onclick=()=>{menuClose();LV.want=!LV.want;try{localStorage.setItem('cc_live',LV.want?'1':'0');}catch(err){}again();});
+    m.querySelectorAll('[data-live]').forEach(x=>x.onclick=()=>{menuClose();LV.want=!lvWant();try{localStorage.setItem('cc_live',LV.want?'1':'0');}catch(err){}again();});
+    m.querySelectorAll('[data-lvme]').forEach(x=>x.onclick=()=>{menuClose();try{localStorage.setItem('cc_live_me',lvMe()?'0':'1');}catch(err){}again();});
     m.querySelectorAll('[data-lvoice]').forEach(x=>x.onclick=()=>{menuClose();try{localStorage.setItem('cc_live_voice',x.dataset.lvoice);}catch(err){}again();});
     m.querySelector('[data-clear]').onclick=()=>{menuClose();vcClearTalk();};
     m.querySelector('.vc-vol input').oninput=ev=>{VC.vol=ev.target.value/100;if(VC.out)VC.out.gain.value=VC.vol;try{localStorage.setItem('cc_vol',ev.target.value);}catch(err){}};
@@ -4360,6 +4513,13 @@ const AG_LABEL={queued:'Starting',working:'Working',waiting:'Waiting on you',tea
 AG.said=new Set();   // questions the voice has already read out
 function agSeen(bid){if(!AG.seen.has(bid))AG.seen.set(bid,new Set());return AG.seen.get(bid);}
 function agRun(id){return AG.runs.find(r=>r.id===id);}
+const CV_TERM={};   // run id -> the terminal's text as last read, so a redraw shows it at once
+function cvTermPaint(el,it){const pre=el.querySelector('pre.term');if(!pre)return;const t=CV_TERM[it.run]||'',low=pre.scrollHeight-pre.scrollTop-pre.clientHeight<24;
+  pre.innerHTML=t?escapeHtml(t).replace(/^(\$ .*)$/gm,'<b>$1</b>')+(agRunLive(it.run)?'<i class="cur"></i>':''):'<span class="dim">Nothing run yet.</span>';
+  if(low||!pre.dataset.seen){pre.scrollTop=pre.scrollHeight;pre.dataset.seen=1;}}   // follows the newest line unless you scrolled up to read
+function cvTermFill(el,it){const rr=agRun(it.run),v=rr?rr.steps+(agRunLive(it.run)?'':'e'):'x';cvTermPaint(el,it);
+  if(el.dataset.v===String(v))return;el.dataset.v=v;
+  fetch('api/terms/'+it.run+'.txt?v='+v).then(r=>r.ok?r.text():'').then(t=>{CV_TERM[it.run]=t;cvTermPaint(el,it);}).catch(()=>{delete el.dataset.v;});}
 async function agPoll(){
   clearTimeout(AG.timer);const bid=cvBoardId;if(!bid||!cvBoard)return;
   let j=null;try{j=await api('agents/'+bid);}catch(e){}
@@ -4438,6 +4598,7 @@ function agPaint(){
   w.querySelectorAll('.cv-shot').forEach(el=>{const it=cvBoard.items.find(i=>i.id===el.dataset.id),rr=it&&agRun(it.run),img=el.querySelector('img');   // browser views follow their agent
     if(rr&&img&&!img.src.endsWith('v='+rr.steps)){img.style.visibility='';img.src=`api/shots/${it.run}.jpg?v=${rr.steps}`;}
     const lab=el.querySelector('.shotbar span');if(rr&&rr.page&&lab&&lab.textContent!==rr.page)lab.textContent=rr.page;});
+  w.querySelectorAll('.cv-term').forEach(el=>{const it=cvBoard.items.find(i=>i.id===el.dataset.id);if(it)cvTermFill(el,it);});   // terminals follow their agent
   w.querySelectorAll('.cv-web').forEach(el=>{const it=cvBoard.items.find(i=>i.id===el.dataset.id),rr=it&&it.demo&&agRun(it.run),f=el.querySelector('iframe');   // a fixed demo reloads
     if(rr&&f){const src=it.url+'?v='+(rr.demo_v||0);if(f.dataset.v!==src){f.dataset.v=src;f.src=src;}}});
   const waiting=AG.runs.filter(r=>r.status==='waiting').length;

@@ -11,8 +11,8 @@ frame, joined to the Lead's frame by an arrow. The Lead waits (status "team") un
 ended, then reads their results and either hands out a next round or writes the final answer in its own frame.
 """
 import base64, hashlib, json, os, queue, re, secrets, subprocess, threading, time, urllib.error, urllib.request
-import integrations, models, skills, talk
-from . import code, skillfiles, web
+import integrations, models, openloom, skills, talk
+from . import code, shell, skillfiles, web
 
 MODEL_URL = os.environ.get('AGENT_MODEL_URL', '')   # a chat/completions address with tool calls on your own machine, or pick a provider in Settings
 MODEL = os.environ.get('AGENT_MODEL', '')
@@ -37,6 +37,8 @@ BLOCKED_PAGE = re.compile(r'sorry, you have been blocked|attention required! \| 
 BOARD_READS = ('search_board', 'read_item', 'read_frame')
 FREE_TURNS = 10          # turns that only read the board or got an answer kept from earlier do not count as steps, up to this many
 PART_STEPS = 16          # a teammate's part is small: done in about 12 steps, or cut too big (long runs drift)
+BUILD_STEPS = 40         # a part that builds tunes by looking: 25 look-and-fix rounds got the AudioPen clone close in a terminal, 5 could not on the board (2026-11-09)
+KEEP_IMAGES = 3          # the newest screenshots stay in a seeing model's context as pictures; older ones become a line of text
 BROWSER_URL = os.environ.get('BROWSER_URL', '').rstrip('/')   # browser/service.py (a real browser), e.g. http://localhost:8790
 BROWSER_TOKEN = os.environ.get('BROWSER_TOKEN') or (open(os.environ['BROWSER_TOKEN_FILE']).read().strip()
                                                     if os.path.exists(os.environ.get('BROWSER_TOKEN_FILE', '')) else '')
@@ -70,7 +72,7 @@ REARRANGE = re.compile(r"\b(re-?arrang\w*|restructur\w*|re-?organi[sz]\w*|regrou
                        r"into (?:themes|groups|sections|categories|clusters))", re.I)
 BUILDING = re.compile(r"\b(build|make|create|code|implement|fix|rebuild)\w*\b.{0,80}\b(demo|page|prototype|app|site|tool|it)\b", re.I)   # a part that is to build
 BUILD = re.compile(r"\b(demo|prototype|build|make (?:a|me a|an)|page|site|website|app|tool|interface|screen|ui|ux|dashboard|landing)\b", re.I)
-READ_TOOLS = ('read_web_page', 'read_item', 'search_board', 'web_search', 'read_page_source', 'read_code', 'search_code',
+READ_TOOLS = ('read_web_page', 'read_item', 'search_board', 'read_frame', 'web_search', 'read_page_source', 'read_code', 'search_code',
               'browser_open', 'browser_look', 'browser_click', 'browser_type', 'browser_scroll', 'browser_select', 'browser_back')   # tools whose result is text the agent saw with its own eyes
 
 
@@ -89,9 +91,10 @@ def quotes_in(text):
 
 
 def read_corpus(r):
-    """Everything this run read for itself: the results of its read tools, as one text. A teammate's hand-back and the
-    task it was given are left out on purpose: that is how an invented quote travelled from a checker, through the
-    Lead's brief, into a reader's 'exact' notes (Anita's board, 2026-11-04)."""
+    """Everything this run read for itself: the results of its read tools, as one text (a frame read with read_frame
+    counts: an analyst was refused six quotes of a teammate's own notes it had just read, 2026-11-09). The task it was
+    given and the checker's words are left out on purpose: that is how an invented quote travelled from a checker, through
+    the Lead's brief, into a reader's 'exact' notes (2026-11-04). A Lead also gets its teammates' frames: corpus()."""
     names = {}
     parts = []
     for m in r.get('messages') or []:
@@ -124,6 +127,26 @@ CANT_READ = re.compile(r"[^.\n]{0,120}\b(?:could ?n[o']t|can ?n[o']t|unable to|w
 MAX_ROUNDS = 5            # times a Lead can hand out work for one task (design, build, review, fix)
 RESULT_WORDS = 2000       # words of one teammate's results the Lead (and the next round) reads back
 STRONG_ROLES = ('developer', 'ux', 'ui', 'engineer')   # these run on the code model when there is one
+
+def sees(job='agents'):
+    """Can the model doing this job look at a picture itself? Yes on an outside provider (they all take images), when it is
+    the very model picked to look at screenshots (the vision job), or when AGENT_MODEL_SEES is set. Then screenshots and
+    the pictures the person selected go into its context as images, not as a 300-token caption from a second call: on
+    2026-11-09 the same DeepSeek got 40 pictures in a terminal and 0 on the board, and the board's demo looked nothing
+    like the reference."""
+    if os.environ.get('AGENT_MODEL_SEES') or models.choice(job):
+        return True
+    mine = models.local(job) or models.local('agents') or (MODEL_URL, MODEL)
+    eyes = models.local('vision') or (VISION_MODEL_URL, VISION_MODEL)
+    return bool(mine[1] and eyes[1] and mine[1] == eyes[1])
+
+
+def text_of(content):
+    """The words of a message whose content may be a list of text and image parts."""
+    if isinstance(content, str):
+        return content
+    return ' '.join(str(p.get('text') or '') for p in (content or []) if isinstance(p, dict) and p.get('type') == 'text')
+
 
 def learned(data, member_id):
     """The skills added to this teammate's role, for its prompt on every board (a job-made teammate gets its kind's skills)."""
@@ -207,7 +230,12 @@ STARTERS['engineer'] = {'name': 'Engineer', 'color': '#0e7490', 'role':
     '(code_edit for a change inside a file, code_write for a new file). Match the code base\'s own style. After changes, '
     'code_check; fix every error it reports. Then code_commit with a message that says what changed and why. Finish only '
     'after a commit with a clean check, and say in your frame what you changed, what you did not get to, and what the user '
-    'should check when the user reviews it. You cannot run the app, its tests or any command: never say you did.'}
+    'should check when the user reviews it. You have a terminal (code_run): run the checks and tests the change needs and say what '
+    'they printed. It has no network, no node and cannot start the app: never say you ran something you did not.\n'
+    'You start with no memory of earlier work on this branch. Your first code tool hands you the notes the engineer before '
+    'you left (TEAM-PROGRESS.md), the last commits and a smoke test: read them before anything else, and if the smoke test is '
+    'broken deal with that first. Do ONE piece of verified progress, not everything at once. Before you commit, rewrite '
+    'TEAM-PROGRESS.md for the next engineer: what works and how you checked, what you tried that failed, what is left.'}
 WHY = {'lead': 'Turns your goal into a plan and owns the final answer', 'engineer': 'Writes the code, on a branch for your review',
        'researcher': 'Finds the facts the work stands on', 'writer': 'Turns results into words people read',
        'analyst': 'Compares and ranks what the team found', 'checker': 'Makes sure what we say holds up',
@@ -441,16 +469,23 @@ CODE_TOOLS = [
          'the line numbers); it becomes new.', {'repo': R, 'path': S, 'old': S, 'new': S}),
     tool('code_write', 'Write a whole file: a new file, or one replaced whole. Prefer code_edit for a change inside a file.',
          {'repo': R, 'path': S, 'content': S}),
-    tool('code_check', 'Check the syntax of every file you changed (Python parsed, JSON loaded; nothing is run: there is no shell here).', {'repo': R}),
+    tool('code_check', 'Check the syntax of every file you changed (Python parsed, JSON loaded; nothing is run).', {'repo': R}),
+    tool('code_run', 'Run one command line (bash) in your branch folder and get what it printed. The user watches it in the terminal card in '
+         'your frame. For checks and tests: python3, git (read only), grep, sed, ls. It is shut in: no network (nothing can be installed or '
+         'fetched), no node or npm, it cannot start the app or a server, it reads and writes only your branch folder and $TMPDIR, and a '
+         'command is stopped after 60 seconds. JavaScript syntax: "$JSC" -e "new Function(read(\'file.js\'))" prints nothing when the file '
+         'parses and the error when it does not. A longer script: code_write it, then run the file.', {'repo': R, 'command': S}),
     tool('code_commit', 'Commit your changes on your branch, team/<job id> (the only branch; it cannot be named otherwise), with a message that says what changed and why.', {'repo': R, 'message': S}),
 ]
 CODE_NAMES = {t['function']['name'] for t in CODE_TOOLS}
+PROGRESS = 'TEAM-PROGRESS.md'   # the notes one engineer leaves the next, on the team's branch
 # words in a part that ask for what no teammate can do; the part gets CANNOT_NOTE so it says so and does the rest (2026-11-08)
-IMPOSSIBLE = re.compile(r"\b(?:shell|terminal|command line|node -e|node --check|npm\b|pytest|python3? \S|run (?:the |its |your |a )?(?:app|tests?|server|script|check|command)s?\b|"
-                        r"syntax[- ]check|(?:create|make|new|own) (?:a |the )?branch|branch (?:named|called)|named branch|branch [\w-]+-[\w-]+|microphone|\bmic\b|"
+IMPOSSIBLE = re.compile(r"\b(?:node -e|node --check|npm\b|pip install|run (?:the |its |your |a )?(?:app|server)s?\b|"
+                        r"(?:create|make|new|own) (?:a |the )?branch|branch (?:named|called)|named branch|branch [\w-]+-[\w-]+|microphone|\bmic\b|"
                         r"hears? (?:it|the|an?) |speaks? (?:back|aloud)|audio comes back|deploy|push(?:es|ed)? to github)", re.I)
-CANNOT_NOTE = ('\nWhat you cannot do here, so do not try it and do not count it against yourself: run a shell or any command, run the '
-               'app or its tests, hear or speak sound, use a microphone, push or deploy. Commits land on branch team/<job id>, the only '
+CANNOT_NOTE = ('\nWhat you cannot do here, so do not try it and do not count it against yourself: start the app or a server, use node '
+               'or npm, install anything, hear or speak sound, use a microphone, push or deploy. (An engineer can run checks and tests '
+               'with code_run; nobody else can run a command.) Commits land on branch team/<job id>, the only '
                'branch name there is. If this part needs one of those, write ONE note saying so plainly, do the rest, and finish.')
 CODE_READ = [t for t in CODE_TOOLS if t['function']['name'] in ('code_files', 'code_search', 'code_read')]   # every teammate may read the team's branch
 ASSIGN = tool('assign', 'Hand parts of the task to teammates. Each part becomes their own task frame on the board, next to '
@@ -472,7 +507,7 @@ def board_unit(board):
             if i.get('color') != 'none':
                 return 200
             return 300 if i.get('card') else 260 if i.get('doc') else 620 if (i.get('grow') == 'h' or i.get('lines')) else 260
-        return {'file': 260, 'link': 300, 'media': 440, 'img': 440, 'emoji': 80, 'shot': 440}.get(i.get('type'), 300)
+        return {'file': 260, 'link': 300, 'media': 440, 'img': 440, 'emoji': 80, 'shot': 440, 'term': 440}.get(i.get('type'), 300)
     its = [i for i in (board.get('items') or []) if i.get('type') not in ('area', 'arrow', 'ink') and float(i.get('w') or 0) > 0]
     hand = [i for i in its if not i.get('agent')]   # what the user put there by hand sets the scale; earlier oversized agent work does not
     rs = sorted(float(i['w']) / nominal(i) for i in (hand or its))
@@ -661,10 +696,11 @@ class Runner:
         return r and {'id': rid, 'task': r['task'], 'status': r['status'], 'steps': r['steps']}
 
     # ---------- starting, answering, stopping ----------
-    def start(self, bid, task, selected=(), anchor=None, mode='team', member=None, parent=None, intent=None, done_when=None):
+    def start(self, bid, task, selected=(), anchor=None, mode='team', member=None, parent=None, intent=None, done_when=None, ask=None):
         """A new task. Its frame goes next to the selected items (anchor {x, y, unit} from the page), next to the Lead's
         frame for a teammate's part, or right of the board. mode 'team' gives it to the board's Lead when the team has
-        teammates; 'one' is a single agent. member/parent: a teammate's part handed out by a Lead run."""
+        teammates; 'one' is a single agent. member/parent: a teammate's part handed out by a Lead run. ask: the person's
+        own words when task is a rewording of them (the voice's plan): they go to the Lead and every part, unchanged."""
         rid = 'r' + secrets.token_hex(6)
         task = ' '.join(str(task).split())[:1500]
         team = self.team(bid)['members']
@@ -719,24 +755,35 @@ class Runner:
             p = self.runs[parent]
             top = self.root(p)
             prompt += '\n\nTHE TEAM\'S TASK (from the person): %s' % top['task']
+            if top.get('ask'):
+                prompt += '\n\nTHE PERSON\'S OWN WORDS, exactly as said (the task above is a rewording; where they differ, these win): "%s"' % top['ask']
             earlier = '\n\n'.join(x for x in ((top.get('results') if top is not p else ''), p.get('results')) if x)
             if earlier:
                 prompt += '\n\nRESULTS OF EARLIER ROUNDS:\n' + earlier[-16000:]
             prompt += '\n\nYOUR PART (from the %s): %s' % ((p.get('member') or {}).get('name', 'Lead'), task)
             if done_when:
+                steps = BUILD_STEPS if (member and member.get('id') in STRONG_ROLES) or BUILDING.search(task) else PART_STEPS
                 prompt += ('\n\nYOUR PART IS DONE WHEN: %s\nA checker reads your frame against this when you finish. You '
-                           'have %d steps: put each result in your frame as soon as you have it.' % (done_when, PART_STEPS))
+                           'have %d steps: put each result in your frame as soon as you have it.' % (done_when, steps))
         else:
             prompt += '\n\nTASK: ' + task
+            if ask and plain(ask) != plain(task):
+                prompt += '\n\nTHE PERSON\'S OWN WORDS, exactly as said (the task above is a rewording; where they differ, these win): "%s"' % ask
         rules = self.rules()
         if rules:   # the user's standing rules, for every team and every part
             prompt += '\n\nTHE USER\'S STANDING RULES FOR EVERY TEAM (follow them over anything else here):\n' + rules
+        model = 'code' if member and member.get('id') in STRONG_ROLES else None
+        first = {'role': 'user', 'content': prompt}
+        pictures = self.pictures(bid, selected) if sees('builders' if model == 'code' else 'agents') else []
+        if pictures:   # the pictures the person selected, for the model's own eyes (a reference to match, not a caption of one)
+            first = {'role': 'user', 'keep': True, 'img': True, 'content': [{'type': 'text', 'text': prompt + '\n\nTHE PICTURES THE PERSON SELECTED are attached below (%d). Look at them: they are what the result is measured against.' % len(pictures)}]
+                     + [{'type': 'image_url', 'image_url': {'url': u}} for u in pictures]}
         r = {'id': rid, 'board': bid, 'task': task, 'status': 'queued', 'created': now_ms(), 'frame': frame['id'],
              'focus': frame['id'], 'lay': lay, 'steps': [], 'selected': list(selected)[:200], 'lead': is_lead,
              'member': member, 'parent': parent, 'children': [], 'intent': intent if not parent else None,
-             'done_when': str(done_when or '').strip()[:400] or None,
-             'model': 'code' if member and member.get('id') in STRONG_ROLES else None,
-             'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': prompt}]}
+             'done_when': str(done_when or '').strip()[:400] or None, 'ask': (' '.join(str(ask).split())[:1500] or None) if ask and not parent else None,
+             'model': model,
+             'messages': [{'role': 'system', 'content': system}, first]}
         with self.lock:
             self.runs[rid] = r
         self.save(r)
@@ -1183,14 +1230,13 @@ class Runner:
             if r.get('stop'):
                 r['status'] = 'stopped'
                 break
-            if sum(1 for m in r['messages'] if m['role'] == 'assistant') - r.get('msg_base', 0) >= (
-                    RETRY_STEPS if r.get('watch_retry') else PART_STEPS if r.get('parent') and not r.get('lead') else MAX_STEPS):
+            if sum(1 for m in r['messages'] if m['role'] == 'assistant') - r.get('msg_base', 0) >= self.cap(r):
                 self.wrap_up(r)   # out of steps: one last turn to write down what it learned, so nothing is lost
                 r['status'] = 'unfinished'   # a Lead that looped to the limit got a green Done with nothing done (Oct 31)
                 break
             offered = LEAD_TOOLS if r.get('lead') else TOOLS + (BROWSER_TOOLS if BROWSER_URL else [])
             if str((r.get('member') or {}).get('id', '')).startswith('engineer'):
-                offered = offered + CODE_TOOLS   # the team's branch of a code base: read, edit, check, commit; no shell
+                offered = offered + CODE_TOOLS   # the team's branch of a code base: read, edit, check, commit, and a shut-in terminal
             elif not r.get('lead') and code.repos(os.path.dirname(self.dir)):
                 offered = offered + CODE_READ   # a researcher or checker reads the code (and the engineer's changes) itself
             apps = [] if r.get('lead') else integrations.tools(r['board'])   # connected apps (Settings), unless off on this board
@@ -1263,14 +1309,21 @@ class Runner:
                 if result is not None and isinstance(result, str) and name in READ_TOOLS + BOARD_READS:
                     # what this is costing, in view (after Exo's cost legibility): the agent can wrap up before the cap does it
                     used = sum(1 for m in r['messages'] if m['role'] == 'assistant') - r.get('msg_base', 0)
-                    cap = RETRY_STEPS if r.get('watch_retry') else PART_STEPS if r.get('parent') and not r.get('lead') else MAX_STEPS
-                    result += '\n(Step %d of %d.)' % (used, cap)
+                    result += '\n(Step %d of %d.)' % (used, self.cap(r))
                 if result is not None:
                     r['messages'].append(dict({'role': 'tool', 'tool_call_id': c['id'], 'content': result},
                                               **({'keep': True} if name == 'read_item' and isinstance(args, dict) and args.get('item_id') in (r.get('selected') or []) else {})))
                     if result.startswith(('Not added', 'Not done', 'Not typed')):
                         r['refused'] = True
                 free = free and (name in BOARD_READS or bool(r.pop('_free', False)))
+            shown = r.pop('_imgs', None)
+            if shown:   # the screenshots the tools just took, as pictures, for a model that can see them
+                r['messages'].append({'role': 'user', 'img': True, 'content': [{'type': 'text', 'text': 'The screenshot%s just taken, for your own eyes (%s). Judge by what you see here, not by a description.' % (
+                    's' if len(shown) > 1 else '', '; '.join(c for c, _ in shown))}] + [{'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,' + b}} for _, b in shown]})
+                imgs = [i for i, m in enumerate(r['messages']) if m.get('img') and not m.get('keep')]
+                for i in imgs[:-KEEP_IMAGES]:   # older screenshots leave the run for good (the saved run would grow by a picture a step)
+                    if not isinstance(r['messages'][i]['content'], str):
+                        r['messages'][i] = dict(r['messages'][i], content=text_of(r['messages'][i]['content']) + ' (an earlier screenshot, no longer shown)')
             if calls and free and r.get('free_turns', 0) < FREE_TURNS:
                 r['msg_base'] = r.get('msg_base', 0) + 1
                 r['free_turns'] = r.get('free_turns', 0) + 1
@@ -1317,6 +1370,47 @@ class Runner:
             self.save(r)
         r.pop('stop', None)
         self.save(r)
+
+    def cap(self, r):
+        """Steps this run gets: a retry a few, a part that builds more than one that reads, a Lead the most."""
+        if r.get('watch_retry'):
+            return RETRY_STEPS
+        if r.get('parent') and not r.get('lead'):
+            return BUILD_STEPS if r.get('model') == 'code' or BUILDING.search(r['task']) else PART_STEPS
+        return MAX_STEPS
+
+    def sees(self, r):
+        return sees('builders' if r.get('model') == 'code' else 'agents')
+
+    def show(self, r, img, caption):
+        """Queue a screenshot for the model's own eyes; it goes into the context after this turn's tool results."""
+        if img and self.sees(r):
+            r.setdefault('_imgs', []).append((caption[:120], base64.b64encode(img).decode()))
+            return True
+        return False
+
+    def pictures(self, bid, selected):
+        """The selected pictures (pasted screenshots, photos) as data URLs, up to 3, each under 3 MB."""
+        out = []
+        for it in self.board_items(bid):
+            if it['id'] in selected and it.get('type') == 'img' and not str(it.get('url') or '').endswith('.pdf'):
+                name = str(it.get('src') or '').rsplit('/', 1)[-1]
+                path = os.path.join(os.path.dirname(self.dir), 'images', name)
+                if re.fullmatch(r'[0-9a-f]{16,}\.(jpe?g|png|webp|gif)', name) and os.path.exists(path) and os.path.getsize(path) < 3_000_000:
+                    with open(path, 'rb') as f:
+                        mime = {'jpg': 'jpeg'}.get(name.rsplit('.', 1)[1], name.rsplit('.', 1)[1])
+                        out.append('data:image/%s;base64,%s' % (mime, base64.b64encode(f.read()).decode()))
+            if len(out) >= 3:
+                break
+        return out
+
+    def corpus(self, r):
+        """What this run may quote: what it read itself, and for a Lead, what its teammates put in their frames (their
+        hand-back on the board, not the checker's words about it)."""
+        text = read_corpus(r)
+        if r.get('children'):
+            text += '\n' + plain('\n'.join(self.frame_words(self.runs[c]) for c in r['children'] if c in self.runs and self.runs[c]['status'] in ENDED))
+        return text
 
     def wrap_up(self, r):
         r['messages'].append({'role': 'user', 'content': 'You are out of steps. Write down what you found now, plainly and '
@@ -1369,9 +1463,12 @@ class Runner:
     def ask_model(self, messages, tools, url, name, big=False):
         body = {'model': name, 'messages': trimmed(messages), 'tools': tools, 'max_tokens': 16000 if big or name in CODE_MODEL_NAMES else 3000, 'temperature': 0.3,
                 'chat_template_kwargs': {'enable_thinking': False}}
-        req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=900) as f:
-            choice = json.load(f)['choices'][0]
+        if not models.choice('voice') and url == (models.local('voice') or (talk.MODEL_URL, talk.MODEL))[0]:
+            choice = talk.yielding_post(url, json.dumps(body).encode(), 900)['choices'][0]   # the voice's own model: a question goes first
+        else:
+            req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=900) as f:
+                choice = json.load(f)['choices'][0]
         return dict(choice['message'], _cut=choice.get('finish_reason') == 'length')
 
     def use(self, r, name, a, call_id):
@@ -1493,6 +1590,10 @@ class Runner:
                 if not it:
                     return 'Not done: there is no item with that id.'
                 url = str(it.get('url') or '').strip() if it.get('type') in ('link', 'web') else ''
+            if it and it.get('loom'):   # an OpenLoom video: OpenLoom already has its transcript, so read that instead of transcribing again
+                return talk.item_words(it, self.reader)[1]
+            if url and openloom.video_id(url):
+                return openloom.words(openloom.video_id(url))
             if not url and not (it and it.get('type') in ('file', 'media') and it.get('src')):
                 return 'Not done: give url (a video link) or from_item (a link, video or audio card on the board).'
             if not TRANSCRIBE_URL:
@@ -1585,7 +1686,7 @@ class Runner:
         if name == 'add_card':   # a card is a note with a title line: the same checks, then drawn as a card
             name, a = 'add_note', dict(a, text=(str(a.get('title') or '').strip() + '\n' + str(a.get('facts') or '').strip()).strip(), card=1)
         if name in ('add_note', 'add_text'):   # quote marks promise word for word: a quote that is on no page the agent read is turned away
-            bad = missing_quote(a.get('text', ''), read_corpus(r))
+            bad = missing_quote(a.get('text', ''), self.corpus(r))
             if bad:
                 self.step(r, 'Turned away a quote that is not on any page it read')
                 return ('Not added: the quote "%s" is not on any page you read, word for word. Quote marks mean the exact words '
@@ -2011,6 +2112,7 @@ class Runner:
                     f.write(data)
                 os.replace(path + '.tmp', path)
                 r['shots'] = r.get('shots', 0) + 1
+                self.show(r, data, 'your browser on ' + str(out.get('url', ''))[:80])
                 if not r.get('shot_item'):   # the browser view goes on the board, in the task frame
                     u = r['lay']['u']
                     it = self.place(r, {'type': 'shot', 'run': r['id'], 'label': out.get('url', '')}, 480 * u, 300 * u, wide=True)
@@ -2043,12 +2145,17 @@ class Runner:
         if 'elements' not in page_seen:
             return 'The demo is on the board, but the browser could not check it: %s' % page_seen.get('error')
         errs = page_seen.get('errors') or []
-        looks = self.see(r, 'This is a screenshot of a demo web page an agent just built: "%s". Describe plainly what is '
-                            'actually visible and where, and anything that looks broken, empty or missing. Under 90 words.' % title)
+        shot = os.path.join(self.shots, r['id'] + '.jpg')
+        if self.sees(r) and os.path.exists(shot):   # the model looks for itself; the screenshot follows this result
+            looks = ('see its screenshot below. Compare it with the reference pictures and the page you are rebuilding, and '
+                     'fix what does not match (call make_demo again with the same title); a demo is done when it looks right, not when it runs')
+        else:
+            looks = self.see(r, 'This is a screenshot of a demo web page an agent just built: "%s". Describe plainly what is '
+                                'actually visible and where, and anything that looks broken, empty or missing. Under 90 words.' % title)
+            looks = ('(a model looked at a screenshot): ' + looks + '\nIf that is not what the demo should show, fix it and call make_demo again with the same title.') if looks else ''
         return ('The demo is on the board. ' + ('It runs with no JavaScript errors.' if not errs else
                 'JAVASCRIPT ERRORS (fix them and call make_demo again with the same title): ' + ' | '.join(errs)) +
-                ('\nWHAT IT LOOKS LIKE (a model looked at a screenshot): ' + looks +
-                 '\nIf that is not what the demo should show, fix it and call make_demo again with the same title.' if looks else '') +
+                ('\nWHAT IT LOOKS LIKE ' + looks if looks else '') +
                 '\nText on the page:\n' + page_seen.get('text', '')[:1200])
 
     def try_demo(self, r, title, steps):
@@ -2072,9 +2179,12 @@ class Runner:
         out = []
         for i, st in enumerate(seen['states']):
             img = self.browser_shot(r, i)
-            looks = self.see(r, 'A screenshot of the demo "%s" %s. Describe plainly what is visible and where, and anything that '
-                                'looks broken, empty, cramped or unreadable. Under 80 words.' % (
-                                    title, 'as first opened' if i == 0 else 'after: ' + st['step']), img) if img else ''
+            when = 'as first opened' if i == 0 else 'after: ' + st['step']
+            if self.show(r, img, 'the demo "%s" %s' % (title, when)):
+                looks = 'see its screenshot below'
+            else:
+                looks = self.see(r, 'A screenshot of the demo "%s" %s. Describe plainly what is visible and where, and anything that '
+                                    'looks broken, empty, cramped or unreadable. Under 80 words.' % (title, when), img) if img else ''
             out.append('%s: %s%s' % (st['step'].upper() if i else 'OPENED', looks or '(no description: no vision model)',
                                      (' ERRORS: ' + ' | '.join(st['errors'])) if st['errors'] else ''))
         return 'Demo "%s":\n' % title + '\n'.join(out)
@@ -2396,12 +2506,53 @@ class Runner:
         return self.place(r, item, width, (lines + 1.5) * fs * 1.5 + fs * 2.4)
 
     def use_code(self, r, name, a):
-        """An engineer's tools, all inside its own worktree of the code base (agents/code.py)."""
+        """An engineer's tools, all inside its own worktree of the code base (agents/code.py). The first one an engineer
+        uses on a code base also hands it the notes the engineer before it left and the smoke test's result."""
+        out = self.use_code_tool(r, name, a)
+        start = r.pop('_code_start', '')
+        return '%s\n\nYOUR CALL RETURNED:\n%s' % (start, out) if start and isinstance(out, str) else out
+
+    def term_card(self, r, team, repo):
+        if not r.get('term_item'):   # the terminal goes on the board, in the task frame, like the browser view
+            u = r['lay']['u']
+            it = self.place(r, {'type': 'term', 'run': r['id'], 'label': '%s · %s' % (code.branch(team), repo)}, 560 * u, 340 * u, wide=True)
+            r['term_item'] = it and it['id']
+
+    def code_start(self, r, repo, work, team, data):
+        """Before an engineer's first step on a code base: what the engineer before it wrote down (TEAM-PROGRESS.md on the
+        branch, and the last commits), and a smoke test so it never builds on something already broken. Done by the app,
+        not asked of the model: an agent that picks work up cold needs notes and a known-good start (2026-11-11)."""
+        try:
+            with open(os.path.join(work, PROGRESS)) as f:
+                notes = f.read(4000).strip()
+        except OSError:
+            notes = ''
+        try:
+            log = code.git(work, 'log', '--format=%h %ad %s', '--date=short', '-8').strip()
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            log = ''
+        try:
+            ok, out = shell.smoke(data, r['id'], work)
+        except (ValueError, OSError, subprocess.TimeoutExpired) as e:
+            ok, out = None, 'The smoke test could not be run (%s).' % e
+        r['smoke'] = ok
+        self.step(r, 'Smoke test of %s before the first change: %s' % (repo, 'passed' if ok else 'BROKEN' if ok is False else 'could not be run'))
+        self.term_card(r, team, repo)
+        return ('BEFORE YOU START on %s (branch %s):\n\nNotes the engineer before you left in %s:\n%s\n\nLast commits:\n%s\n\n'
+                'Smoke test, run for you just now: %s\n%s%s' % (
+                    repo, code.branch(team), PROGRESS, notes or '(none: you are the first on this branch)', log or '(none)',
+                    'PASSED' if ok else 'BROKEN before you changed anything' if ok is False else 'not run', out[-1500:],
+                    '' if ok is not False else '\nFix what is broken first, or if it is not yours to fix say so in a note before going on.'))
+
+    def use_code_tool(self, r, name, a):
         data = os.path.dirname(self.dir)
         repo = str(a.get('repo') or '').strip()
         team = self.root(r)['id']   # one branch per team: the checker reads what the engineer wrote, a second round carries on
         try:
             work = code.workspace(data, repo, team, code.named_base(self.root(r).get('task')))   # from the branch or commit the job names, else main
+            if str((r.get('member') or {}).get('id', '')).startswith('engineer') and repo not in r.setdefault('code_started', []):
+                r['code_started'].append(repo)
+                r['_code_start'] = self.code_start(r, repo, work, team, data)
             if name == 'code_files':
                 self.step(r, 'Listed the files of %s%s' % (repo, ' in ' + str(a.get('folder')) if a.get('folder') else ''))
                 return code.files(work, a.get('folder'))
@@ -2418,14 +2569,26 @@ class Runner:
                 if repo not in r['code_repos']:
                     r['code_repos'].append(repo)
                 r['code_clean'] = False
+                if os.path.normpath(str(a.get('path') or '')) == PROGRESS:
+                    r['progress_written'] = True
                 self.step(r, '%s %s in %s' % ('Changed' if name == 'code_edit' else 'Wrote', str(a.get('path'))[:80], repo))
                 return said
+            if name == 'code_run':
+                exit_code, out = shell.run(data, r['id'], work, a.get('command'))
+                self.step(r, 'Ran in the terminal: %s (%s)' % (' '.join(str(a.get('command')).split())[:90], 'took too long' if exit_code is None else 'exit %d' % exit_code))
+                self.term_card(r, team, repo)
+                return out
             if name == 'code_check':
                 ok, report = code.check(work)
                 r['code_checked'] = ok
                 self.step(r, 'Checked the changed %s files: %s' % (repo, 'clean' if ok else 'errors found'))
                 return report
             if name == 'code_commit':
+                if not r.get('progress_written'):   # the next engineer starts with no memory of this one: the notes are part of the work
+                    return ('Not committed yet: first update %s at the root of the code base (code_write it whole, at most 60 lines; '
+                            'replace what is stale, do not just add). Write it so a stranger could pick the work up cold: what works now '
+                            'and how you checked it; what you tried that did not work; what is left, most important first; the next '
+                            'step. Then code_commit again.' % PROGRESS)
                 ok, report = code.check(work)
                 if not ok:
                     return 'Not committed: the check found errors. Fix them first.\n' + report
@@ -2590,8 +2753,9 @@ class Runner:
             r['skills_read'], r['skills_used'] = skillfiles.pick(os.path.dirname(self.dir), r['task'])   # skills earlier teams wrote, when the job fits (2026-11-08)
             want = talk.team_design(r['task'], r.get('intent'), ((
                 '- engineer: writes real code in one of these code bases: %s. It works on its own branch, which the user reviews '
-                'before anything goes live: it can read, search, edit, check syntax (code_check: parsed, not run) and commit on '
-                'branch team/<job id>, the only branch name; it has no shell, cannot run the app or its tests, cannot deploy. Say in '
+                'before anything goes live: it can read, search, edit, check syntax and commit on '
+                'branch team/<job id>, the only branch name, and run commands in a shut-in terminal (code_run: python3, git, checks and '
+                'tests; no network, no node or npm, cannot start the app); it cannot deploy. Say in '
                 '"does" which code base.\n' % ', '.join(have)) if have else '') + custom_kinds_text(), notes,
                 apps=integrations.can_act(r['board']))   # a post in a connected app is the app's draft call, not text on the board (2026-11-06)
         except (OSError, ValueError, KeyError):
@@ -2840,7 +3004,11 @@ class Runner:
             brief += ' Do NOT attempt this, no team can: %s. Say in your answer that it has to be built into the app itself.' % it['cannot']
         if it.get('avoid'):
             brief += ' NOT DOING (not asked for; nobody on the team does it): %s.' % it['avoid']
-        r['messages'][1]['content'] += '\n\n' + brief
+        first = r['messages'][1]
+        if isinstance(first['content'], str):
+            first['content'] += '\n\n' + brief
+        else:   # pictures attached: the words are the first part (adding a string to the list made 219 one-letter parts, the model said 400, 2026-11-10)
+            first['content'][0]['text'] += '\n\n' + brief
 
     def place_text(self, r, text, style):
         text = re.sub(r'^\s*#+\s*|\*\*', '', str(text), flags=re.M).strip()[:6000]   # the board shows plain text, not Markdown
@@ -2901,7 +3069,7 @@ def given(r, text):
     t = ' '.join(str(text).lower().split())
     if not t:
         return True
-    said = ' '.join(m['content'].lower() for m in r['messages'] if m['role'] == 'user' or
+    said = ' '.join(text_of(m['content']).lower() for m in r['messages'] if m['role'] == 'user' or
                     (m['role'] == 'tool' and str(m.get('content', '')).startswith('The person answered')))
     return t in ' '.join(said.split())
 
@@ -2952,9 +3120,12 @@ def trimmed(messages):
     """The messages as sent: the newest tool results whole, older ones cut short."""
     tools = [i for i, m in enumerate(messages) if m['role'] == 'tool']
     old = set(tools[:-KEEP_RESULTS]) if len(tools) > KEEP_RESULTS else set()
+    imgs = [i for i, m in enumerate(messages) if m.get('img') and not m.get('keep')]
     out = []
     for i, m in enumerate(messages):
-        if i in old and not m.get('keep') and len(m.get('content') or '') > OLD_RESULT_CHARS:
+        if m.get('img') and not m.get('keep') and i not in imgs[-KEEP_IMAGES:]:   # an older screenshot: its words stay, the picture goes
+            m = dict(m, content=text_of(m['content']) + ' (an earlier screenshot, no longer shown)')
+        elif i in old and not m.get('keep') and isinstance(m.get('content'), str) and len(m['content']) > OLD_RESULT_CHARS:
             m = dict(m, content=m['content'][:OLD_RESULT_CHARS] + CUT_MARK)
-        out.append({k: v for k, v in m.items() if k != 'keep'})   # keep: a read of a selected item stays whole (the source of the job)
+        out.append({k: v for k, v in m.items() if k not in ('keep', 'img')})   # keep: a read of a selected item stays whole (the source of the job)
     return out

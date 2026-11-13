@@ -96,6 +96,10 @@ def check(ids, everything):
         print('nothing to replay (mark some questions first)')
         return 0
     bad = 0
+    # the gate checks what the model answers, not how fast: the voice's own 20 s limit timed out on a cold relay (the same
+    # question took 0.9 s, 11 s and 20+ s within a minute on 2026-11-09), so replays wait up to 90 s
+    real_chat = talk.chat
+    talk.chat = lambda msgs, max_tokens, timeout=90, **kw: real_chat(msgs, max_tokens, timeout=max(timeout, 90), **kw)
     for a in asks:
         talk.apps_line = lambda bid, line=a.get('apps_line') or '\nCONNECTED APPS: none.': line
         t = time.time()

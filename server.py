@@ -26,6 +26,7 @@ if not ssl.get_default_verify_paths().cafile and os.path.exists('/etc/ssl/cert.p
     # the python.org Python ships without certificates until "Install Certificates" is run: use the Mac's own list
     ssl._create_default_https_context = lambda: ssl.create_default_context(cafile='/etc/ssl/cert.pem')
 import guide, integrations, models, talk
+import openloom
 import briefs
 try:
     import push   # phone notifications; needs the cryptography package, everything else runs without it
@@ -41,6 +42,7 @@ from agents import runner as agents
 PORT = int(sys.argv[1])
 DATA = os.path.abspath(os.path.expanduser(sys.argv[2]))
 models.SETTINGS = os.path.join(DATA, 'settings.json')   # which model does which job, and outside keys (owner-only file)
+openloom.FILE = os.path.join(DATA, 'openloom.json')   # the canvas's personal link to each OpenLoom video shown on a board (owner-only)
 integrations.FILE = os.path.join(DATA, 'integrations.json')   # connected apps: Google sign-in and your own MCP servers (owner-only)
 HERE = os.path.dirname(os.path.abspath(__file__))
 BOARDS, IMAGES, TRASH, TALKS, FILES, UPLOADS, THUMBS, CLIPS = (os.path.join(DATA, d) for d in ('boards', 'images', 'trash', 'talks', 'files', 'uploads', 'thumbs', 'clips'))
@@ -695,7 +697,30 @@ def finish_upload(part, filename, audio=False):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def stream_line(self, obj):
+        """One line of an answer that goes out in pieces (text/event-stream): starts the response on first use."""
+        if not getattr(self, '_streaming', False):
+            self._streaming = True
+            self.close_connection = True
+            self.send_response(200)
+            for k, v in (('Content-Type', 'text/event-stream'), ('Cache-Control', 'no-cache'), ('X-Accel-Buffering', 'no'), ('Connection', 'close')):
+                self.send_header(k, v)
+            self.end_headers()
+        self.wfile.write(b'data: ' + json.dumps(obj).encode() + b'\n\n')
+        self.wfile.flush()
+
     def reply(self, code, body=b'', ctype='application/json', headers=None):
+        if getattr(self, '_streaming', False):   # sentences of this answer were already sent to be spoken: the whole result follows them
+            said = ' '.join(getattr(self, '_said', []))
+            final = body if isinstance(body, dict) else {}
+            ans, norm = str(final.get('answer') or '').strip(), lambda t: ' '.join(t.split())
+            if said and norm(ans).startswith(norm(said)):
+                rest = norm(ans)[len(norm(said)):].strip()
+            else:
+                rest = ans
+                if said:
+                    print('%s ask: the answer changed after %d sentence(s) were spoken: %r -> %r' % (time.strftime('%Y-%m-%d %H:%M:%S'), len(self._said), said[:80], ans[:80]), flush=True)
+            return self.stream_line({'final': final, 'rest': rest, 'code': code})
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode()
         headers = dict(headers or {})
@@ -829,6 +854,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(404, {'error': 'no such font'})
         if len(parts) == 3 and parts[:2] == ['api', 'live'] and BOARD_ID.match(parts[2]):
             return self.live(parts[2])
+        if len(parts) == 4 and parts[:2] == ['api', 'openloom'] and parts[3] in ('video', 'poster') and re.match(r'^[A-Za-z0-9_-]{4,64}$', parts[2]):
+            try:   # an OpenLoom card: the browser goes to OpenLoom itself with a fresh token, nothing passes through here
+                where = openloom.media_url(parts[2], parts[3])
+            except (OSError, ValueError, LookupError, KeyError):
+                where = None
+            if not where:
+                return self.reply(404, {'error': 'OpenLoom will not show this video'})
+            return self.reply(302, b'', 'text/plain', {'Location': where, 'Cache-Control': 'no-store'})
         if parts == ['api', 'unfurl']:
             url = (urllib.parse.parse_qs(self.path.partition('?')[2]).get('url') or [''])[0][:2000]
             try:
@@ -876,6 +909,9 @@ class Handler(BaseHTTPRequestHandler):
                                     'speech': (models.speech() or [None])[0] if not talk.TTS_URL else 'local'})
         if parts == ['api', 'live']:   # live voice (beta): where the page finds the full-duplex voice gateway. No address = the feature is off
             return self.reply(200, {'url': os.environ.get('LIVE_VOICE_URL', ''), 'voice': os.environ.get('LIVE_VOICE_VOICE', ''),
+                                    'default': os.environ.get('LIVE_VOICE_DEFAULT', '') == 'on',   # on = live voice unless a browser switched it off
+                                    'phone': os.environ.get('LIVE_VOICE_PHONE', '') == 'on',       # on = the default covers phones too
+                                    'gate': os.environ.get('LIVE_VOICE_GATE', '') == 'on',         # on = the gateway holds the owner's voice print and can listen for that voice only
                                     'voices': [v.strip() for v in os.environ.get('LIVE_VOICE_VOICES', '').split(',') if v.strip()]})
         if parts == ['api', 'voices']:
             try:
@@ -985,6 +1021,13 @@ class Handler(BaseHTTPRequestHandler):
                         "sandbox allow-scripts allow-forms allow-pointer-lock allow-modals; connect-src 'none'"})
             except FileNotFoundError:
                 return self.reply(404, {'error': 'no such demo'})
+        if len(parts) == 3 and parts[:2] == ['api', 'terms'] and re.match(r'^r[0-9a-f]{12}\.txt$', parts[2]):   # an engineer's terminal: the newest part of what it typed and what came back
+            try:
+                with open(os.path.join(DATA, 'terms', parts[2][:-4] + '.log'), 'rb') as f:
+                    f.seek(max(0, os.fstat(f.fileno()).st_size - 60000))
+                    return self.reply(200, f.read(), 'text/plain; charset=utf-8', {'Cache-Control': 'no-cache'})
+            except FileNotFoundError:
+                return self.reply(404, {'error': 'no terminal yet'})
         if len(parts) == 3 and parts[:2] == ['api', 'shots'] and re.match(r'^r[0-9a-f]{12}\.jpg$', parts[2]):   # an agent's browser view
             try:
                 with open(os.path.join(DATA, 'shots', parts[2]), 'rb') as f:
@@ -1085,6 +1128,16 @@ class Handler(BaseHTTPRequestHandler):
     def post(self, parts):
         if parts[:2] == ['api', 'push'] and not PUSH:
             return self.reply(503, NO_PUSH)
+        if parts == ['api', 'openloom', 'card']:   # a pasted OpenLoom link -> the fields of its video card
+            url = str(json.loads(self.read_body() or b'{}').get('url') or '')[:2000]
+            try:
+                return self.reply(200, openloom.card(url))
+            except LookupError as e:
+                return self.reply(404, {'error': str(e)})
+            except ValueError:
+                return self.reply(400, {'error': 'not an OpenLoom video link'})
+            except OSError as e:
+                return self.reply(502, {'error': 'OpenLoom could not be reached (%s)' % str(e)[:120]})
         if len(parts) == 4 and parts[:2] == ['api', 'library'] and parts[3] == 'skills' and parts[2] in upskill():   # Upskill
             text = ' '.join(str(json.loads(self.read_body()).get('text') or '').split())[:600]
             if not text:
@@ -1395,6 +1448,11 @@ class Handler(BaseHTTPRequestHandler):
             question = str(req.get('question') or '').strip()[:500]
             if not question:
                 raise ValueError
+            self._said = []   # live voice: sentences sent to be spoken while the answer is still being written (stream: true)
+
+            def on_say(s):
+                self._said.append(s)
+                self.stream_line({'say': s})
             spaces = {x['id']: x for x in read_spaces()['spaces']}
             space = str(req.get('space') or '')
             if req.get('board'):
@@ -1476,6 +1534,8 @@ class Handler(BaseHTTPRequestHandler):
                     here += ' (in the %s space)' % sp['name'] if sp else ' (not in any space)'
                     if picked:
                         here += ', with %d item%s selected' % (len(picked), '' if len(picked) == 1 else 's')
+                    else:   # "the selected object" with nothing selected: say so, never guess a card (2026-11-12, it picked a transcript file)
+                        here += ', with NOTHING selected right now (if the user asks about "the selected" item, say nothing is selected and ask them to select it; never guess which card they mean)'
                     frames = {i['id'] for i in boards[0].get('items') or []}   # a team whose frame was cleared from the board left nothing to answer from (2026-11-05)
                     done = [(r['task'].split(' (This is about')[0][:200], ' '.join(str(r.get('summary') or '').split())[:300])
                             for r in RUNNER.view(boards[0]['id']) if r.get('status') in ('done', 'partial') and not r.get('parent') and r.get('frame') in frames][-3:]
@@ -1510,8 +1570,12 @@ class Handler(BaseHTTPRequestHandler):
                 routing.start()
                 t_ask = time.time()
                 # the map of all spaces and boards goes with every question, so the layout itself can be talked about
-                everything = live_boards(list(spaces.values()))
-                layout = talk.layout_entry([x for x in spaces.values() if x['id'] not in archived_spaces(list(spaces.values()))], everything, {b['id']: BRIEFER.load(b['id']) for b in everything}, here, detail=not req.get('board'),
+                # Inside a board the map only names the boards, so the board list's cards do (kept in memory, re-read only for a
+                # board that changed). Reading all 700 boards and briefs for every question made ~400 MB of fresh objects on a mini
+                # with no memory to spare: 5 to 20 s before the model was called (2026-11-10).
+                arch = archived_spaces(list(spaces.values()))
+                everything = [c for c in board_cards() if not is_archived(c, arch)] if req.get('board') else live_boards(list(spaces.values()))
+                layout = talk.layout_entry([x for x in spaces.values() if x['id'] not in arch], everything, {} if req.get('board') else {b['id']: BRIEFER.load(b['id']) for b in everything}, here, detail=not req.get('board'),
                                            question=question, history=history)
                 names = {b['id']: b.get('name', '') for b in boards}
                 waiting = [w for w in RUNNER.news()['waiting'] if w['board'] in names]   # questions on the boards in scope
@@ -1526,7 +1590,7 @@ class Handler(BaseHTTPRequestHandler):
                                      here=here, apps=apps, routed=(routing, early),
                                      selected=picked, bid=boards[0]['id'] if req.get('board') else None, pending=(waiting_on or {}).get('say', ''),
                                      spaces=[x['name'] for x in spaces.values()], pending_raw=(waiting_on or {}).get('raw'),
-                                     spaces_text=spaces_text)
+                                     spaces_text=spaces_text, on_say=on_say if req.get('stream') else None)
                 print('%s ask %.2fs route=%s prep=%dms %s %r%s' % (time.strftime('%Y-%m-%d %H:%M:%S'), time.time() - t_ask, result.get('route'), (t_call - t_ask) * 1000, result.get('timing') or '', question[:60],
                       ' task=%r' % (result.get('team') or {}).get('task', '')[:160] if result.get('team') else ''), flush=True)
                 record_ask(talk_id, question, history, here, spaces_text, apps, bool(waiting), (waiting_on or {}).get('say', ''), picked,
@@ -1582,7 +1646,7 @@ class Handler(BaseHTTPRequestHandler):
                     if result['edited']:   # the model sees, in later turns, that its reply did this (not only said it)
                         did = ({'move_card': {'from': edit.get('from'), 'to': edit.get('to')}} if edit['kind'] == 'move_card'
                                else {edit['kind'] if edit['kind'] != 'undo' else 'undo_edit': True})
-                elif arrange.CLAIM.search(result.get('answer') or ''):
+                elif arrange.CLAIM.search(result.get('answer') or '') and not result.get('clear'):   # (clearing the selection is done by the page: its "Done" is true)
                     result['answer'] = NOT_MOVED + " Tell me which card and where it should go, and I'll move it."
 
                 task, mode = result.pop('task', None), result.pop('task_mode', 'team')
@@ -2417,7 +2481,7 @@ def propose_team(plan, here_board, here_space, spaces, sel=None):
     who = 'an agent' if mode == 'one' else 'a team'
     lead = ('' if plan.get('explicit') else "That's a bigger job: %s. " % plan['why'].rstrip('.') if plan.get('why')
             else "That's a bigger job. ")   # the user did not ask for a team: say why one is offered
-    a = {'kind': 'team', 'task': task, 'mode': mode, 'sel': list(sel or []), 'intent': plan.get('intent')}
+    a = {'kind': 'team', 'task': task, 'mode': mode, 'sel': list(sel or []), 'intent': plan.get('intent'), 'ask': plan.get('ask')}
     it = plan.get('intent') or {}
     if plan.get('changed'):   # a change to the set-up the user is about to say yes to: no "bigger job" or "can't" said twice
         lead = ''
@@ -2457,12 +2521,12 @@ def run_team(a):
         board = {'id': secrets.token_hex(6), 'name': a['new_board'], 'created': t, 'updated': t, 'items': [], 'view': None, 'space': space, 'by': 'agent'}
         with LOCK:
             write_json(board_path(board['id']), board)
-        r = RUNNER.start(board['id'], a['task'], [], None, a['mode'], intent=a.get('intent'))
+        r = RUNNER.start(board['id'], a['task'], [], None, a['mode'], intent=a.get('intent'), ask=a.get('ask'))
         where = next((x['name'] for x in read_spaces()['spaces'] if x['id'] == space), None)
         return ('Started. %s working on the new board "%s"%s. I\'ll tell you when it\'s done or needs you.'
                 % ('The team is' if a['mode'] == 'team' else 'An agent is', a['new_board'], ' in %s' % where if where else ''),
                 {'open': {'board': board['id']}})
-    r = RUNNER.start(a['board'], a['task'], a.get('sel') or [], None, a['mode'], intent=a.get('intent'))
+    r = RUNNER.start(a['board'], a['task'], a.get('sel') or [], None, a['mode'], intent=a.get('intent'), ask=a.get('ask'))
     return ('Started. %s working on it here. I\'ll tell you when it\'s done or needs you.' % ('The team is' if a['mode'] == 'team' else 'An agent is'),
             {'started': {'run': r['id'], 'frame': r['frame']}})
 
@@ -2709,8 +2773,15 @@ def builtins_frame():
             'For: the whole job; every teammate is told at once, and the Lead each round',
             'Never: getting around a block (search engine caches, web archives, reader services)',
             'Second tries: a part about a blocked site is not sent back']),
-        ('Steps', 'Nov 2', ['Each teammate: %d steps' % S.PART_STEPS, 'The Lead: %d steps' % S.MAX_STEPS,
+        ('Steps', 'Nov 9', ['Each teammate: %d steps' % S.PART_STEPS, 'A teammate that builds (a demo, the Developer): %d steps, because a build is tuned by looking and fixing, round after round' % S.BUILD_STEPS,
+            'The Lead: %d steps' % S.MAX_STEPS,
             'Free: reading the board, and a page a teammate already read in this job (up to %d per teammate)' % S.FREE_TURNS]),
+        ('Pictures for the model\'s own eyes', 'Nov 9', ['When: the model doing the work is the same one picked to look at screenshots (Settings), or an outside provider',
+            'Then: the pictures you selected go to the Lead and every teammate as images, and every screenshot a teammate takes (its browser, a demo it built or tried) goes into its context as the picture itself, not a 300-token description from a second call',
+            'Kept: the newest %d screenshots as pictures; older ones become a line of text' % S.KEEP_IMAGES,
+            'Now: ' + ('on (the agents\' model can see)' if S.sees('agents') else 'off (a separate vision model describes screenshots in words)')]),
+        ('Your own words', 'Nov 9', ['The voice rewords what you said into a task for the Lead. From Nov 9 your words also ride along unchanged, to the Lead and to every part it hands out, marked: where they differ, your words win',
+            'A task started from the agent button is already your words']),
         ('Sticky notes', 'Nov 2', ['Hold: one short thought, up to %d characters (links not counted)' % S.STICKY_MAX,
             'Shape: a fixed square or rectangle; it never grows or scrolls, words that do not fit fade out',
             'Longer from an agent: goes on a card instead, whatever the agent asked for',
@@ -2720,7 +2791,8 @@ def builtins_frame():
         ('Org chart', 'Nov 1', ['Where: above the team\'s work, when a team is set up',
             'Shows: each teammate, why they are on the team, when their part is done, and how it is going']),
         ('After each job', 'Nov 2', ['A card: What got in the way (blocked sites, pages read with Lightpanda, free steps)']),
-        ('Quotes', 'Nov 4', ['Quote marks mean word for word: a note, card or text whose quote is on no page or board item that agent read itself is refused, and the quote is named',
+        ('Quotes', 'Nov 9', ['Quote marks mean word for word: a note, card or text whose quote is on no page or board item that agent read itself is refused, and the quote is named',
+            'Counts as read: pages, items, frames read with read_frame, and for the Lead what its teammates put in their frames (not the checker\'s words about them)',
             'Counts as read: pages, search results and board items the agent opened with its own tools',
             'Never counts: the brief it was given, or what a teammate handed back (an invented quote once travelled that way)',
             'Shortened quotes: a quote with ... in it is checked piece by piece',
@@ -2777,7 +2849,13 @@ def builtins_frame():
             'A part that built a demo has it opened once in the browser; a demo that does not open cleanly fails the check']),
         ('A question is not a no', 'Nov 8', ['While an offer waits for your word, a question about it ("does that mean...?", "what will they do?") is answered and the offer stays open; only a plain refusal drops it',
             'The "does not" list is said as one clause, so its second item is never heard as an instruction']),
-        ('What no teammate can do', 'Nov 8', ['Run a shell or any command, run the app or its tests, hear or speak sound, use a microphone, push or deploy; an engineer\'s commits land on branch team/<job id> and on no other name',
+        ('The engineer\'s terminal', 'Nov 11', ['An engineer can run commands in its branch folder (code_run): python3, git, checks and tests; you watch them in the terminal card in its frame',
+            'Shut in by the Mac\'s own sandbox: no network, nothing read outside the branch (not the boards, not keys), nothing written outside it, no signals to other programs, a bare environment, 60 seconds a command',
+            'No node or npm, and it cannot start the app; JavaScript syntax is checked with the system\'s JavaScriptCore']),
+        ('Picking code work up cold', 'Nov 11', ['An engineer starts with no memory of earlier work, so the app hands it three things with its first code step: the notes the engineer before it left on the branch (TEAM-PROGRESS.md), the last commits, and a smoke test it runs itself (every Python file compiles, every script parses, every JSON file loads)',
+            'A broken smoke test is dealt with before anything is built on it',
+            'No commit goes through until the engineer has rewritten TEAM-PROGRESS.md: what works and how it was checked, what failed, what is left']),
+        ('What no teammate can do', 'Nov 8', ['Start the app or a server, use node or npm, install anything, hear or speak sound, use a microphone, push or deploy; only an engineer runs commands; an engineer\'s commits land on branch team/<job id> and on no other name',
             'The designer, the critic and the checker all know this, and a part whose words ask for one of these gets the list added, so a done-when that could never pass is not chased for an hour (2026-11-08: six retries for a shell nobody has)',
             'An engineer or checker whose job names an earlier team\'s branch or commit starts from that commit, so it reads the code it is asked about']),
         ('Settled by hand', 'Nov 8', ['Publishing a Substack draft from the card answers the Lead that asked "publish?", and at start every such question whose draft is already live is answered',

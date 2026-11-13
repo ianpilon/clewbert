@@ -1,6 +1,6 @@
 """A team's code workspace: its own git branch of one of the user's code bases, on this machine.
 
-The engineer reads, searches, edits, checks and commits there. There is no shell, no push and no deploy: the branch
+The engineer reads, searches, edits, checks and commits there, and runs commands shut in (agents/shell.py). No push and no deploy: the branch
 stays here until the user (or a coding assistant for them) reviews it. Code bases are bare repos in <data>/code/<name>.git, put there by
 tools/deploy/push-agent-repos.sh; each run gets a worktree in <data>/code/work/<run id>-<name> on branch team/<run id>.
 """

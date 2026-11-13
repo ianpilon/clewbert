@@ -10,11 +10,12 @@
   speech-to-text at /ears (a WebSocket next to the app) and a text-to-speech server at CANVAS_TTS_URL.
 """
 import base64, collections, difflib, hashlib, html, http.client, json, math, os, queue, re, socket, subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request
-import models, skills
+import models, openloom, skills
 
 MODEL_URL = os.environ.get('CANVAS_MODEL_URL', '')   # a chat/completions address on your own machine (Ollama, LM Studio, vLLM...), or pick a provider in Settings
 MODEL = os.environ.get('CANVAS_MODEL', '')
 TTS_URL = os.environ.get('CANVAS_TTS_URL', '')   # your own text-to-speech server; without one, speech uses the OpenAI or xAI key
+TTS_FAST_URL = os.environ.get('CANVAS_TTS_FAST_URL', '').rstrip('/')   # optional: a faster speech server asked first, CANVAS_TTS_URL when it is away
 # optional: Cloudflare Access in front of the app (your team name and the app's audience tag) tells the ears who is talking
 ACCESS_CERTS = ('https://%s.cloudflareaccess.com/cdn-cgi/access/certs' % os.environ['CF_ACCESS_TEAM']) if os.environ.get('CF_ACCESS_TEAM') else ''
 ACCESS_AUD = os.environ.get('CF_ACCESS_AUD', '')
@@ -30,6 +31,7 @@ STOP = set('a an the and or but if of to in on at by for with from about into ov
 
 
 PICTURE_SAYS = 'What the picture shows: '   # a photo with no words in it is described by the vision model instead (2026-11-06)
+FEW_WORDS = 10   # a picture with fewer words read off it than this is described as well
 
 
 def describe_picture(path):
@@ -68,8 +70,9 @@ def describe_picture(path):
 
 
 class Reader:
-    """Reads the words out of every image and PDF once and keeps them next to the data. A picture with no words in it
-    gets what the vision model sees instead (PICTURE_SAYS), so a photo can be searched, described and captioned."""
+    """Reads the words out of every image and PDF once and keeps them next to the data. A picture with no words in it,
+    or only a few (a caption, a logo's name), also gets what the vision model sees (PICTURE_SAYS), so a photo can be
+    searched, described and captioned."""
 
     def __init__(self, images_dir, text_dir, tool):
         self.images, self.text, self.tool = images_dir, text_dir, tool
@@ -129,9 +132,10 @@ class Reader:
                 words = r.stdout.strip() if r.returncode == 0 else ''
             except (OSError, subprocess.TimeoutExpired):
                 words = ''
-            if not words and name.endswith(('.jpg', '.png')):   # no words in it: what the vision model sees
+            if len(words.split()) < FEW_WORDS and name.endswith(('.jpg', '.png')):   # no words in it, or only a label: what the vision model sees
                 seen = describe_picture(os.path.join(self.images, name))
-                words = PICTURE_SAYS + seen if seen else ''
+                if seen:   # the few words are kept: a photo whose only record was "GILDA", off a box in the background (2026-11-11)
+                    words = PICTURE_SAYS + seen + ('\nWords on it: ' + ' '.join(words.split()) if words else '')
             with open(self.path(name) + '.tmp', 'w') as f:
                 f.write(words)
             os.replace(self.path(name) + '.tmp', self.path(name))
@@ -199,7 +203,7 @@ def item_words(it, reader):
     elif it.get('added') and not (it.get('voice') or {}).get('text'):   # put there by hand since records began: when, and that nobody recorded why
         words = (words + '\n(Why it is on the board: the user added it themselves on %s; no reason was recorded.)'
                  % time.strftime('%a %b %d %Y', time.localtime(it['added'] / 1000))).strip()
-    if (it.get('voice') or {}).get('text'):   # the user said why they added it, in a voice note on the item
+    if (it.get('voice') or {}).get('text') and not it.get('vnote'):   # the user said why they added it, in a voice note on the item
         words = (words + '\n(the user\'s own reason for adding it, from their voice note: "%s")' % it['voice']['text'][:1500]).strip()
     return kind, words
 
@@ -210,6 +214,10 @@ def _item_words(it, reader):
         return 'text' if it.get('color') == 'none' else 'sticky note', it.get('text') or ''
     if t == 'area':
         return 'frame title', it.get('text') or ''
+    if t in ('link', 'web') and openloom.video_id(it.get('url')):   # an OpenLoom video as a plain link card (pasted on a page from before 2026-11-12)
+        u = it.get('unfurl') or {}
+        title = str(u.get('title') or it.get('label') or 'OpenLoom video').replace(' · OpenLoom', '')
+        return 'OpenLoom video', (title + '\n' + openloom.words(openloom.video_id(it['url']))).strip()
     if t == 'link':
         u = it.get('unfurl') or {}
         return 'link', ' — '.join(x for x in (u.get('title'), u.get('desc'), it.get('url')) if x)
@@ -232,7 +240,13 @@ def _item_words(it, reader):
             ) if c else 'A button that starts Clewbert guiding you through building your first agent team, out loud.'
     if t == 'shot':
         return 'agent browser view', 'The agent\'s browser, last on ' + (it.get('label') or 'a page')
+    if t == 'term':
+        return 'agent terminal', 'The engineer\'s terminal, on ' + (it.get('label') or 'its branch')
     if t == 'media':
+        if it.get('vnote'):   # a voice note the user recorded onto the board: the words are what they said
+            return 'voice note', ('%s\nIan said: "%s"' % (it.get('label') or 'Voice note', ((it.get('voice') or {}).get('text') or '')[:3000])).strip()
+        if it.get('loom'):   # an OpenLoom video: its words come from OpenLoom's transcript, nothing is transcribed here
+            return 'OpenLoom video', ((it.get('label') or 'OpenLoom video') + '\n' + openloom.words(it['loom'])).strip()
         return it.get('kind') or 'video', it.get('label') or ''
     if t == 'file':
         name = str(it.get('src') or '').rsplit('/', 1)[-1]
@@ -460,6 +474,10 @@ WHAT THIS APP CAN DO (you control it through "show" and "view"; never say you ca
   "show". The board zooms in close on them and outlines them, opening the right board first if needed. Then answer
   briefly, for example "Here is the Mainichi article screenshot." Use "show" only when the user asks to see something.
 - "view": "fit" shows the whole board, "in" or "out" zooms one step, "brief" opens the board brief panel.
+- What you can NOT do from here: select or deselect items, turn outlines or highlights on or off, delete, recolour or
+  resize anything. Never say that you did one of these, and never say something on the board has changed unless this
+  reply carries the action that changes it. If the user asks for one of them, say in one sentence that you cannot do that
+  by voice yet.
 - "open": the name of a space or board, exactly as written in the map, to open it when the user asks to go to, open or be
   taken to a space or a whole board ("take me to the Research space"). "All boards" opens the list of all boards:
   use it when the user asks to go back out, go up, go home or go to the top or meta level. "Back to the space" means the
@@ -528,7 +546,130 @@ WHAT THIS APP CAN DO (you control it through "show" and "view"; never say you ca
 Reply with JSON only: {"answer": "<what to say>", "sources": [<item numbers that answer the question, outlined for the user; not ones you mention only to rule them out>], "show": [<item numbers to show, or empty>], "view": null, "open": null, "task": null, "task_mode": "team", "agent_answer": null, "follow_up": null, "web_card": null, "open_item": null, "add_teammate": null, "steer": null, "move_card": null, "sort_frame": null, "undo_edit": null, "card": null}"""
 
 
-def ask_model(question, history, entries, scope, stable=''):
+# Asked to deselect or to take the outlines off. The orange outlines are the voice's own "these are what I am talking about" marks;
+# the user reads them as a selection. The page clears both (result "clear"); no model is asked. (The model once answered
+# "The orange borders are off them now" when nothing had changed, 2026-11-11.)
+CLEAR_Q = re.compile(r"\b(?:de-?select|un-?select|un-?highlight|clear (?:the |all |all the |my |those |these )?(?:selection|selected|highlights?|highlighting|outlines?|borders?)"
+                     r"|(?:remove|turn off|take off|take away|get rid of|drop|lose) (?:the |all |all the |those |these )?(?:selection|highlights?|highlighting|outlines?|(?:orange |blue |yellow )?borders?)"
+                     r"|(?:take|turn|get|switch) (?:the |all |all the |those |these )?(?:selection|highlights?|highlighting|outlines?|(?:orange |blue |yellow )?borders?) (?:off|away))\b", re.I)
+# "the rightmost object on the canvas": the items' places on the board answer this exactly; the model, which only reads their words, could not
+WHERE_Q = re.compile(r"\b(right[- ]?most|left[- ]?most|top[- ]?most|bottom[- ]?most|upper[- ]?most|lower[- ]?most|(?:furthest|farthest|far) (?:to the |on the |over on the )?(?:right|left)|"
+                     r"(?:furthest|farthest) (?:up|down)|highest|lowest|(?:nearest|closest) (?:to )?the (?:top|bottom|right|left)|at the very (?:top|bottom|right|left))\b", re.I)
+WHERE_THING = re.compile(r"\b(?:object|item|card|thing|note|picture|image|screenshot|photo|sticky|file|element|one)s?\b", re.I)
+# "the first object on this board", "take me to the beginning of the board", "what did I add last": boards are built left to
+# right, so first = furthest left and last = furthest right; oldest/newest = by when it was added (records began October 31,
+# 2026). The voice said it could not tell, because it only reads the items' words (2026-11-12)
+ORDER_Q = re.compile(r"\b(?:(first|last|oldest|newest|earliest|latest|most recent)(?: \w+)?(?: (?:added|placed|put))? (?:object|item|card|thing|note|picture|image|screenshot|photo|sticky|file|element|video|link)s?\b"
+                     r"|(?:the )?(beginning|start|end) of (?:the|this) (?:board|canvas)"
+                     r"|(?:add|added|placed|put)(?: \w+)?(?: on (?:the|this) (?:board|canvas))? (first|last|most recently)\b)", re.I)
+ORDER_KINDS = {'picture': ('picture', 'screenshot'), 'image': ('picture', 'screenshot'), 'photo': ('picture', 'screenshot'),
+               'screenshot': ('picture', 'screenshot'), 'sticky': ('sticky note',), 'note': ('sticky note', 'text', 'voice note'),
+               'file': ('file', 'PDF'), 'video': ('video', 'OpenLoom video'), 'link': ('link',)}
+RECORDS_FROM = 'October 31, 2026'
+
+
+def order_item(board, question, reader):
+    """The first, last, oldest or newest item on the board, when the question asks for one: {answer, sources, show} or None."""
+    m = ORDER_Q.search(question)
+    if not m:
+        return None
+    w = (m.group(1) or m.group(2) or m.group(3) or '').lower()
+    by_time = w in ('oldest', 'newest', 'earliest', 'latest', 'most recent', 'most recently') or bool(m.group(3))
+    if m.group(1) and w in ('first', 'last') and not re.search(r'\b(?:board|canvas)\b', question, re.I):   # "the last note you read" is not a place on the board
+        return None
+    late = w in ('last', 'newest', 'latest', 'most recent', 'most recently', 'end')
+    kinds = next((v for k, v in ORDER_KINDS.items() if re.search(r'\b%ss?\b' % k, m.group(0), re.I)), None)
+    items = [i for i in board.get('items') or [] if i.get('type') not in ('area', 'arrow', 'ink') and all(isinstance(i.get(k), (int, float)) for k in 'xywh')]
+    if kinds:
+        items = [i for i in items if _item_words(i, reader)[0] in kinds]
+    if not items:
+        return None
+    when = lambda i: i.get('added') or (i.get('why') or {}).get('when') or 0
+    day = lambda i: time.strftime('%B %d, %Y', time.localtime(when(i) / 1000)).replace(' 0', ' ')
+    undated = [i for i in items if not when(i)]
+    note = ''
+    if not by_time:
+        it = max(items, key=lambda i: i['x'] + i['w']) if late else min(items, key=lambda i: i['x'])
+        where = 'last %s, furthest to the right where the board ends,' if late else 'first %s, furthest to the left where the board starts,'
+        note = ' It was added on %s.' % day(it) if when(it) else ' It was put there before %s, when times started being kept.' % RECORDS_FROM
+    elif late:
+        it = max(items, key=when)
+        where = 'newest %s, added on ' + day(it) + ','
+    elif undated:   # the oldest are the ones from before records began: of those, the one furthest left, where a board starts
+        it = min(undated, key=lambda i: i['x'])
+        where = 'oldest %s I can find'
+        note = ' Items from before %s have no time recorded, so I took the one furthest to the left of those, where the board starts.' % RECORDS_FROM
+    else:
+        it = min(items, key=when)
+        where = 'oldest %s, added on ' + day(it) + ','
+    kind, words = _item_words(it, reader)
+    frame = frame_of(it, [a for a in board.get('items') or [] if a.get('type') == 'area'])
+    gist = ' '.join([x for x in words.strip().split('\n')[0].split() if '://' not in x][:22])   # its first line; a web address is not read out
+    if kind in ('screenshot', 'picture'):   # read off the picture, its first line is often a stray menu word ("* Download")
+        gist = ' '.join(str(it.get('label') or '').split()[:22])
+    said = 'The %s is %s %s%s.%s%s The board is showing it now.' % (
+        where % ('one' if kinds else 'item'), 'an' if kind[:1].lower() in 'aeiou' else 'a', kind, ' in the %s frame' % frame if frame else '',
+        (' It starts: "%s".' % gist.rstrip('.')) if gist else '', note)
+    return {'answer': said, 'checked': True, 'ms': 0, 'route': 'boards', 'show': [{'board': board['id'], 'item': it['id']}],
+            'sources': [{'board': board['id'], 'boardName': board.get('name', ''), 'item': it['id'], 'kind': kind, 'snippet': ' '.join(words.split())[:140]}]}
+
+
+def edge_item(board, question, reader):
+    """The item at one edge of the whole board, when the question asks for it: {answer, sources, show} or None."""
+    m = WHERE_Q.search(question)
+    if not m or not WHERE_THING.search(question):
+        return None
+    w = m.group(1).lower()
+    side = 'right' if 'right' in w else 'left' if 'left' in w else 'top' if re.search(r'top|upper|high|up', w) else 'bottom'
+    items = [i for i in board.get('items') or [] if i.get('type') not in ('area', 'arrow', 'ink') and all(isinstance(i.get(k), (int, float)) for k in 'xywh')]
+    if not items:
+        return None
+    it = max(items, key={'right': lambda i: i['x'] + i['w'], 'left': lambda i: -i['x'], 'top': lambda i: -i['y'], 'bottom': lambda i: i['y'] + i['h']}[side])
+    kind, words = _item_words(it, reader)
+    frame = frame_of(it, [a for a in board.get('items') or [] if a.get('type') == 'area'])
+    gist = ' '.join(' '.join(words.split()).split()[:22])
+    said = 'The item %s on this board is a %s%s.%s The board is showing it now.' % (
+        {'right': 'furthest to the right', 'left': 'furthest to the left', 'top': 'nearest the top', 'bottom': 'nearest the bottom'}[side], kind,
+        ' in the %s frame' % frame if frame else ', outside the frames', (' It starts: "%s".' % gist.rstrip('.')) if gist else '')
+    return {'answer': said, 'checked': True, 'ms': 0, 'route': 'boards', 'show': [{'board': board['id'], 'item': it['id']}],
+            'sources': [{'board': board['id'], 'boardName': board.get('name', ''), 'item': it['id'], 'kind': kind, 'snippet': ' '.join(words.split())[:140]}]}
+
+
+ANSWER_KEY = re.compile(r'"answer"\s*:\s*"')
+
+
+def partial_answer(text):
+    """The answer text inside a reply still being written as JSON: (the text so far, whether its closing quote has come)."""
+    m = ANSWER_KEY.search(text)
+    if not m:
+        return '', False
+    s, out, i = text[m.end():], [], 0
+    while i < len(s):
+        c = s[i]
+        if c == '"':
+            return ''.join(out), True
+        if c == '\\':
+            if i + 1 >= len(s):
+                break
+            n = s[i + 1]
+            if n == 'u':
+                if i + 6 > len(s):
+                    break
+                try:
+                    out.append(chr(int(s[i + 2:i + 6], 16)))
+                except ValueError:
+                    pass
+                i += 6
+                continue
+            out.append({'n': '\n', 't': ' ', 'r': '', 'b': '', 'f': ''}.get(n, n))
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out), False
+
+
+def ask_model(question, history, entries, scope, stable='', on_answer=None):
     lines = []
     for n, e in enumerate(entries, 1):
         many = scope == 'all' or scope.startswith('space:')
@@ -538,7 +679,7 @@ def ask_model(question, history, entries, scope, stable=''):
     for h in history[-3:]:
         msgs += [{'role': 'user', 'content': h['q']}, {'role': 'assistant', 'content': json.dumps({'answer': h['a'], **(h.get('did') or {})})}]
     msgs.append({'role': 'user', 'content': '%s\n\nBOARD ITEMS:\n%s\n\nQUESTION: %s' % (scope_line(scope), '\n\n'.join(lines), question)})
-    out = chat(msgs, 500)
+    out = chat(msgs, 500, on_text=(lambda t: on_answer(*partial_answer(t))) if on_answer else None)
     return (str(out.get('answer') or out.get('_text') or '').strip(), out.get('sources') or [], out.get('show') or [], out.get('view'),
             out.get('open'), out.get('task'), out.get('agent_answer'), out.get('task_mode'), out.get('follow_up'),
             out.get('web_card'), out.get('add_teammate'), out.get('steer'), out.get('open_item'),
@@ -548,23 +689,58 @@ def ask_model(question, history, entries, scope, stable=''):
 BACKGROUND = {'conn': None}   # the brief reader's call in flight, cut when a question arrives
 
 
+ASKING = [0]        # voice questions being answered right now
+YIELDING = set()    # connections of agents' model calls on the voice's own model: cut when a question arrives, sent again after it
+PREEMPTS = [0]      # how many times a question has cut the calls in flight
+
+
 def interrupt_background():
-    conn = BACKGROUND['conn']
-    if conn is not None and conn.sock is not None:
+    PREEMPTS[0] += 1
+    for conn in [BACKGROUND['conn']] + list(YIELDING):
+        if conn is not None and conn.sock is not None:
+            try:
+                conn.sock.shutdown(socket.SHUT_RDWR)   # the model server drops the request when its caller hangs up
+            except OSError:
+                pass
+
+
+def yielding_post(url, body, timeout=900):
+    """A model call for background work (an agent's step) on the model the voice also uses. The model runs four requests at once and
+    a working team holds three: a voice question then waited 15-20 s for its first word instead of 1-2 (2026-11-11). So such a call
+    waits while a question is being answered, is cut when one arrives, and is sent again afterwards. Returns the reply's JSON."""
+    u, cuts = urllib.parse.urlsplit(url), 0
+    while True:
+        while ASKING[0] > 0 or time.time() - LAST_ASK[0] < 1.0:
+            time.sleep(0.25)
+        mark = PREEMPTS[0]
+        conn = (http.client.HTTPSConnection if u.scheme == 'https' else http.client.HTTPConnection)(u.hostname, u.port or (443 if u.scheme == 'https' else 80), timeout=timeout)
+        YIELDING.add(conn)
         try:
-            conn.sock.shutdown(socket.SHUT_RDWR)   # the model server drops the request when its caller hangs up
-        except OSError:
-            pass
+            conn.request('POST', u.path + ('?' + u.query if u.query else ''), body, {'Content-Type': 'application/json'})
+            resp = conn.getresponse()
+            data = resp.read()
+            if resp.status != 200:
+                raise OSError('model answered %d' % resp.status)
+            return json.loads(data)
+        except (OSError, http.client.HTTPException, ValueError) as e:
+            if PREEMPTS[0] != mark and cuts < 12:   # a voice question cut it: again once the answer is out
+                cuts += 1
+                print('%s agents: a model call gave way to a voice question (%d)' % (time.strftime('%Y-%m-%d %H:%M:%S'), cuts), flush=True)
+                continue
+            raise e if isinstance(e, OSError) else OSError(str(e))
+        finally:
+            YIELDING.discard(conn)
+            conn.close()
 
 
-def chat(msgs, max_tokens, timeout=90, background=False, job='voice'):
+def chat(msgs, max_tokens, timeout=90, background=False, job='voice', on_text=None):
     """One model call that should come back as JSON; {'_text': ...} when it does not. job: whose model in Settings answers."""
     if not models.choice(job) and not models.local(job) and not MODEL_URL:
         raise models.NoModel(job)
     if models.choice(job):   # an outside provider picked in Settings
         return parse_json(models.complete(job, {'messages': msgs, 'max_tokens': max_tokens}, timeout)['choices'][0]['message']['content'] or '')
     url, model = models.local(job) or (MODEL_URL, MODEL)   # picked in Settings, else as set at startup
-    body = json.dumps({'model': model, 'messages': msgs, 'temperature': .2, 'max_tokens': max_tokens,
+    body = json.dumps({'model': model, 'messages': msgs, 'temperature': .2, 'max_tokens': max_tokens, **({'stream': True} if on_text else {}),
                        'chat_template_kwargs': {'enable_thinking': False}}).encode()
     u = urllib.parse.urlsplit(url)
     conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=timeout)
@@ -575,7 +751,22 @@ def chat(msgs, max_tokens, timeout=90, background=False, job='voice'):
         resp = conn.getresponse()
         if resp.status != 200:
             raise OSError('model answered %d' % resp.status)
-        text = json.load(resp)['choices'][0]['message']['content']
+        if on_text:   # on_text(text so far) as the model writes: the answer can be spoken sentence by sentence (the model starts writing
+            text = ''   # after about 1 s and then takes 3-5 s more to finish, 2026-11-11)
+            for line in resp:
+                line = line.strip()
+                if not line.startswith(b'data:') or line[5:].strip() == b'[DONE]':
+                    continue
+                for c in json.loads(line[5:]).get('choices') or []:
+                    piece = (c.get('delta') or {}).get('content')
+                    if piece:
+                        text += piece
+                        try:
+                            on_text(text)
+                        except Exception:   # speaking early is a convenience: it must never cost the answer
+                            on_text = lambda t: None
+        else:
+            text = json.load(resp)['choices'][0]['message']['content']
     finally:
         if background:
             BACKGROUND['conn'] = None
@@ -734,6 +925,28 @@ def named_frame(question, entries):
             if hit >= .5 and len(q & name) > best:
                 best, pick = len(q & name), [e]
     return pick
+
+
+DESIGN_Q = re.compile(r'\b(design|demo|prototype|mock-?up|version)s?\b', re.I)
+
+
+def demo_card(question, board):
+    """For "take me to the high fidelity design": the live demo card whose name says it (most words of the question in
+    its name, at least two), the later one of two with the same name; and the newest demo card of the same thing when
+    that is another card. (It once zoomed out over a whole team area instead, 2026-11-12.)"""
+    demos = sorted((i for i in board.get('items') or [] if i.get('type') == 'web' and i.get('demo') and i.get('label')),
+                   key=lambda i: float(i.get('z') or 0))   # z grows as cards are added: later = higher
+    want = set(tokens(question.replace('-', ' ')))
+    best, hit = 2, None
+    for i in demos:
+        n = len(want & set(tokens(i['label'].replace('-', ' '))))
+        if n >= best:   # equal scores: the later card wins
+            best, hit = n, i
+    if not hit:
+        return None, None
+    same = re.split(r'\s+[—–-]\s+', hit['label'])[0].lower()
+    newest = [i for i in demos if re.split(r'\s+[—–-]\s+', i['label'])[0].lower() == same][-1]
+    return hit, (newest if newest['label'] != hit['label'] else None)
 
 
 def plain(s):
@@ -1014,6 +1227,7 @@ def link_under(board, item_id, reader):
 
 UNDO_Q = re.compile(r"\b(put (it|them|that|everything|the cards?) back|undo|revert|back (to )?(how|the way) it was)\b", re.I)
 SORT_Q = re.compile(r"\b(sort|group|organi[sz]e|restructure|rearrange|regroup|categori[sz]e|cluster)\w*\b.{0,60}\b(themes?|topics?|categor\w*|sections?|groups?)\b", re.I)
+EARLY_NO = re.compile(r"^\W*(?:done|okay|ok|sure|got it|here is|here's|here are|i've|i have|i'll|i will|i can't|i cannot|i could not|i couldn't|i moved|i added|i started|want me|shall i|should i|let me|which\b|do you want|would you like)\b", re.I)   # a sentence that claims an action, offers one or asks back is never spoken before the checks
 STARTED = re.compile(r"\bI(?:'ve| have)? (?:just )?(?:started|kicked off|set up|launched|begun) (?:an?|the) (?:agent )?(?:task|team)", re.I)
 
 
@@ -1133,7 +1347,8 @@ INTENT_FIELDS = """ "want": "<what the user wants and why, in one or two plain s
  "cannot": "<the part of the JOB THE USER ASKED FOR that no team can do, or empty (usually empty). Never name things the user did
             not ask for (the user asked to find practices for sale: buying one or contacting sellers is NOT part of it). A team CAN write code for Clewbert,
             on its own branch that the user reviews. It cannot put anything live (deploy, merge, change the running
-            app), cannot store sign-ins, tokens or keys, cannot run the app or its tests, and nothing it makes keeps
+            app), cannot store sign-ins, tokens or keys, cannot start the app (its engineer can run checks and tests in a
+            shut-in terminal with no network), and nothing it makes keeps
             running after it ends. It can make a Markdown (.md) file on the board, but not a PDF, a Word file or a
             spreadsheet: 'drop it back as a PDF' -> cannot: 'make a PDF; it makes a .md file'.
             What a CONNECTED APP (listed below) can do is NOT a cannot: a team does it, after their yes (Substack connected
@@ -1185,9 +1400,10 @@ PART_CHECK = """You check one part of an AI team's work on the user's Clewbert b
 was asked to do), its "done when" (what must be in its frame for the part to count as done) and everything the teammate
 put in its frame. Decide whether the "done when" is met by what is actually in the frame. Be strict about what it asks
 for (every item, every source it says), not about style. Words like "I could not find" do not meet it. But no teammate
-can run a shell or a command, run the app or its tests, hear sound, push, deploy or name a branch (commits land on
-team/<job id>): when the "done when" asks for one of those, a frame that says so plainly and does the rest PASSES; never
-send it back for the impossible piece.
+can start the app or a server, use node or npm, hear sound, push, deploy or name a branch (commits land on
+team/<job id>), and only an engineer can run a command: when the "done when" asks for one of those, a frame that says
+so plainly and does the rest PASSES; never send it back for the impossible piece. An engineer's frame that quotes a
+command and what it printed has run it: that counts.
 "missing" is handed to the teammate as its whole next job, so write it as ONE small piece of work someone could do on its
 own: which item or source, from which words to which, what exactly to add. Not "the rest", not a repeat of the whole part.
 Reply with JSON only: {"pass": true or false, "missing": "<the one missing piece, as a small job; empty when it passed>",
@@ -1297,11 +1513,12 @@ members working under the Lead. Each member is one of these kinds:
   voice: strips filler and repeats, sets asides apart, adds nothing. One member, alone, when the job is to clean up,
   structure or make sense of something the person said or wrote; never a researcher, writer or checker beside it.
 %sPick only the kinds this job needs. Two members of one kind are fine when the work splits (one researcher per platform).
-WHAT NO TEAMMATE CAN DO (a done_when that needs one of these can never pass, so never write one): run a shell or any
-command, run the app or its tests, hear or speak sound, use a microphone (the demo tester is a headless browser: it
-clicks, types and reads the page), push to GitHub, deploy, or name a branch (an engineer's commits always land on the
-team's own branch, team/<job id>). A syntax check an engineer can do is code_check (Python parsed, JSON loaded; nothing
-run); anything else is said plainly in a note, not attempted.
+WHAT NO TEAMMATE CAN DO (a done_when that needs one of these can never pass, so never write one): start the app or a
+server, use node or npm, install anything, hear or speak sound, use a microphone (the demo tester is a headless
+browser: it clicks, types and reads the page), push to GitHub, deploy, or name a branch (an engineer's commits always
+land on the team's own branch, team/<job id>). ONLY AN ENGINEER can run a command: it has a shut-in terminal (code_run)
+for checks and tests with python3 and git, with no network; a part that needs a command run goes to an engineer, and
+its done_when asks for the command and what it printed.
 
 Name each by its part of the job ("LinkedIn API researcher"), not by its kind alone.
 WHAT THE TOOLS CAN CARRY (size every part by this): a member reads an item 2,000 words at a time; a note holds one
@@ -1348,6 +1565,12 @@ or a long card word for word. Copying a card or file into a Markdown file is ONE
 copies it whole, any size), so a member whose part is to read, quote or rebuild a file's content for a copy is "one_call": "add_file".
 The transcript of a video or recording is ONE transcribe call, so a member whose part is to fetch, read or assemble
 captions or a transcript is "one_call": "transcribe".
+WHAT NO TEAMMATE CAN DO (a done_when that needs one of these can never pass, so never write one): start the app or a
+server, use node or npm, install anything, hear or speak sound, use a microphone (the demo tester is a headless
+browser: it clicks, types and reads the page), push to GitHub, deploy, or name a branch (an engineer's commits always
+land on the team's own branch, team/<job id>). ONLY AN ENGINEER can run a command: it has a shut-in terminal (code_run)
+for checks and tests with python3 and git, with no network; a part that needs a command run goes to an engineer, and
+its done_when asks for the command and what it printed.
 For each member:
 - "asked": does the ask (in the user's words) or what the team hands back actually call for this member's work? true/false.
   (A study of a file format is not called for by "copy this card"; a demo is not called for by "a file" or "words";
@@ -1499,9 +1722,10 @@ def team_plan(question, history, here, spaces_text, bid=None):
     msgs.append({'role': 'user', 'content': question})
     out = chat(msgs, 700, timeout=60)
     if not out.get('task'):
-        return {'task': question}
+        return {'task': question, 'ask': question}
     plan = {k: ' '.join(str(out.get(k) or '').split())[:600 if k == 'task' else 300 if k == 'why' else 80] for k in
             ('task', 'why', 'board_name', 'space', 'space_also', 'new_space', 'mode')}
+    plan['ask'] = ' '.join(question.split())[:1500]   # the user's words, unchanged, ride along with the rewording (a team worked from the rewording alone and missed the point, 2026-11-09)
     plan['intent'] = intent_of(out, question + ' ' + plan['task']) if out.get('deliver') else None
     opts = [' '.join(str(x).split())[:60] for x in (out.get('options') or []) if str(x).strip()][:3] if isinstance(out.get('options'), list) else []
     if not any(h.get('route') == 'clarify' for h in history[-3:]) and len(opts) >= 2:   # ask once, with choices; never twice for one job
@@ -1621,11 +1845,29 @@ def outside(question, history, here, from_boards=None, bid=None, spaces=(), wait
     return {'answer': said, 'sources': out[:4], 'proposal': proposal}
 
 
-def answer(question, history, boards, scope, reader, briefs=None, layout=None, waiting=(), tasks=(), team_text='', seen=None, finder=None, here='', apps=(), bid=None,
-           pending='', spaces=(), pending_raw=None, routed=None, spaces_text='', selected=()):
+def answer(*args, **kwargs):
+    """One voice (or typed) question. While it runs, agents' calls on the same model stand aside (yielding_post)."""
+    ASKING[0] += 1
+    try:
+        return _answer(*args, **kwargs)
+    finally:
+        ASKING[0] -= 1
+        LAST_ASK[0] = time.time()
+
+
+def _answer(question, history, boards, scope, reader, briefs=None, layout=None, waiting=(), tasks=(), team_text='', seen=None, finder=None, here='', apps=(), bid=None,
+           pending='', spaces=(), pending_raw=None, routed=None, spaces_text='', selected=(), on_say=None):
     t0 = LAST_ASK[0] = time.time()
     interrupt_background()
     briefs = briefs or {}
+    if len(boards) == 1 and bid and not waiting:   # answered from the board itself, no model
+        if CLEAR_Q.search(question):
+            return {'answer': 'Done. Nothing is selected or outlined now.', 'sources': [], 'checked': True, 'ms': 0, 'route': 'boards', 'clear': True}
+        whole = history and WHERE_Q.search(history[-1]['q']) and re.search(r"\b(?:entire|whole) (?:board|canvas)|\bnot (?:on|in|inside) (?:the|that) frame\b", question, re.I)
+        edge = edge_item(boards[0], history[-1]['q'] if whole else question, reader)   # "not in the frame, on the whole board" after such a question means the same question
+        edge = edge or order_item(boards[0], question, reader)
+        if edge:
+            return edge
     # Banter gets a quick reply: a short model call decides "small talk or boards" while the boards are searched,
     # so a real question loses no time. "Yo, how you doing?" went through the whole search and took 29 s.
     said, found = {}, {}
@@ -1686,7 +1928,10 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
     entries += [dict(t, kind='agent task') for t in tasks]   # {board, boardName, item (its frame), run, text}
     if len(boards) == 1 and selected:   # what the user has selected on the board right now ("these", "the selected ones")
         its = [i for i in boards[0].get('items') or [] if i['id'] in set(selected)]
-        lines = ['%d. %s: %s' % (n, *(lambda k, w: (k, ' '.join(w.split())[:120] or '(no words)'))(*item_words(i, reader)))
+        # one or a few selected: most of their words, so "tell me about the selected card" can be answered from it (a video's whole
+        # transcript); many selected: a line each. 120 characters each cut an OpenLoom transcript to "Here is a" (2026-11-12)
+        room = max(120, 12000 // max(1, min(len(its), 60)))
+        lines = ['%d. %s: %s' % (n, *(lambda k, w: (k, ' '.join(w.split())[:room] or '(no words)'))(*item_words(i, reader)))
                  for n, i in enumerate(its[:60], 1)]
         entries.append({'board': boards[0]['id'], 'boardName': boards[0].get('name', ''), 'item': None, 'kind': 'selected items',
                         'frame': '', 'text': 'The user has %d item%s selected on this board right now:\n%s' % (len(its), '' if len(its) == 1 else 's', '\n'.join(lines))})
@@ -1707,7 +1952,34 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
     if not entries:
         return {'answer': 'There is nothing on %s to answer from yet.' % ('this board' if scope != 'all' and not scope.startswith('space:') else 'these boards'), 'sources': [], 'ms': 0}
     stable = (layout or {}).get('stable', '')
-    reply = ask_model(question, history, entries, scope, stable)
+    # Speaking early (on_say): a finished sentence of the answer goes out while the model is still writing the rest, so the voice
+    # starts seconds sooner. Only for a plain question about the boards, and only sentences that could not be taken back by the checks
+    # below: every number in it is on the board, it is not a claim of something done or an offer, it does not read out the frames, it
+    # does not repeat the last answer. The first sentence that fails stops it; everything else is spoken after the checks, as before.
+    early = {'said': [], 'n': 0, 'stop': on_say is None or route != 'boards' or bool(waiting) or any(
+        r.search(question) for r in (MOVE_Q, SORT_Q, UNDO_Q, SEE, DEMO, YES))}
+    on_board = [e.get('notes') or e['text'] for e in entries] + ([layout['text']] if layout else []) + [e.get('frame') or '' for e in entries]
+    frame_names = [e['frame'].lower() for e in entries if e['kind'] in ('frame summary', 'frame gist') and e['frame'] and len(e['frame']) > 3 and not e['frame'].startswith('(')]
+
+    def on_answer(text, done):
+        if early['stop']:
+            return
+        parts = re.split(r'(?<=[.!?])\s+', text.strip())
+        for s in (parts if done else parts[:-1])[early['n']:]:
+            early['n'] += 1
+            s = re.sub(r'(?<!\.)\.\.(?!\.)', '.', re.sub(r'\s*(?:Sources?:\s*)?(?:\[\d+\][,;\s]*(?:and\s*)?)+(?=[.!?]|$)', '', s)).strip()
+            if not s:
+                continue
+            so_far = ' '.join(early['said'] + [s])
+            if (EARLY_NO.search(s) or STARTED.search(s) or '?' in s or unsupported_numbers(s, on_board, question)
+                    or sum(1 for n in frame_names if n in so_far.lower()) > 4
+                    or (history and same_words(so_far, history[-1]['a']) >= .7)):
+                early['stop'] = True
+                return
+            early['said'].append(s)
+            on_say(s)
+    reply = ask_model(question, history, entries, scope, stable, on_answer=None if early['stop'] else on_answer)
+    early['stop'] = True
     if history and same_words(reply[0], history[-1]['a']) >= .7:   # Nemotron can read back its last answer: once more, asking for news
         again = ask_model(question + ' (Say something new: do not repeat your last answer.)', history, entries, scope, stable)
         if same_words(again[0], history[-1]['a']) < .7:
@@ -1788,6 +2060,15 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
             opening = [link]
     if any(e['kind'] == 'board brief' for e in pick(show_nums)) and view is None and not card:
         view = 'brief'
+    if single and asked_to_see and not card and not task and DESIGN_Q.search(question):
+        hit, newer = demo_card(question, boards[0])
+        if hit:   # the card itself, close enough to read, said by its name
+            demo = {'board': boards[0]['id'], 'boardName': boards[0].get('name', ''), 'item': hit['id'], 'kind': 'demo card',
+                    'frame': '', 'text': hit['label']}
+            shown, used, view = [demo], [demo], None
+            said = 'Here is the demo card "%s".' % hit['label']
+            if newer:
+                said += ' There is a newer one further along the board: "%s".' % newer['label']
     for e in shown:
         if e not in used:
             used.append(e)
@@ -1842,7 +2123,9 @@ def answer(question, history, boards, scope, reader, briefs=None, layout=None, w
     said = no_rule_out(said, used, entries)
     for e in shown:   # went into a frame but the answer is about something else: say what the frame holds
         if e['kind'] in ('frame summary', 'frame gist') and e['frame'].lower() not in said.lower():
-            said = 'Here is the %s frame. %s' % (e['frame'], ' '.join(re.split(r'(?<=[.!?])\s+', e['notes'])[:2]))
+            # a team's frame is named by its whole task sentence: "Here is the Take the clickable ... proo frame" (2026-11-12)
+            name = 'Here is the %s frame.' % e['frame'] if len(e['frame'].split()) <= 8 else 'Here it is.'
+            said = '%s %s' % (name, ' '.join(re.split(r'(?<=[.!?])\s+', e['notes'])[:2]))
             if e not in used:
                 used.append(e)
     said = re.sub(r'\s*(?:Sources?:\s*)?(?:\[\d+\][,;\s]*(?:and\s*)?)+(?=[.!?]|$)', '', said).strip()   # item numbers are not spoken
@@ -1986,6 +2269,14 @@ def voices():
 def speak(text, voice):
     """The shim's streaming answer: raw 16-bit PCM; the caller copies it to the browser as it arrives."""
     body = json.dumps({'model': 'qwen3-tts', 'input': text, 'voice': voice, 'stream': True}).encode()
+    if TTS_FAST_URL:   # the faster server first; CANVAS_TTS_URL when it is away or does not have this voice
+        try:
+            u = urllib.parse.urlsplit(TTS_FAST_URL)
+            socket.create_connection((u.hostname, u.port or 80), timeout=4).close()   # away = known in 4 s, not 120 (1.5 was too short: a server on Wi-Fi sometimes takes 3 s to pick up)
+            req = urllib.request.Request(TTS_FAST_URL + '/v1/audio/speech', data=body, headers={'Content-Type': 'application/json'})
+            return urllib.request.urlopen(req, timeout=120)
+        except OSError as e:
+            print('%s speech: the faster speech server did not take it (%s), using CANVAS_TTS_URL' % (time.strftime('%Y-%m-%d %H:%M:%S'), str(e)[:80]), flush=True)
     req = urllib.request.Request(TTS_URL + '/v1/audio/speech', data=body, headers={'Content-Type': 'application/json'})
     return urllib.request.urlopen(req, timeout=120)
 
