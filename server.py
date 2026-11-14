@@ -1540,6 +1540,9 @@ class Handler(BaseHTTPRequestHandler):
             if waiting_on and time.time() - waiting_on['t'] > 1800:   # old: forgotten
                 PENDING.pop(talk_id, None)
                 waiting_on = None
+            stopping = stop_jobs(question, req, talk_id, waiting_on)   # "stop the team" stops it: it used to offer a new team (2026-11-14)
+            if stopping:
+                return self.reply(200, stopping)
             said_back = pending_reply(question) if waiting_on else None
             m = RULE_Q.match(question) if not waiting_on else None
             if m:   # "add to my rules: ..." / "from now on every team ...": a standing rule, said once
@@ -1661,6 +1664,8 @@ class Handler(BaseHTTPRequestHandler):
                       ' task=%r' % (result.get('team') or {}).get('task', '')[:160] if result.get('team') else ''), flush=True)
                 record_ask(talk_id, question, history, here, spaces_text, apps, bool(waiting), (waiting_on or {}).get('say', ''), picked,
                            boards[0]['id'] if req.get('board') else None, result)
+                if result.get('route') == 'yes' and waiting_on and not AGREE.search(question):   # a yes needs a word of agreement:
+                    result['route'] = 'chat'   # "So it's clear these are analysts" was taken as yes and started a team (2026-11-14)
                 if result.get('route') in ('yes', 'no') and waiting_on:   # the check heard agreement or a refusal in other words
                     return settle(result['route'])
                 proposal = result.pop('proposal', None)
@@ -2382,6 +2387,47 @@ def regroup(ids, groups):
 PENDING = {}   # conversation id -> {'id', 'say', 'action', 't'}: proposed, not done; kept 30 minutes, in memory only
 SAY_YES = re.compile(r"^\W*(yes|yeah|yep|yup|ya|yah|ok|okay|k|sure|go|go ahead|do it|please|please do|sounds good|perfect|great|"
                      r"that's right|correct|absolutely|definitely|of course|for sure|mm+[- ]?hm+|uh[- ]?huh|mhm+|alright|all right)\b[\w\s,.!']*$", re.I)
+AGREE = re.compile(r"\b(yes|yeah|yep|yup|ya|yah|ok|okay|sure|go ahead|go for it|do it|do that|start it|start them|start the team|"
+                   r"please do|sounds good|let's do it|let's go|absolutely|definitely|of course|that works|perfect|great)\b", re.I)
+# stop a team by voice: "stop the team", "cancel the job", "tell the lead to stop", "I no longer want them working on that"
+STOP_JOB = re.compile(r"\b(stop|cancel|kill|halt|abort|call off|scrap|shut down|end)\b(?!\s+(?!working\b)\w+ing\b).{0,40}\b(jobs?|teams?|tasks?|lead|agents?|work|run|working|it all|everything)\b"
+                      r"|\b(teams?|lead|agents?|jobs?|tasks?)\b.{0,40}\b(to|should|must|can)\s+(stop|cancel|quit|halt)\b(?!\s+(?!working\b)\w+ing\b)"
+                      r"|\bno longer want\b.{0,30}\bwork", re.I)
+STOP_ALL = re.compile(r"\b(all|every|both|everything|them all)\b", re.I)
+
+
+def stop_jobs(question, req, talk_id, waiting_on):
+    """A spoken stop for the teams at work on this board, done here without the model; a waiting offer is dropped too.
+    The newest team stops unless all of them are named. None when it is not a stop, or nothing is working or offered."""
+    bid = str(req.get('board') or '')
+    if not BOARD_ID.match(bid) or not STOP_JOB.search(question) or re.match(r"\W*(how|why|what|when|where|who|is|does|did)\b", question, re.I):
+        return None   # "how do I stop a team?" asks about it
+    live = sorted([r for r in RUNNER.view(bid) if not r.get('parent') and r['status'] in agents.ACTIVE], key=lambda r: r['created'])
+    if not live and not waiting_on:
+        return None
+    short = lambda r: ' '.join(r['task'].split(' (This is about')[0].split()[:10])
+    targets = live if STOP_ALL.search(question) else live[-1:]
+    stopped = [r for r in targets if RUNNER.stop(r['id'])]
+    PENDING.pop(talk_id, None)
+    if stopped:
+        text = ('Stopped the team on "%s". Anything already running finishes its current step, then nothing more starts.' % short(stopped[0])
+                if len(stopped) == 1 else 'Stopped all %d teams on this board. Anything already running finishes its current step.' % len(stopped))
+        rest = [r for r in live if r not in stopped]
+        if rest:
+            text += ' %d other team%s still working: "%s". Say stop all to stop %s too.' % (
+                len(rest), ' is' if len(rest) == 1 else 's are', short(rest[-1]), 'it' if len(rest) == 1 else 'them')
+        if waiting_on:
+            text += " I also dropped the offer to start a new team."
+    else:
+        text = "Okay, I won't start that team."   # nothing working: the offer is what the user meant
+    turn = {'q': question, 'a': text, 'sources': [], 'checked': None, 't': now_ms(), 'route': 'stop'}
+    with LOCK:
+        conv = read_talk(talk_id)
+        conv['turns'] = (conv['turns'] + [turn])[-500:]
+        write_json(talk_path(talk_id), conv)
+    return {'answer': text, 'sources': [], 'turn': turn, 'stopped': [r['id'] for r in stopped]}
+
+
 SAY_NO = re.compile(r"^\W*(no|nope|nah|never ?mind|cancel|stop|don't|do not|forget it|leave it|not now)\b", re.I)
 CHANGE_WORDS = re.compile(r"\b(but|actually|instead|rather|only|except|change|different|another|other|new board|in the|into)\b", re.I)
 
