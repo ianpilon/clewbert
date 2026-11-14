@@ -815,6 +815,8 @@ class Runner:
              'done_when': str(done_when or '').strip()[:400] or None, 'ask': (' '.join(str(ask).split())[:1500] or None) if ask and not parent else None,
              'model': model,
              'messages': [{'role': 'system', 'content': system}, first]}
+        if not parent:
+            r['wrap'] = True   # the whole job in one frame of its own, moved by its title (2026-11-13)
         with self.lock:
             self.runs[rid] = r
         self.save(r)
@@ -2512,14 +2514,17 @@ class Runner:
                                 i['y'] += dy
                         moved = True
                     x += f['w'] + gap
-            block = [i for i in items if i.get('agent') in mine and 'x' in i]
-            frames = [i for i in block if i.get('type') == 'area']
+            moved = self.job_wrap(root, items, mine) or moved
+            wrap = next((i for i in items if i['id'] == 'j' + root['id']), None)
+            inside = lambda o, f: o['x'] >= f['x'] - 1 and o['y'] >= f['y'] - 1 and o['x'] + o['w'] <= f['x'] + f['w'] + 1 and o['y'] + o['h'] <= f['y'] + f['h'] + 1
+            block = [i for i in items if 'x' in i and (i.get('agent') in mine or (wrap and not i.get('agent') and i is not wrap and inside(i, wrap)))]   # its frame carries what is in it, as a drag does
+            frames = [i for i in block if i.get('type') == 'area' and i.get('agent') in mine]
             if not frames:
                 return moved
             # what was there first: each older team as ONE box (its frames and chart) with a clear gap around it, so jobs stacked
             # one under another read as separate (12 units apart they read as one tangle, 2026-11-13); a card as itself, no gap
             # (a job sits 80 beside the card it is about). The user's own frames never count: a team may sit inside one.
-            m = gap / 2
+            m = 2 * gap if root.get('wrap') else gap / 2   # wrapped jobs: 800 apart, room in the gap for the next job's title
             teams = {}
             for i in items:
                 r = self.runs.get(i.get('agent'))
@@ -2529,8 +2534,9 @@ class Runner:
                         b = teams.setdefault(j['id'], [i['x'], i['y'], i['x'] + i['w'], i['y'] + i['h']])
                         b[:] = [min(b[0], i['x']), min(b[1], i['y']), max(b[2], i['x'] + i['w']), max(b[3], i['y'] + i['h'])]
             older = [{'x': b[0] - m, 'y': b[1] - m, 'w': b[2] - b[0] + 2 * m, 'h': b[3] - b[1] + 2 * m} for b in teams.values()]
+            carried = {id(i) for i in block}
             older += [i for i in items if not i.get('agent') and i.get('type') not in ('arrow', 'area') and 'x' in i
-                      and (i.get('added') or 0) < root['created']]
+                      and (i.get('added') or 0) < root['created'] and id(i) not in carried]   # not what its own frame holds
             for _ in range(30):
                 x0, y0 = min(f['x'] for f in frames), min(f['y'] for f in frames)
                 me = {'x': x0, 'y': y0, 'w': max(f['x'] + f['w'] for f in frames) - x0, 'h': max(f['y'] + f['h'] for f in frames) - y0}
@@ -2550,6 +2556,54 @@ class Runner:
         if not tidy(json.loads(json.dumps(self.board_items(root['board'])))):   # a dry run on a copy: nothing to move, nothing written
             return False
         return self.store.edit_board(root['board'], lambda board: tidy(board.get('items') or []))
+
+    def job_wrap(self, root, items, mine):
+        """The job's own frame ('j' + root id): around its chart, every part's frame, their cards and lines, and the cards
+        it is about when they sit beside it, so its title moves the whole job (2026-11-13: many teams on one board).
+        Made for jobs with 'wrap' (new jobs, or a board's jobs wrapped on request); fitted to what it holds after each
+        change. Marked chart 'job': the page never lays it out as a part's frame. True when it changed."""
+        wid = 'j' + root['id']
+        wrap = next((i for i in items if i['id'] == wid), None)
+        if not wrap and not root.get('wrap'):
+            return False
+        parts = [i for i in items if i.get('agent') in mine and i['id'] != wid and 'x' in i and i.get('w') is not None]
+        if not parts:
+            return False
+        u = float((root.get('lay') or {}).get('u') or 1)
+        box = [min(i['x'] for i in parts), min(i['y'] for i in parts), max(i['x'] + i['w'] for i in parts), max(i['y'] + i['h'] for i in parts)]
+        near, sel = 600 * u, set(root.get('selected') or [])
+        held = [i for i in items if not i.get('agent') and 'x' in i and i.get('type') != 'arrow' and (
+                (i['id'] in sel and i['x'] < box[2] + near and i['x'] + i['w'] > box[0] - near and i['y'] < box[3] + near and i['y'] + i['h'] > box[1] - near)
+                or (wrap and i.get('type') != 'area' and i['x'] >= wrap['x'] - 1 and i['y'] >= wrap['y'] - 1
+                    and i['x'] + i['w'] <= wrap['x'] + wrap['w'] + 1 and i['y'] + i['h'] <= wrap['y'] + wrap['h'] + 1))]
+        for i in held:
+            box = [min(box[0], i['x']), min(box[1], i['y']), max(box[2], i['x'] + i['w']), max(box[3], i['y'] + i['h'])]
+        # titles are 12 px on screen at any zoom: 80 units was 3 px at an overview zoom (3%) and the chart's title sat on the
+        # job's. 500 above holds a title from about 3% up; 150 around holds the lines that loop under the frames
+        pad, top = 150 * u, 500 * u
+        g = {'x': box[0] - pad, 'y': box[1] - top, 'w': box[2] - box[0] + 2 * pad, 'h': box[3] - box[1] + top + pad}
+        if wrap and all(abs(wrap[k] - g[k]) < 1 for k in g):
+            return False
+        if not wrap:
+            title = ' '.join(root['task'].split(' (This is about')[0].split())
+            wrap = {'id': wid, 'type': 'area', 'agent': root['id'], 'chart': 'job', 'color': '#f8fafc',
+                    'text': title[:120] + ('…' if len(title) > 120 else ''),
+                    'why': {'by': 'Lead', 'task': root['task'][:400], 'asked': '', 'when': now_ms(), 'run': root['id']}}
+            items.insert(0, wrap)
+        wrap.update(g, z=min([i.get('z', 1) for i in parts] + [1]) - 1)
+        return True
+
+    def wrap_board(self, bid):
+        """Every job on a board in its own frame, oldest first, each clear of the ones before it. The number wrapped."""
+        n = 0
+        for r in sorted([x for x in list(self.runs.values()) if not x.get('parent') and x['board'] == bid and x.get('frame')],
+                        key=lambda x: x['created']):
+            if not r.get('wrap'):
+                r['wrap'] = True
+                self.save(r)
+            self.spread(r)
+            n += 1
+        return n
 
     def tidy_all(self):
         """Every job on every board, once at start (in the background): its row, clear of older work, its chart covering
@@ -3103,7 +3157,7 @@ class Runner:
         fid = 'c' + r['id']
         items = self.board_items(r['board'])
         f = next((i for i in items if i['id'] == fid), None)
-        cards = [i for i in items if i.get('agent') == r['id'] and i.get('chart') and i['id'] != fid and i.get('type') != 'arrow']
+        cards = [i for i in items if i.get('agent') == r['id'] and i.get('chart') and i['id'] != fid and i.get('type') != 'arrow' and i.get('chart') != 'job']
         if not f or not cards:
             return False
         pad = (r.get('lay') or {}).get('pad') or 28

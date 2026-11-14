@@ -1484,6 +1484,10 @@ class Handler(BaseHTTPRequestHandler):
             BRIEFER.touch(bid)
             live_send(bid, {'kind': 'saved', 'updated': board['updated']}, self.headers.get('X-Client') or '')
             return self.reply(200, {'updated': board['updated'], 'put': len(put), 'gone': len(gone)})
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'wrap' and BOARD_ID.match(parts[2]):   # each team's job in a frame of its own
+            if not os.path.exists(board_path(parts[2])):
+                return self.reply(404, {'error': 'no such board'})
+            return self.reply(200, {'wrapped': RUNNER.wrap_board(parts[2])})
         if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'seen' and BOARD_ID.match(parts[2]):   # the board was opened: its ended tasks are looked at
             return self.reply(200, {'seen': RUNNER.seen(parts[2])})
         if parts == ['api', 'name-frame']:   # a frame drawn around items asks for its name
