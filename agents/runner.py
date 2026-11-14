@@ -2484,9 +2484,10 @@ class Runner:
            height, with its cards. Frames only grow down, so a row never runs into itself. Frames used to go in any free
            spot 900 tall and then grew 12,000+ down over each other, 2026-11-13). Done only when
            two of the job's frames overlap (or force), so a layout made by hand stays.
-        2. clear of what was there before it: when its frames grew over older cards or an older team's work, the whole job
-           (row, chart, cards) slides right until it is clear. What was added after the job (the user's notes on its work) and
-           their own frames (a team may sit inside one) never move it.
+        2. clear of what was there before it: when its frames grew over older cards, or come within a gap of an older team's
+           whole box, the whole job (row, chart, cards) moves the shorter way, right or down, until it is clear (jobs
+           stacked one under another stay a stack). What was added after the job (the user's notes on its work) and their own
+           frames (a team may sit inside one) never move it.
         The board is read first and written only when something moves. True when it moved."""
         jr = self.job_runs(root)
         if not any(x.get('frame') for x in jr):
@@ -2495,10 +2496,6 @@ class Runner:
         ids = [x['frame'] for x in jr if x.get('frame')]
         gap = 200 * float((root.get('lay') or {}).get('u') or 1)
         hit = lambda a, b: a['x'] < b['x'] + b['w'] and b['x'] < a['x'] + a['w'] and a['y'] < b['y'] + b['h'] and b['y'] < a['y'] + a['h']
-
-        def age(i):   # when an item came: another team's work by its job's start, a card by its stamp (none: older than stamps)
-            r = self.runs.get(i.get('agent'))
-            return self.root(r)['created'] if r else (i.get('added') or 0)
 
         def tidy(items):
             moved = False
@@ -2517,15 +2514,37 @@ class Runner:
                     x += f['w'] + gap
             block = [i for i in items if i.get('agent') in mine and 'x' in i]
             frames = [i for i in block if i.get('type') == 'area']
-            older = [i for i in items if i.get('agent') not in mine and i.get('type') != 'arrow' and 'x' in i
-                     and not (i.get('type') == 'area' and not i.get('agent')) and age(i) < root['created']]
+            if not frames:
+                return moved
+            # what was there first: each older team as ONE box (its frames and chart) with a clear gap around it, so jobs stacked
+            # one under another read as separate (12 units apart they read as one tangle, 2026-11-13); a card as itself, no gap
+            # (a job sits 80 beside the card it is about). The user's own frames never count: a team may sit inside one.
+            m = gap / 2
+            teams = {}
+            for i in items:
+                r = self.runs.get(i.get('agent'))
+                if r and i.get('agent') not in mine and i.get('type') == 'area' and 'x' in i:
+                    j = self.root(r)
+                    if j['created'] < root['created'] and j['board'] == root['board']:
+                        b = teams.setdefault(j['id'], [i['x'], i['y'], i['x'] + i['w'], i['y'] + i['h']])
+                        b[:] = [min(b[0], i['x']), min(b[1], i['y']), max(b[2], i['x'] + i['w']), max(b[3], i['y'] + i['h'])]
+            older = [{'x': b[0] - m, 'y': b[1] - m, 'w': b[2] - b[0] + 2 * m, 'h': b[3] - b[1] + 2 * m} for b in teams.values()]
+            older += [i for i in items if not i.get('agent') and i.get('type') not in ('arrow', 'area') and 'x' in i
+                      and (i.get('added') or 0) < root['created']]
             for _ in range(30):
-                hits = [o for o in older if any(hit(f, o) for f in frames)]
+                x0, y0 = min(f['x'] for f in frames), min(f['y'] for f in frames)
+                me = {'x': x0, 'y': y0, 'w': max(f['x'] + f['w'] for f in frames) - x0, 'h': max(f['y'] + f['h'] for f in frames) - y0}
+                hits = [o for o in older if (any(hit(f, o) for f in frames) if 'id' in o else hit(me, o))]   # a card: under a frame; a team: near the job
                 if not hits:
                     break
-                dx = max(o['x'] + o['w'] for o in hits) + gap - min(f['x'] for f in frames)
+                # the shorter way out: right of what it hit, or below it (jobs stacked one under another stay a stack)
+                dx = max(o['x'] + o['w'] for o in hits) + m - x0
+                dy = max(o['y'] + o['h'] for o in hits) + m - y0
                 for i in block:
-                    i['x'] += dx
+                    if dy < dx:
+                        i['y'] += dy
+                    else:
+                        i['x'] += dx
                 moved = True
             return moved
         if not tidy(json.loads(json.dumps(self.board_items(root['board'])))):   # a dry run on a copy: nothing to move, nothing written
@@ -2535,7 +2554,7 @@ class Runner:
     def tidy_all(self):
         """Every job on every board, once at start (in the background): its row, clear of older work, its chart covering
         its cards. A clean job is only read."""
-        for r in [x for x in list(self.runs.values()) if not x.get('parent')]:
+        for r in sorted([x for x in list(self.runs.values()) if not x.get('parent')], key=lambda x: x['created']):   # oldest first: each job clears the ones before it
             try:
                 if self.spread(r):
                     print('tidied job %s on %s' % (r['id'], r['board']), flush=True)
