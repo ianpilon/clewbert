@@ -230,7 +230,7 @@
   .cv-vplay{display:flex;align-items:center;gap:10px;margin-bottom:8px}
   .cv-vpb{width:32px;height:32px;flex:none;border:none;border-radius:50%;background:#1d4ed8;color:#fff;font-size:12px;line-height:1;display:grid;place-items:center;padding:0}
   .cv-vplay input{flex:1;min-width:0;height:4px;margin:0;-webkit-appearance:none;appearance:none;border-radius:2px;cursor:pointer;
-    background:linear-gradient(to right,var(--blue) var(--p,0%),var(--border-strong) var(--p,0%))}
+    background:linear-gradient(to right,var(--blue) var(--p,0%),var(--border-strong,#cbd5e1) var(--p,0%))}
   .cv-vplay input::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--ink);border:none}
   .cv-vplay input::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--ink);border:none}
   .cv-vt{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -472,6 +472,13 @@
   .cv-file .fprev .h1{font-size:1.4em;margin-top:0}
   .cv-file .fprev .li{padding-left:1em;text-indent:-.8em}
   .cv-file .fsize{font-size:.955em;color:var(--muted-2);font-weight:500}
+  .cv-vn .cv-vplay{gap:.667em;margin:0;padding:.667em .833em;border-bottom:1px solid var(--border)}
+  .cv-vn .cv-vpb{width:2.333em;height:2.333em;font-size:.833em}
+  .cv-vn .cv-vplay input{height:.333em}
+  .cv-vn .cv-vplay input::-webkit-slider-thumb{width:1em;height:1em}
+  .cv-vn .cv-vt{font-size:.917em}
+  .cv-vn .ext{background:#1d4ed8}
+  .cv-vn .cv-vcap{font-size:1em}
   .cv-file .upbar{height:4px;background:var(--border);margin:10px 11px 0;border-radius:2px;overflow:hidden}
   .cv-file .upbar i{display:block;height:100%;width:0;background:#2563eb}
   .cv-link .fetching{font-size:.81em;color:var(--muted-2);font-style:italic}
@@ -2349,6 +2356,13 @@ function cvItemEl(it){
     const th=el.querySelector('.thumb img');   // a preview picture that will not load (GitHub sometimes answers "too many requests"):
     if(th)th.addEventListener('error',()=>{if(!th.dataset.retried){th.dataset.retried=1;setTimeout(()=>{th.src=u.img+(u.img.includes('?')?'&':'?')+'r=1';},4000);}
       else th.closest('.thumb').remove();});   // one more try, then the card shows its words without a broken picture
+  }else if(it.type==='media'&&it.vnote){ // a voice note looks like a document card (.md, PDF): it scales with the board, the words are its body, a small player on top (2026-11-14: the old player card was unreadable unless zoomed all the way in)
+    el.classList.replace('cv-media','cv-file');el.classList.add('cv-vn');const vo=it.voice||{};
+    el.innerHTML=`<div class="frame"><div class="mbar"><span class="ext">Voice</span><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'Voice note')}</span><a href="${escapeAttr(it.src)}" target="_blank" rel="noopener">Open ↗</a></div>
+      <div class="cv-vplay"><button class="cv-vpb" title="Play">▶</button><input type="range" min="0" max="1000" value="0" aria-label="Where in the recording"><span class="cv-vt">0:00</span><audio preload="metadata" src="${escapeAttr(it.src)}"></audio></div>
+      <div class="fprev doc">${vo.text?escapeHtml(vo.text):'<i>No words were heard in the recording.</i>'}${vo.capped?'<span class="cv-vcap">\n\nStopped at the 10-minute limit.</span>':''}</div></div>`;
+    el.querySelectorAll('.mbar a,.cv-vplay').forEach(x=>x.addEventListener('pointerdown',e=>e.stopPropagation()));   // playing and seeking are not a drag
+    cvVPlayer(el);
   }else if(it.type==='media'){ // a dropped video or sound: drags like an image, a click plays or pauses, the player's own strip still works
     const ext=escapeAttr(it.open||it.src),play=it.clip||it.src;   // an OpenLoom card opens the video in OpenLoom   // the card streams the board-sized copy when the server has made one; Open gives the original
     el.innerHTML=`<div class="frame"><div class="mbar"><span class="nm" title="${escapeAttr(it.label||'')}">${escapeHtml(it.label||'Video')}</span><a href="${ext}" target="_blank" rel="noopener">Open ↗</a></div></div>`;
@@ -2658,7 +2672,7 @@ async function cvVoiceWhy(it,at){   // at: a place on the board = a voice note o
       if(at){   // the card: a player with the words under it; the Assistant and agents read the words
         if(cvBoardId!==CV_REC.board||!cvBoard||(!src&&!text))return;
         const u=cvUnit();
-        if(src)cvAddItem({type:'media',kind:'audio',vnote:true,label:'Voice note, '+cvWhen(Date.now()),src,x:at.x-160*u,y:at.y-48*u,w:320*u,h:(text?210:96)*u,voice:{text,src,when:Date.now(),secs,...(capped?{capped:true}:{})}});
+        if(src)cvAddItem({type:'media',kind:'audio',vnote:true,label:'Voice note, '+cvWhen(Date.now()),src,x:at.x-130*u,y:at.y-60*u,w:260*u,h:340*u,voice:{text,src,when:Date.now(),secs,...(capped?{capped:true}:{})}});
         else cvAddItem({type:'note',text,fs:16*u,x:at.x-100*u,y:at.y-100*u,w:200*u,h:200*u});   // the sound did not upload: the words are still kept
         return;}
       if(cvBoardId!==CV_REC.board||!cvBoard||!cvBoard.items.includes(it))return;
