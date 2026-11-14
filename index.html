@@ -829,6 +829,8 @@
   .mic.muted,.cv-tb button.tbmic.muted{background:#b91c1c!important;border-color:#b91c1c!important;color:#fff!important}
   .vc-stop{border:1px solid var(--lost);background:var(--card);color:var(--lost);border-radius:999px;font-size:11.5px;font-weight:700;padding:3px 10px}
   .vc-stop:hover{background:var(--lost);color:#fff}
+  /* Stop keeps its room when hidden: appearing pushed the mic and speaker buttons left, so a click meant for them hit Stop (2026-11-13) */
+  .vc-stop[hidden]{display:inline-block!important;visibility:hidden}
   .vc-thread{flex:1 1 auto;min-height:0;max-height:calc(100vh - 230px);overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding-right:4px}
   .vc-thread:empty{display:none}
   .vc-grab,.vc-last{display:none}
@@ -1380,6 +1382,14 @@ async function api(path,opt={}){
 // live between devices: this copy's name, so the server does not echo its own saves and moves back to it
 const CV_LIVE={client:Math.random().toString(36).slice(2,10),es:null,board:null,lead:false,opened:false,snap:null,timer:0,
   device:/iPhone|Android.*Mobile|Mobile/.test(navigator.userAgent)?'phone':/iPad|Android/.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&/Mac/.test(navigator.userAgent))?'tablet':'computer'};
+// What the server holds of each board, item by item, as last opened or saved. Leaving the page sends only what changed since then:
+// a browser sends at most 64 KB while a page closes, and the last changes to a 544 KB board were lost on a reload (2026-11-13)
+const CV_SAVED=new Map();let cvInflight=null;
+const cvBare=i=>{const {pending,_local,...x}=i;return x;};
+function cvSnap(id,items){CV_SAVED.set(id,new Map(items.filter(i=>!i.uploading).map(i=>[i.id,JSON.stringify(cvBare(i))])));}
+function cvPatchBody(id,b){const old=CV_SAVED.get(id);if(!old)return null;
+  const now=b.items.filter(i=>!i.uploading).map(cvBare),ids=new Set(now.map(i=>i.id));
+  return JSON.stringify({name:b.name,view:b.view,put:now.filter(i=>old.get(i.id)!==JSON.stringify(i)),gone:[...old.keys()].filter(k=>!ids.has(k))});}
 const putJson=body=>({method:'PUT',headers:{'Content-Type':'application/json','X-Client':CV_LIVE.client},body});
 function boardBody(b){const ids=new Set(b.items.map(i=>i.id));   // agent items this page removed: the server keeps the ones it has not seen yet
   return JSON.stringify({name:b.name,items:b.items.filter(i=>!i.uploading).map(({pending,_local,...i})=>i),view:b.view,deleted:[...agSeen(b.id)].filter(id=>!ids.has(id)),base:b.updated||0});}   // base: what this copy was built on; the server keeps items added since
@@ -1401,9 +1411,12 @@ function cvSave(now){
 async function cvFlush(){
   if(cvSaving||!cvDirty.size)return;
   cvSaving=true;
-  const [id,b]=cvDirty.entries().next().value;cvDirty.delete(id);
-  try{const j=await api('boards/'+id,putJson(boardBody(b)));if(j&&j.updated){b.updated=j.updated;if(CV_CACHE.get(id)===b||!CV_CACHE.has(id))CV_CACHE.set(id,b);}if(j&&j.refresh)setTimeout(()=>liveRefresh(true),0);}
+  const [id,b]=cvDirty.entries().next().value;cvDirty.delete(id);cvInflight={id,b};const body=boardBody(b);
+  // 30 s at most: a save that hangs once held "Saving…" for two minutes and everything after it waited (2026-11-13)
+  const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),30000);
+  try{const j=await api('boards/'+id,{...putJson(body),signal:ctl.signal});clearTimeout(tm);cvInflight=null;try{cvSnap(id,JSON.parse(body).items);}catch(e){}if(j&&j.updated){b.updated=j.updated;if(CV_CACHE.get(id)===b||!CV_CACHE.has(id))CV_CACHE.set(id,b);}if(j&&j.refresh)setTimeout(()=>liveRefresh(true),0);}
   catch(e){
+    clearTimeout(tm);cvInflight=null;
     if(e.status===404){cvSaving=false;cvSaveState('gone');if(cvDirty.size)cvFlush();return;}   // board was deleted elsewhere: nothing to save into
     if(!cvDirty.has(id))cvDirty.set(id,b);
     cvSaving=false;cvSaveState('error');clearTimeout(cvSaveTimer);cvSaveTimer=setTimeout(cvFlush,5000);return;
@@ -1412,7 +1425,10 @@ async function cvFlush(){
   if(cvDirty.size)cvFlush();else cvSaveState('saved');
 }
 // leaving the page: push anything unsaved, and warn if it may not land
-window.addEventListener('pagehide',()=>{cvDirty.forEach((b,id)=>fetch('api/boards/'+id,{...putJson(boardBody(b)),keepalive:true}));});
+window.addEventListener('pagehide',()=>{const all=new Map(cvDirty);if(cvInflight)all.set(cvInflight.id,cvInflight.b);   // a save still on its way is sent again
+  all.forEach((b,id)=>{const p=cvPatchBody(id,b);
+    if(p&&p.length<60000)fetch('api/boards/'+id+'/patch',{method:'POST',headers:{'Content-Type':'application/json','X-Client':CV_LIVE.client},body:p,keepalive:true});
+    else fetch('api/boards/'+id,{...putJson(boardBody(b)),keepalive:true});});});
 window.addEventListener('beforeunload',e=>{if(cvDirty.size||cvSaving){e.preventDefault();e.returnValue='';}});
 
 /* ---------------- Board list ---------------- */
@@ -1778,7 +1794,7 @@ async function openBoard(id){
   if(b)fresh=CV_FETCH.get(id)||api('boards/'+id);
   else{try{b=await cvFetchBoard(id);}catch(e){location.hash='';return;}}
   if(location.hash.slice(1)!==id)return;   // moved on while loading
-  cvBoardId=id;cvBoard=b;
+  cvBoardId=id;cvBoard=b;if(Array.isArray(b.items))cvSnap(id,b.items);
   if(!Array.isArray(cvBoard.items))cvBoard.items=[];cvRecolour(cvBoard.items);
   cvBoard.maxZ=cvBoard.items.reduce((m,i)=>Math.max(m,i.z||1),1);
   if(cvBoard.view)Object.assign(cvView,cvBoard.view);else{cvView.x=60;cvView.y=40;cvView.s=1;}
@@ -3878,24 +3894,29 @@ async function lvStart(){
   VC.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
   if(!LV.mod){const u=URL.createObjectURL(new Blob([LV_WORKLET],{type:'application/javascript'}));await ac.audioWorklet.addModule(u);URL.revokeObjectURL(u);LV.mod=true;}
   LV.player=new AudioWorkletNode(ac,'lv-player');LV.player.connect(vcOut());
-  const ws=new WebSocket(cfg.url);
+  // the microphone is heard from the moment it is granted: what is said while the session starts is kept (8 s at most) and sent
+  // once it is ready. "Hey, can you take the selected objects..." arrived as "Objects and turn them into..." (2026-11-13)
+  let ws=null,ready=false;const early=[];
+  const send=a=>{const m=JSON.stringify({type:'session.input_audio.append',audio:a});if(ready&&ws.readyState===1)ws.send(m);else if(!ready){early.push(m);if(early.length>80)early.shift();}};
+  const node=ac.createScriptProcessor(4096,1,1),sink=ac.createGain();sink.gain.value=0;const ratio=ac.sampleRate/16000;let acc=new Int16Array(0);
+  node.onaudioprocess=e=>{const x=e.inputBuffer.getChannelData(0);let pk=0;for(let i=0;i<x.length;i++){const v=Math.abs(x[i]);if(v>pk)pk=v;}
+    vcLevel(VC.muted?0:pk);if(VC.muted||(ready&&ws.readyState!==1))return;   // muted: nothing is sent, and the gateway hears silence
+    const n=Math.floor(x.length/ratio),out=new Int16Array(acc.length+n);out.set(acc);
+    for(let i=0;i<n;i++){const p=i*ratio,j=Math.floor(p),a=p-j;const v=x[j]+((x[j+1]??x[j])-x[j])*a;out[acc.length+i]=Math.max(-32768,Math.min(32767,Math.round(v*32767)));}
+    let o=0;for(;out.length-o>=1600;o+=1600){const u=new Uint8Array(out.buffer,o*2,3200);let s='';for(let k=0;k<u.length;k++)s+=String.fromCharCode(u[k]);
+      send(btoa(s));}
+    acc=out.slice(o);};
+  VC.src=ac.createMediaStreamSource(VC.stream);VC.src.connect(node);node.connect(sink);sink.connect(ac.destination);VC.node=node;
+  ws=new WebSocket(cfg.url);
   await new Promise((res,rej)=>{
     ws.onopen=()=>ws.send(JSON.stringify({type:'session.start',session:{model:'gpt-live-1',audio:{format:{type:'audio/pcm',rate:16000},output:{voice:lvVoice()}},delegation:{type:'client'},store:false,instructions:LV_PERSONA,voice_gate:lvMe(),handoff:'app'}}));   // handoff app: the gateway sends every turn but small talk here, in the words that were said
     ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}if(m.type==='session.started'){LV.gated=!!(m.session&&m.session.voice_gate);res();}else if(m.type==='error')rej(new Error('live'));};
     ws.onerror=()=>rej(new Error('live: no connection'));ws.onclose=()=>rej(new Error('live: closed'));setTimeout(()=>rej(new Error('live: no answer in 8 s')),8000);});
   if(!VC.on){ws.close();return;}
   ws.onmessage=ev=>{let m={};try{m=JSON.parse(ev.data);}catch(e){return;}lvMsg(m);};
-  ws.onclose=()=>{if(VC.ws!==ws)return;VC.ws=null;LV.on=false;if(VC.on){vcSetState('');vcNote('The live voice dropped. Close the voice and open it again, or type below.');}};
+  ws.onclose=()=>{if(VC.ws!==ws)return;VC.ws=null;LV.on=false;if(VC.on)lvRedial();};
   VC.ws=ws;LV.ws=ws;LV.on=true;LV.frameAt=0;LV.lastDid=null;LV.did=null;LV.asking=false;LV.direct=false;LV.heard='';LV.reply='';
-  const node=ac.createScriptProcessor(4096,1,1),sink=ac.createGain();sink.gain.value=0;const ratio=ac.sampleRate/16000;let acc=new Int16Array(0);
-  node.onaudioprocess=e=>{const x=e.inputBuffer.getChannelData(0);let pk=0;for(let i=0;i<x.length;i++){const v=Math.abs(x[i]);if(v>pk)pk=v;}
-    vcLevel(VC.muted?0:pk);if(VC.muted||ws.readyState!==1)return;   // muted: nothing is sent, and the gateway hears silence
-    const n=Math.floor(x.length/ratio),out=new Int16Array(acc.length+n);out.set(acc);
-    for(let i=0;i<n;i++){const p=i*ratio,j=Math.floor(p),a=p-j;const v=x[j]+((x[j+1]??x[j])-x[j])*a;out[acc.length+i]=Math.max(-32768,Math.min(32767,Math.round(v*32767)));}
-    let o=0;for(;out.length-o>=1600;o+=1600){const u=new Uint8Array(out.buffer,o*2,3200);let s='';for(let k=0;k<u.length;k++)s+=String.fromCharCode(u[k]);
-      ws.send(JSON.stringify({type:'session.input_audio.append',audio:btoa(s)}));}
-    acc=out.slice(o);};
-  VC.src=ac.createMediaStreamSource(VC.stream);VC.src.connect(node);node.connect(sink);sink.connect(ac.destination);VC.node=node;
+  ready=true;for(const m of early)ws.send(m);early.length=0;   // what was said while it started
   LV.note='Live voice (beta): it hears you while it talks, so you can cut in.'+(LV.gated?' It listens for your voice only.':lvMe()?' Listening for your voice only is not available right now, so it hears everyone.':'');vcNote(LV.note);
 }
 function lvMsg(m){
@@ -3913,13 +3934,13 @@ function lvMsg(m){
     return;}
   if(t==='session.input_transcript.delta'){   // the words of one stretch of speech arrive together
     if(now-LV.heardAt>1500){LV.heard='';LV.asking=false;}
-    LV.hushUntil=0;   // the user is talking again: whatever the voice says next should be heard
+    LV.hushUntil=0;LV.dropOut=false;   // the user is talking again: whatever the voice says next should be heard
     LV.direct=false;   // and what it says next belongs to their new words, not to the answer they talked over
     LV.heard+=m.delta;LV.heardAt=now;$('#vcHeard').textContent='“'+LV.heard.trim()+'”';return;}
   if(t==='session.output_transcript.delta'){
     // this page's own answer being spoken (already in the conversation) is counted off until all of it has come back
     if(LV.direct){LV.directGot+=lvChars(m.delta);if(LV.directGot<=LV.directLen+3)return;LV.direct=false;LV.reply='';}
-    if(LV.asking)return;   // the "let me look" before the answer
+    if(LV.asking||LV.dropOut)return;   // the "let me look" before the answer, or the rest of a stopped one
     if(!LV.reply)LV.replyQ=LV.heard.trim()||'…';
     LV.reply+=m.delta;VC.pending={q:LV.replyQ,a:LV.reply.trim()};vcThread(true);return;}
   if(t==='session.delegation.created'){   // a question for the boards: ask it the usual way, in the words that were heard
@@ -3958,14 +3979,29 @@ async function lvAsk(ask,seq){   // the question's answer in pieces: {say} sente
 }
 function lvSay(text){   // the checked answer, spoken word for word by the live voice
   if(!LV.direct){LV.directLen=0;LV.directGot=0;}
-  VC.said=text;LV.direct=true;LV.asking=false;LV.hushUntil=0;LV.directLen+=lvChars(vcSpoken(text));
+  VC.said=text;LV.direct=true;LV.asking=false;LV.hushUntil=0;LV.dropOut=false;LV.directLen+=lvChars(vcSpoken(text));
   if(!VC.speak||!LV.ws||LV.ws.readyState!==1){LV.direct=false;LV.did=null;vcSetState(VC.ws?'listening':'');return;}
   vcSetState('speaking');LV.loudAt=performance.now()+4000;   // the first sound takes a moment
   LV.ws.send(JSON.stringify({type:'session.say.append',content:vcSpoken(text),delegation_id:LV.did||undefined}));LV.did=null;
 }
 // Stop: the gateway stops, the page's queue is emptied, and for up to 3 s the sound already on its way is dropped too
 // (about a second of it still played after the user silenced the voice, 2026-11-12)
-function lvStop(){if(LV.on&&LV.ws&&LV.ws.readyState===1){try{LV.ws.send(JSON.stringify({type:'session.output.stop'}));}catch(e){}if(LV.player)LV.player.port.postMessage('flush');LV.direct=false;LV.hushUntil=performance.now()+3000;}}
+// The rest of the stopped answer's words still come back as text: they are dropped until the user speaks or a new answer starts
+// (they once showed as a new turn, the user's last words with the answer "n", 2026-11-13)
+function lvStop(){if(LV.on&&LV.ws&&LV.ws.readyState===1){try{LV.ws.send(JSON.stringify({type:'session.output.stop'}));}catch(e){}if(LV.player)LV.player.port.postMessage('flush');LV.direct=false;LV.dropOut=true;LV.reply='';LV.hushUntil=performance.now()+3000;}}
+// The connection dropped (its engine went away behind the gateway, or the network): connect again, twice at most, then the
+// regular voice. It used to say "Close the voice and open it again" and the user reloaded the page mid-recording (2026-11-13).
+async function lvRedial(){
+  const clean=()=>{lvEnd();if(VC.node){try{VC.node.disconnect();}catch(e){}VC.node=null;}if(VC.stream){VC.stream.getTracks().forEach(t=>t.stop());VC.stream=null;}};
+  clean();vcSetState('');vcNote('The live voice dropped. Connecting again…');
+  for(let k=0;k<2&&VC.on;k++){
+    await new Promise(r=>setTimeout(r,800*(k+1)));if(!VC.on)return;
+    try{await lvStart();if(VC.on){vcSetState('listening');vcLog('live-redial',{ok:true,tries:k+1});}return;}catch(e){clean();}}
+  if(!VC.on)return;
+  vcLog('live-redial',{ok:false});
+  try{await vcEars();vcSetState('listening');vcNote('The live voice could not be reached again, so this is the regular voice: it cannot hear you while it talks.');}
+  catch(e){vcNote('The live voice dropped. Close the voice and open it again, or type below.');}
+}
 function lvEnd(){if(!LV.on&&!LV.player)return;LV.on=false;try{if(LV.ws&&LV.ws.readyState===1)LV.ws.send(JSON.stringify({type:'session.close'}));}catch(e){}
   if(LV.player){try{LV.player.disconnect();}catch(e){}LV.player=null;}LV.ws=null;}
 async function vcEars(){
@@ -4208,8 +4244,11 @@ async function vcAsk(q){
   let rest;   // live voice: what is still to be said once the whole answer is in (its first sentences are spoken as they are written)
   try{const ask={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stream:LV.on||undefined,question:q,board,space,seen:vcSeen(),selected:board&&cvBoardId===board?[...cvSel].slice(0,300):[],since:board?undefined:VC.since||Date.now(),carry:(VC.carry||[]).slice(-3).map(t=>({q:t.q,a:t.a,t:t.t}))})};if(LV.on){const got=await lvAsk(ask,seq);j=got.j;rest=got.rest;}else j=await api('ask',ask);}
   catch(e){clearTimeout(filler);if(seq!==VC.askSeq||VC.scope!==scope)return;
-    const a=e.message&&e.message.startsWith('No model')?e.message:e&&e.status?'The model did not answer. Try again in a moment.':'I could not reach the server, so that did not go through. Say it again in a moment.';
-    VC.pending={q,a};vcThread(true);VC.pending=null;vcSetState(VC.ws?'listening':'');vcOffline(a);return;}
+    // 503 and 424 are the model; any other code is the app itself (a server bug read as "the model did not answer", 2026-11-13)
+    const a=e.message&&e.message.startsWith('No model')?e.message:!(e&&e.status)?'I could not reach the server, so that did not go through. Say it again in a moment.':e.status===503||e.status===424?'The model did not answer. Try again in a moment.':'Something went wrong on the server, so I could not answer that. Try again in a moment.';
+    VC.pending={q,a};vcThread(true);VC.pending=null;vcSetState(VC.ws?'listening':'');
+    // live voice: the error goes back as the answer, so the voice stops waiting (it kept saying "I'm still on it" over the browser's voice, 2026-11-13)
+    if(LV.on&&LV.ws&&LV.ws.readyState===1&&VC.on)lvSay(a);else vcOffline(a);return;}
   clearTimeout(filler);
   VC.waitAction=j.pending_action||null;   // an action said out loud, waiting for a yes
   if(VC.scope===scope){VC.pending=null;VC.turns.push(j.turn);vcThread(true);}   // the server saved it either way

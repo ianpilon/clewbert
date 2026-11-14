@@ -63,7 +63,26 @@ for _u in os.listdir(UPLOADS):   # pieces of uploads that never finished
     if time.time() - os.path.getmtime(os.path.join(UPLOADS, _u)) > 86400:
         os.remove(os.path.join(UPLOADS, _u))
 INLINE = ('video/', 'audio/', 'image/', 'application/pdf')   # shown in the browser; anything else downloads
-LOCK = threading.Lock()
+class _TimedLock:
+    """The one lock for boards and spaces, timed: a wait or a hold over 3 s is logged with where it was taken. A save sat
+    on "Saving..." for over two minutes while five teams were writing to boards (2026-11-13), and nothing said why."""
+    def __init__(self):
+        self._l = threading.Lock(); self._t = 0.0; self._who = ''
+    def __enter__(self):
+        t0 = time.time(); self._l.acquire(); wait = time.time() - t0
+        f = sys._getframe(1); self._who = '%s:%d' % (f.f_code.co_name, f.f_lineno); self._t = time.time()
+        if wait > 3:
+            print('%s lock: waited %.1fs in %s' % (time.strftime('%Y-%m-%d %H:%M:%S'), wait, self._who), flush=True)
+        return self
+    def __exit__(self, *exc):
+        held, who = time.time() - self._t, self._who
+        self._l.release()
+        if held > 3:
+            print('%s lock: held %.1fs by %s' % (time.strftime('%Y-%m-%d %H:%M:%S'), held, who), flush=True)
+        return False
+
+
+LOCK = _TimedLock()
 IMPORTS = {}   # import job id -> {state, done, total, board, name, message}; kept in memory, the page polls it
 
 
@@ -1433,6 +1452,38 @@ class Handler(BaseHTTPRequestHandler):
                 r = RUNNER.start(bid, guide.TASK, files, None, 'team')
                 out['started'] = {'run': r['id'], 'frame': r['frame']}
             return self.reply(200, out)
+        if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'patch' and BOARD_ID.match(parts[2]):
+            # a page that is closing or reloading: only the items changed since its last save, because a browser sends at most
+            # 64 KB while a page closes and the last changes to a 544 KB board were lost on a reload (2026-11-13)
+            req = json.loads(self.read_body() or b'{}'); bid = parts[2]
+            put = [i for i in req.get('put') or [] if isinstance(i, dict) and i.get('id')]; gone = set(req.get('gone') or [])
+            with LOCK:
+                if not os.path.exists(board_path(bid)):
+                    return self.reply(404, {'error': 'no such board'})
+                board = read_board(bid); items = board.get('items') or []; at = {i.get('id'): k for k, i in enumerate(items)}
+                for it in put:
+                    k = at.get(it['id'])
+                    if k is None:   # new here: stamped as added by hand, as a save does
+                        if not it.get('added') and not it.get('agent'):
+                            it['added'] = now_ms()
+                        items.append(it); at[it['id']] = len(items) - 1
+                    else:
+                        old = items[k]
+                        for f in ('added', 'why', 'voice', 'clip', 'poster'):
+                            if f in old and f not in it:
+                                it[f] = old[f]
+                        if old.get('chart'):   # a team's org chart box: its status is the team's to change
+                            it.update(text=old.get('text'), color=old.get('color'), org=old.get('org'))
+                        items[k] = it
+                    clip_fill(it)
+                board['items'] = [i for i in items if i.get('id') not in gone]
+                if 'view' in req:
+                    board['view'] = req.get('view')
+                board['updated'] = now_ms()
+                write_json(board_path(bid), board)
+            BRIEFER.touch(bid)
+            live_send(bid, {'kind': 'saved', 'updated': board['updated']}, self.headers.get('X-Client') or '')
+            return self.reply(200, {'updated': board['updated'], 'put': len(put), 'gone': len(gone)})
         if len(parts) == 4 and parts[:2] == ['api', 'boards'] and parts[3] == 'seen' and BOARD_ID.match(parts[2]):   # the board was opened: its ended tasks are looked at
             return self.reply(200, {'seen': RUNNER.seen(parts[2])})
         if parts == ['api', 'name-frame']:   # a frame drawn around items asks for its name
@@ -2334,7 +2385,9 @@ def status_answer(question, live):
     answer model once turned "tell me where we're at" into a team offer and took 53 s (2026-11-07)."""
     if not STATUS_Q.search(question) or JOB_WORDS.search(question) or len(question.split()) > 30:
         return None
-    r = live[-1]
+    r = RUNNER.runs.get(live[-1]['id']) or {}   # the full run: view() gives steps as a count and no children (it crashed with a 400, 2026-11-13)
+    if not r:
+        return None
     short = lambda t, k=12: ' '.join(str(t or '').split()[:k]) + ('…' if len(str(t or '').split()) > k else '')
     kids = [RUNNER.runs[c] for c in r.get('children', []) if c in RUNNER.runs]
     names = lambda xs: ', '.join((k.get('member') or {}).get('name', 'a teammate') for k in xs)
@@ -2489,7 +2542,7 @@ def propose_team(plan, here_board, here_space, spaces, sel=None):
         lead += "A team can hand back %s, but it can't %s. " % (
             it['deliver'].rstrip('.'), it['cannot'][0].lower() + it['cannot'][1:].rstrip('.'))
     elif it.get('deliver') and (it.get('avoid') or it.get('acts')):   # the plan before the yes, when there is something to know (idea-to-spec's playback, 2026-11-07)
-        lead += 'It hands back %s%s.%s ' % (it['deliver'].rstrip('.'), avoid_line(it.get('avoid')),
+        lead += 'It hands back %s%s.%s ' % (re.sub(r'\s*\([^)]*\)', '', it['deliver']).rstrip('.'), avoid_line(it.get('avoid')),   # no bracketed lists: the offer ran 20 s and was talked over (2026-11-13)
                                            ' Each send or post waits for your yes.' if it.get('acts') else '')
     if here_board:
         a['board'] = here_board['id']

@@ -1391,7 +1391,7 @@ def intent_of(out, asked=''):
     if asked and not (GATED.search(asked) and set(tokens(cannot)) & set(tokens(asked))):
         cannot = ''   # "can't contact sellers or buy a practice" when the user only asked to find practices: the line is only for an act the user asked for
     return {'want': ' '.join(str(out.get('want') or '').split())[:400],
-            'deliver': re.sub(r'\b(him|her|them|the user)\b', 'you', ' '.join(str(out.get('deliver') or '').split())[:300]),
+            'deliver': re.sub(r'\bhis\b', 'your', re.sub(r'\b(him|her|them|the user)\b', 'you', ' '.join(str(out.get('deliver') or '').split())[:300])),   # "published after his yes" was read back to the user (2026-11-13)
             'cannot': cannot, 'acts': out.get('acts') is True,
             'avoid': ' '.join(str(out.get('avoid') or '').split()).rstrip('.')[:200]}   # non-goals: what an eager team would do that the user did not ask for (2026-11-07)
 

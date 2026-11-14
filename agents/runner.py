@@ -10,7 +10,7 @@ A team task goes to the Lead, who hands parts to teammates with assign. Each par
 frame, joined to the Lead's frame by an arrow. The Lead waits (status "team") until every part of that round has
 ended, then reads their results and either hands out a next round or writes the final answer in its own frame.
 """
-import base64, hashlib, json, os, queue, re, secrets, subprocess, threading, time, urllib.error, urllib.request
+import base64, hashlib, http.client, ipaddress, json, os, queue, re, secrets, subprocess, threading, time, urllib.error, urllib.parse, urllib.request
 import integrations, models, openloom, skills, talk
 from . import code, shell, skillfiles, web
 
@@ -577,6 +577,18 @@ def job_score(runs, root, items=()):
     return s
 
 
+
+def local_address(url):
+    """True for localhost and private network addresses (192.168.x, 10.x, ...)."""
+    host = (urllib.parse.urlsplit(url).hostname or '').lower()
+    if host in ('localhost', '') or host.endswith('.local'):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local
+
 class Runner:
     """store: read_board(bid), edit_board(bid, fn) -> fn's result (fn changes the board under the server's lock),
     reader: talk.Reader, brief(bid) -> brief dict or None, changed(bid) called after the board is written."""
@@ -602,12 +614,14 @@ class Runner:
                 except (OSError, ValueError):
                     continue
                 self.runs[r['id']] = r
+                r.pop('checking', None)   # from a file saved before 2026-11-13: two Leads sat on "Agents at work" for two days
                 if r['status'] in ('queued', 'working'):   # cut off by a restart: carry on from the last saved step
                     r['status'] = 'queued'
                     self.q.put(r['id'])
         for r in list(self.runs.values()):   # a Lead whose teammates all ended while the server was down
             if r['status'] == 'team':
                 self.team_check(r)
+        threading.Thread(target=self.tidy_all, daemon=True).start()   # every job clean on its board (2026-11-13)
         for r in list(self.runs.values()):   # jobs that ended before scores existed get theirs now (the baseline for the plan critic)
             if not r.get('parent') and r['status'] in ENDED and not r.get('score'):
                 self.score(r, paint=False)
@@ -711,22 +725,39 @@ class Runner:
         def make_frame(board):
             items = board.get('items') or []
             unit = float((anchor or {}).get('unit') or board_unit(board))
-            if anchor and 'x' in anchor:
+            picked = [i for i in items if i['id'] in set(selected or ()) and i.get('type') != 'arrow']
+            mates = {x['frame'] for x in self.job_runs(self.root(self.runs[parent]))} if parent in self.runs else set()
+            row = [i for i in items if i['id'] in mates]
+            if row:   # a part: right of the job's last frame, at the Lead's height (frames grow down, so the row stays clear)
+                lead_frame = next((i for i in row if i['id'] == self.root(self.runs[parent])['frame']), row[0])
+                x, y = max(i['x'] + i['w'] for i in row) + 200 * unit, lead_frame['y']
+            elif anchor and 'x' in anchor:
                 x, y = float(anchor['x']), float(anchor['y'])
+            elif picked:   # a team asked for by voice: beside what is selected (it went to the far top right of the board, 2026-11-13)
+                x, y = max(i['x'] + i['w'] for i in picked) + 80 * unit, min(i['y'] for i in picked)
             elif items:
                 x, y = max(i['x'] + i['w'] for i in items) + 160 * unit, min(i['y'] for i in items)
             else:
                 x, y = 100.0, 100.0
             pad, gap, card = 28 * unit, 18 * unit, 220 * unit
             w = 3 * card + 2 * gap + 2 * pad
-            # keep clear of what is already there, including the room the frame will grow into below
-            room = 900 * unit
-            for _ in range(200):
-                hit = [i for i in items if i.get('type') != 'arrow' and i['x'] < x + w and i['x'] + i['w'] > x
-                       and i['y'] < y + room and i['y'] + i['h'] > y]
-                if not hit:
-                    break
-                x = max(i['x'] + i['w'] for i in hit) + 60 * unit
+            # the nearest free spot: room below for the frame to grow into and above for the team's chart. Sliding right only,
+            # past anything in a 900-tall band, put a team far from its card on a busy column, its chart up by an older team's
+            room, above, step = 900 * unit, (450 * unit if member is not None and not parent else 0), 120 * unit
+            near = [i for i in items if i.get('type') != 'arrow' and i['x'] < x + w + 40 * step and i['x'] + i['w'] > x
+                    and i['y'] < y + room + 20 * step and i['y'] + i['h'] > y - above - 20 * step]
+            free = lambda cx, cy: not any(i['x'] < cx + w and i['x'] + i['w'] > cx and i['y'] < cy + room and i['y'] + i['h'] > cy - above for i in near)
+            spot = None if row else next((p for d in range(41) for p in sorted(((x + a * step, y + b * step) for a in range(d + 1) for b in {d - a, a - d}),
+                                                              key=lambda p: (p[0] - x) ** 2 + (p[1] - y) ** 2) if free(*p)), None)
+            if spot:
+                x, y = spot
+            else:   # nothing free near: the old way, further right
+                for _ in range(200):
+                    hit = [i for i in items if i.get('type') != 'arrow' and i['x'] < x + w and i['x'] + i['w'] > x
+                           and i['y'] < y + room and i['y'] + i['h'] > y]
+                    if not hit:
+                        break
+                    x = max(i['x'] + i['w'] for i in hit) + 60 * unit
             frame = {'id': 'f' + rid, 'type': 'area', 'text': title, 'color': '#f3f6fb', 'run': rid, 'agent': rid,
                      'x': x, 'y': y, 'w': w, 'h': 200 * unit, 'z': 1}
             board['items'] = [frame] + items
@@ -972,6 +1003,10 @@ class Runner:
             self.hurdles(r)
         if not r.get('parent') and r['status'] in ENDED:
             self.score(r)
+            try:
+                self.spread(r)   # the last frame may have grown into another after the last card went in
+            except Exception as e:
+                print('spread %s: %s' % (r['id'], e), flush=True)
         if r.get('chart'):
             self.crew_paint(r)
         p = self.runs.get(r.get('parent'))
@@ -1092,7 +1127,7 @@ class Runner:
         if v['pass']:
             try:
                 v = self.surface_check(c) or v
-            except (OSError, ValueError, KeyError, TypeError) as e:
+            except Exception as e:   # any failure here once killed the thread that wakes the Lead, and the server start (2026-11-13)
                 self.step(c, 'Could not check at the source (%s)' % type(e).__name__)
         self.card(c, ('Check: passed. ' + v['why']) if v['pass'] else
                   ('Check: not done. ' + ('Missing: %s' % v['missing'] if v['missing'] else v['why'])), '#e7f6ec' if v['pass'] else '#fff4e0')
@@ -1107,8 +1142,8 @@ class Runner:
             text = str(it.get('text') or it.get('url') or '')
             for url in re.findall(r'https?://[^\s)\]>"\']+', text)[:3]:
                 url = url.rstrip('.,;')
-                if self.blocked(c, url) or self.site(url) in ('context-canvas.voiceclaw.ca',):
-                    continue
+                if self.blocked(c, url) or self.site(url) in ('context-canvas.voiceclaw.ca',) or local_address(url):
+                    continue   # a local address is an example or a machine here, not a source (a quoted example address hung a team, 2026-11-13)
                 page = self.read_page(c, url)
                 if page.startswith('Could not read') or 'blocked' in page[:200].lower() and len(page) < 400:
                     return None   # the page cannot be read now: nothing to hold the words against
@@ -2003,7 +2038,7 @@ class Runner:
             if e.code not in (401, 403, 429, 503):
                 return 'Could not read that page (HTTP %d).' % e.code
             why = 'it answers HTTP %d' % e.code
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, http.client.HTTPException) as e:   # HTTPException: a bad address like "http://host:3C"
             why = str(e)[:120]
         if why or len(words.split()) < 80:   # turned away, or a page that only fills in with JavaScript
             light = self.light_read(url)
@@ -2431,8 +2466,83 @@ class Runner:
         new = self.store.edit_board(r['board'], put)
         if new:
             r['focus'] = new['id']
+            self.spread(self.root(r))
             self.changed(r['board'])
         return new
+
+    def job_runs(self, r):
+        """This run and every part under it, oldest first."""
+        out = [r]
+        for c in r.get('children', []):
+            if c in self.runs:
+                out += self.job_runs(self.runs[c])
+        return sorted(out, key=lambda x: x['created'])
+
+    def spread(self, root, force=False):
+        """Keep a job clean on its board (2026-11-13: "it should always be clean"):
+        1. its frames in one row: the Lead's frame stays, each part's frame to the right of the one before, at the Lead's
+           height, with its cards. Frames only grow down, so a row never runs into itself. Frames used to go in any free
+           spot 900 tall and then grew 12,000+ down over each other, 2026-11-13). Done only when
+           two of the job's frames overlap (or force), so a layout made by hand stays.
+        2. clear of what was there before it: when its frames grew over older cards or an older team's work, the whole job
+           (row, chart, cards) slides right until it is clear. What was added after the job (the user's notes on its work) and
+           their own frames (a team may sit inside one) never move it.
+        The board is read first and written only when something moves. True when it moved."""
+        jr = self.job_runs(root)
+        if not any(x.get('frame') for x in jr):
+            return False
+        mine = {x['id'] for x in jr}
+        ids = [x['frame'] for x in jr if x.get('frame')]
+        gap = 200 * float((root.get('lay') or {}).get('u') or 1)
+        hit = lambda a, b: a['x'] < b['x'] + b['w'] and b['x'] < a['x'] + a['w'] and a['y'] < b['y'] + b['h'] and b['y'] < a['y'] + a['h']
+
+        def age(i):   # when an item came: another team's work by its job's start, a card by its stamp (none: older than stamps)
+            r = self.runs.get(i.get('agent'))
+            return self.root(r)['created'] if r else (i.get('added') or 0)
+
+        def tidy(items):
+            moved = False
+            by = {i['id']: i for i in items}
+            fr = [by[f] for f in ids if f in by]
+            if len(fr) > 1 and (force or any(hit(a, b) for n, a in enumerate(fr) for b in fr[n + 1:])):
+                lead, x = fr[0], fr[0]['x'] + fr[0]['w'] + gap
+                for f in fr[1:]:
+                    dx, dy = x - f['x'], lead['y'] - f['y']
+                    if abs(dx) > .5 or abs(dy) > .5:
+                        for i in items:
+                            if i['id'] == f['id'] or (i.get('agent') == f.get('agent') and i.get('type') not in ('area', 'arrow')):
+                                i['x'] += dx
+                                i['y'] += dy
+                        moved = True
+                    x += f['w'] + gap
+            block = [i for i in items if i.get('agent') in mine and 'x' in i]
+            frames = [i for i in block if i.get('type') == 'area']
+            older = [i for i in items if i.get('agent') not in mine and i.get('type') != 'arrow' and 'x' in i
+                     and not (i.get('type') == 'area' and not i.get('agent')) and age(i) < root['created']]
+            for _ in range(30):
+                hits = [o for o in older if any(hit(f, o) for f in frames)]
+                if not hits:
+                    break
+                dx = max(o['x'] + o['w'] for o in hits) + gap - min(f['x'] for f in frames)
+                for i in block:
+                    i['x'] += dx
+                moved = True
+            return moved
+        if not tidy(json.loads(json.dumps(self.board_items(root['board'])))):   # a dry run on a copy: nothing to move, nothing written
+            return False
+        return self.store.edit_board(root['board'], lambda board: tidy(board.get('items') or []))
+
+    def tidy_all(self):
+        """Every job on every board, once at start (in the background): its row, clear of older work, its chart covering
+        its cards. A clean job is only read."""
+        for r in [x for x in list(self.runs.values()) if not x.get('parent')]:
+            try:
+                if self.spread(r):
+                    print('tidied job %s on %s' % (r['id'], r['board']), flush=True)
+                if r.get('chart') and self.chart_fit(r):
+                    print('fitted chart of job %s on %s' % (r['id'], r['board']), flush=True)
+            except Exception as e:
+                print('tidy %s: %s' % (r['id'], e), flush=True)
 
     def item_text(self, it):
         """An item's whole content as text, for a copy: a text file's bytes as they are, anything else by its words."""
@@ -2966,6 +3076,35 @@ class Runner:
                 self.changed(r['board'])
         except (OSError, ValueError, KeyError):
             pass
+        self.chart_fit(r)
+
+    def chart_fit(self, r):
+        """The chart's frame covers all its cards (it only grows). One chart's frame ended up 2,795 wide under cards
+        8,543 wide, the cards hanging off it (2026-11-13)."""
+        fid = 'c' + r['id']
+        items = self.board_items(r['board'])
+        f = next((i for i in items if i['id'] == fid), None)
+        cards = [i for i in items if i.get('agent') == r['id'] and i.get('chart') and i['id'] != fid and i.get('type') != 'arrow']
+        if not f or not cards:
+            return False
+        pad = (r.get('lay') or {}).get('pad') or 28
+        box = lambda f: (min(f['x'], min(i['x'] for i in cards) - pad), min(f['y'], min(i['y'] for i in cards) - pad),
+                         max(f['x'] + f['w'], max(i['x'] + i['w'] for i in cards) + pad), max(f['y'] + f['h'], max(i['y'] + i['h'] for i in cards) + pad))
+        if all(f['x'] - 1 <= i['x'] and i['x'] + i['w'] <= f['x'] + f['w'] + 1 and f['y'] - 1 <= i['y'] and i['y'] + i['h'] <= f['y'] + f['h'] + 1
+               for i in cards):   # every card on it already: nothing to do (close to the edge is fine)
+            return False
+
+        def grow(board):
+            g = next((i for i in board.get('items') or [] if i['id'] == fid), None)
+            if not g:
+                return False
+            x0, y0, x1, y1 = box(g)
+            g.update(x=x0, y=y0, w=x1 - x0, h=y1 - y0)
+            return True
+        if self.store.edit_board(r['board'], grow):
+            self.changed(r['board'])
+            return True
+        return False
 
     def intent_card(self, r):
         """First card in a team's frame: what the user wants, what the team hands back, what no team can do. The Lead
@@ -3028,8 +3167,8 @@ class Runner:
     def save(self, r):
         path = os.path.join(self.dir, r['id'] + '.json')
         with open(path + '.tmp', 'w') as f:
-            json.dump(r, f)
-        os.replace(path + '.tmp', path)
+            json.dump({k: v for k, v in r.items() if k != 'checking'}, f)   # 'checking' lives in memory only: saved, a restart left
+        os.replace(path + '.tmp', path)                                         # the Lead sure someone was checking, and it never woke
 
 
 def text_calls(content):
