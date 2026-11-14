@@ -258,6 +258,8 @@
     .cv-vnote p{max-height:30vh;overflow-y:auto}}
   .cv-vcopy{margin-left:auto;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--ink);font-size:12px;cursor:pointer}
   .cv-rec .cv-rrow{display:flex;align-items:center;gap:8px}
+  .cv-rec #cvRecT.warn{color:#e5484d;font-weight:600}
+  .cv-vcap{margin:0 0 6px;font-size:12px;color:#c2410c}
   .cv-rec .cv-rdot{width:10px;height:10px;border-radius:50%;background:#e5484d;animation:cvRecDot 1s ease-in-out infinite alternate}
   @keyframes cvRecDot{to{opacity:.3}}
   .cv-rec .tx{height:30px;padding:0 12px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--ink);font-size:13px}
@@ -2357,7 +2359,7 @@ function cvItemEl(it){
     if(it.poster)v.poster=it.poster;
     v.preload=it.poster||it.preview?'none':'metadata';   // with a still to show, nothing loads until you press play
     el.querySelector('.frame').appendChild(v._box||v);
-    if(it.vnote&&it.voice&&it.voice.text){v.classList.add('vn');el.querySelector('.frame').insertAdjacentHTML('beforeend',`<p class="vsaid">“${escapeHtml(it.voice.text)}”</p>`);}   // a voice note: what was said, under the player
+    if(it.vnote&&it.voice&&it.voice.text){v.classList.add('vn');el.querySelector('.frame').insertAdjacentHTML('beforeend',`<p class="vsaid">“${escapeHtml(it.voice.text)}”${it.voice.capped?' <span class="cv-vcap">(stopped at the 10-minute limit)</span>':''}</p>`);}   // a voice note: what was said, under the player
     el.querySelector('.mbar a').addEventListener('pointerdown',e=>e.stopPropagation());
   }else if(it.type==='file'){ // any other dropped file: name, kind, size and the first lines of its text; a click opens it
     const ext=it.doc&&!it.src?it.doc:(String(it.label||'').match(/\.([a-z0-9]{1,6})$/i)||[,'file'])[1];
@@ -2578,7 +2580,7 @@ function cvWhyShow(p){   // header with Close, a scrolling body; on a phone the 
 }
 function cvWhyOpen(it){
   const p=$('#cvWhy');
-  const vn=it.voice?`<div class="cv-vnote"><div class="cv-vh">Your reason, ${escapeHtml(cvWhen(it.voice.when))}${it.voice.text?`<button class="cv-vcopy" data-text="${escapeAttr(it.voice.text)}">Copy</button>`:''}</div>${it.voice.src?`<div class="cv-vplay"><button class="cv-vpb" title="Play">▶</button><input type="range" min="0" max="1000" value="0" aria-label="Where in the recording"><span class="cv-vt">0:00</span><audio preload="metadata" src="${escapeAttr(it.voice.src)}"></audio></div>`:''}<p>${it.voice.text?'“'+escapeHtml(it.voice.text)+'”':'<i>No words were heard in the recording.</i>'}</p></div>`:'';
+  const vn=it.voice?`<div class="cv-vnote">${it.voice.capped?'<p class="cv-vcap">This recording stopped at the 10-minute limit. Anything said after that was not recorded.</p>':''}<div class="cv-vh">Your reason, ${escapeHtml(cvWhen(it.voice.when))}${it.voice.text?`<button class="cv-vcopy" data-text="${escapeAttr(it.voice.text)}">Copy</button>`:''}</div>${it.voice.src?`<div class="cv-vplay"><button class="cv-vpb" title="Play">▶</button><input type="range" min="0" max="1000" value="0" aria-label="Where in the recording"><span class="cv-vt">0:00</span><audio preload="metadata" src="${escapeAttr(it.voice.src)}"></audio></div>`:''}<p>${it.voice.text?'“'+escapeHtml(it.voice.text)+'”':'<i>No words were heard in the recording.</i>'}</p></div>`:'';
   if(!it.why&&vn){p.innerHTML='<b>Why is this here?</b>'+vn+(it.added?`<p class="cv-vmeta">You added this on ${escapeHtml(cvWhen(it.added))}.</p>`:'');cvWhyShow(p);cvVPlayer(p);return;}
   if(!it.why){   // no record: added by hand (dated since records began), or from before Oct 31, 2026
     p.innerHTML='<b>Why is this here?</b><p style="margin:8px 0 0">'+(it.added
@@ -2605,12 +2607,12 @@ function cvVPlayer(p){   // our own small player: the browser's one squeezes a v
   b.onclick=()=>a.paused?a.play():a.pause();
   r.oninput=()=>{const d=dur();if(d)a.currentTime=r.value/1000*d;show();};
 }
-const CV_REC={};
+const CV_REC={},CV_REC_MAX=600;   // a voice note runs up to 10 minutes
 async function cvVoiceWhy(it,at){   // at: a place on the board = a voice note of its own (the document tool's Voice note), not a reason on an item
   if(CV_REC.on)return;
   const p=$('#cvRec');p.hidden=false;$('#cvScrim').hidden=false;$('#cvWhy').hidden=true;$('#cvMenu').hidden=true;
   p.innerHTML='<b>'+(at?'Record your voice note':'Say why you are adding this')+'</b><p class="cv-rheard" id="cvRecHeard">Opening the microphone…</p><div class="cv-rrow"><span class="cv-rdot"></span><span id="cvRecT">0:00</span><span style="flex:1"></span><button class="tx" id="cvRecX">Cancel</button><button class="go" id="cvRecOk">Done</button></div>';
-  Object.assign(CV_REC,{on:true,it,board:cvBoardId,finals:[],partial:'',t0:Date.now()});
+  Object.assign(CV_REC,{on:true,it,board:cvBoardId,finals:[],partial:'',t0:Date.now(),warned:false,capped:false});
   const end=()=>{CV_REC.on=false;clearInterval(CV_REC.tick);try{CV_REC.node&&CV_REC.node.disconnect();CV_REC.src&&CV_REC.src.disconnect();}catch(e){}
     if(CV_REC.stream)CV_REC.stream.getTracks().forEach(t=>t.stop());try{CV_REC.ws&&CV_REC.ws.close();}catch(e){}Object.assign(CV_REC,{node:null,src:null,stream:null,ws:null});};
   $('#cvRecX').onclick=()=>{CV_REC.cancel=true;try{CV_REC.mr&&CV_REC.mr.state!=='inactive'&&CV_REC.mr.stop();}catch(e){}end();p.hidden=true;$('#cvScrim').hidden=true;};
@@ -2630,9 +2632,14 @@ async function cvVoiceWhy(it,at){   // at: a place on the board = a voice note o
     node.onaudioprocess=e=>{if(!ws||ws.readyState!==1)return;const x=e.inputBuffer.getChannelData(0),n=Math.floor(x.length/ratio),out=new Int16Array(n);
       for(let i=0;i<n;i++){const q=i*ratio,j=Math.floor(q),a=q-j,v=x[j]+((x[j+1]??x[j])-x[j])*a;out[i]=Math.max(-32768,Math.min(32767,Math.round(v*32767)));}ws.send(out.buffer);};
     CV_REC.src=ac.createMediaStreamSource(CV_REC.stream);CV_REC.src.connect(node);node.connect(sink);sink.connect(ac.destination);CV_REC.node=node;
-    CV_REC.tick=setInterval(()=>{const s=Math.floor((Date.now()-CV_REC.t0)/1000);$('#cvRecT').textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');if(s>=180)$('#cvRecOk').click();},500);   // at most 3 minutes
+    // at most 10 minutes (it was 3 and stopped without a sign mid-thought, 2026-11-14): a chime and a countdown
+    // in the last minute, and the saved note says it stopped at the limit
+    CV_REC.tick=setInterval(()=>{const s=Math.floor((Date.now()-CV_REC.t0)/1000),left=CV_REC_MAX-s,t=$('#cvRecT');
+      t.textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0')+(left<=60?' · '+Math.max(0,left)+' s left':'');t.classList.toggle('warn',left<=60);
+      if(left<=60&&!CV_REC.warned){CV_REC.warned=true;vcChime();}
+      if(s>=CV_REC_MAX&&!CV_REC.capped){CV_REC.capped=true;vcChime();$('#cvRecOk').click();}},500);
     $('#cvRecOk').onclick=async()=>{
-      $('#cvRecOk').disabled=true;$('#cvRecHeard').textContent='Saving…';const secs=Math.round((Date.now()-CV_REC.t0)/1000);
+      $('#cvRecOk').disabled=true;$('#cvRecHeard').textContent=CV_REC.capped?'Stopped at the 10-minute limit. Saving…':'Saving…';const secs=Math.round((Date.now()-CV_REC.t0)/1000),capped=CV_REC.capped;
       if(CV_REC.partial)await new Promise(r=>{CV_REC.gotFinal=r;setTimeout(r,2500);});   // the last words: the ears finish them after a short quiet
       const text=[...CV_REC.finals,CV_REC.partial].filter(Boolean).join(' ').trim();
       mr.stop();await stopped;end();
@@ -2645,11 +2652,11 @@ async function cvVoiceWhy(it,at){   // at: a place on the board = a voice note o
       if(at){   // the card: a player with the words under it; the Assistant and agents read the words
         if(cvBoardId!==CV_REC.board||!cvBoard||(!src&&!text))return;
         const u=cvUnit();
-        if(src)cvAddItem({type:'media',kind:'audio',vnote:true,label:'Voice note, '+cvWhen(Date.now()),src,x:at.x-160*u,y:at.y-48*u,w:320*u,h:(text?210:96)*u,voice:{text,src,when:Date.now(),secs}});
+        if(src)cvAddItem({type:'media',kind:'audio',vnote:true,label:'Voice note, '+cvWhen(Date.now()),src,x:at.x-160*u,y:at.y-48*u,w:320*u,h:(text?210:96)*u,voice:{text,src,when:Date.now(),secs,...(capped?{capped:true}:{})}});
         else cvAddItem({type:'note',text,fs:16*u,x:at.x-100*u,y:at.y-100*u,w:200*u,h:200*u});   // the sound did not upload: the words are still kept
         return;}
       if(cvBoardId!==CV_REC.board||!cvBoard||!cvBoard.items.includes(it))return;
-      it.voice={text,src,when:Date.now(),secs};cvSave();cvWhyOpen(it);};
+      it.voice={text,src,when:Date.now(),secs,...(capped?{capped:true}:{})};cvSave();cvWhyOpen(it);};
   }catch(e){end();$('#cvRecHeard').textContent='The microphone could not be opened. Allow it for this site, then try again.';$('#cvRecOk').hidden=true;}
 }
 /* the board's history as a Markdown file: everything the Assistant and agents added, newest first, and why */
