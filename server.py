@@ -934,7 +934,20 @@ class Handler(BaseHTTPRequestHandler):
                                     'voices': [v.strip() for v in os.environ.get('LIVE_VOICE_VOICES', '').split(',') if v.strip()]})
         if parts == ['api', 'voices']:
             try:
+<<<<<<< /private/tmp/claude-501/-Users-ianpilon/f51f4d8f-d20a-4af0-949c-792597a98934/scratchpad/port/v.ours
                 return self.reply(200, talk.voices() if talk.TTS_URL else models.voices() if models.speech() else {'voices': []})
+=======
+                out = talk.voices()
+            except OSError:
+                return self.reply(503, {'error': 'voice service unavailable'})
+            # the voices kept for the live voice, in that order, are the regular voice's list too (2026-11-13)
+            keep = [v.strip().lower().removesuffix('_en').replace('_', '-') for v in os.environ.get('LIVE_VOICE_VOICES', '').split(',') if v.strip()]
+            got = {v.get('id'): v for v in out.get('voices') or []}
+            if keep and any(k in got for k in keep):
+                out = dict(out, voices=[got[k] for k in keep if k in got])
+            try:
+                return self.reply(200, out)
+>>>>>>> server.py
             except OSError:
                 return self.reply(503, {'error': 'voice service unavailable'})
         if parts == ['api', 'spaces']:
