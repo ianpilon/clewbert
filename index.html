@@ -479,6 +479,16 @@
   .cv-vn .cv-vt{font-size:.917em}
   .cv-vn .ext{background:#1d4ed8}
   .cv-vn .cv-vcap{font-size:1em}
+  #cvRecCard .frame{border-color:#e5484d}
+  #cvRecCard .fprev{overflow-y:auto;-webkit-mask-image:none}
+  #cvRecCard .cv-rrow{display:flex;align-items:center;gap:.667em;padding:.75em .833em;border-top:1px solid var(--border)}
+  #cvRecCard .cv-rdot{width:.833em;height:.833em;border-radius:50%;background:#e5484d;animation:cvRecDot 1s ease-in-out infinite alternate}
+  #cvRecCard #cvRecT{font-size:.917em;color:var(--muted);font-variant-numeric:tabular-nums}
+  #cvRecCard #cvRecT.warn{color:#e5484d;font-weight:600}
+  #cvRecCard button{height:2.5em;padding:0 1em;border-radius:.583em;font-size:1em;cursor:pointer}
+  #cvRecCard .tx{border:1px solid var(--border);background:var(--card);color:var(--ink)}
+  #cvRecCard .go{border:none;background:#1d4ed8;color:#fff;font-weight:600}
+  #cvRecCard .go:disabled{opacity:.6}
   .cv-file .upbar{height:4px;background:var(--border);margin:10px 11px 0;border-radius:2px;overflow:hidden}
   .cv-file .upbar i{display:block;height:100%;width:0;background:#2563eb}
   .cv-link .fetching{font-size:.81em;color:var(--muted-2);font-style:italic}
@@ -1967,7 +1977,8 @@ let CV_TOOL_DRAG=null,CV_TEXT_DRAG=false;   // a tool button being dragged (wher
 let CV_TOUCHED=0,CV_DRAGGED=0;   // when a selection box was last dragged out: a click then a drag is not a double-click (a blank sticky landed by the selection, 2026-11-04)   // when a finger last touched the board: a phone's double tap is not a double-click   // fingers on the board; used = a pinch happened since the first touch
 function cvRender(){
   if(CV_CROP)cvCropEnd(false);
-  const w=$('#cvWorld');w.innerHTML='';
+  const w=$('#cvWorld'),rc=$('#cvRecCard');w.innerHTML='';
+  if(rc&&rc.dataset.board===cvBoardId)w.appendChild(rc);   // a voice note being recorded stays on its board through redraws
   for(const id of [...CV_MEDIA.keys()])if(!cvBoard.items.some(i=>i.id===id))CV_MEDIA.delete(id);   // players of cards that are gone, or of another board
   cvBoard.items.forEach(it=>w.appendChild(cvItemEl(it)));
   $('#cvEmpty').style.display=cvBoard.items.length?'none':'grid';
@@ -2630,12 +2641,23 @@ function cvVPlayer(p){   // our own small player: the browser's one squeezes a v
 const CV_REC={},CV_REC_MAX=600;   // a voice note runs up to 10 minutes
 async function cvVoiceWhy(it,at){   // at: a place on the board = a voice note of its own (the document tool's Voice note), not a reason on an item
   if(CV_REC.on)return;
-  const p=$('#cvRec');p.hidden=false;$('#cvScrim').hidden=false;$('#cvWhy').hidden=true;$('#cvMenu').hidden=true;
-  p.innerHTML='<b>'+(at?'Record your voice note':'Say why you are adding this')+'</b><p class="cv-rheard" id="cvRecHeard">Opening the microphone…</p><div class="cv-rrow"><span class="cv-rdot"></span><span id="cvRecT">0:00</span><span style="flex:1"></span><button class="tx" id="cvRecX">Cancel</button><button class="go" id="cvRecOk">Done</button></div>';
+  $('#cvWhy').hidden=true;$('#cvMenu').hidden=true;
+  const row='<div class="cv-rrow"><span class="cv-rdot"></span><span id="cvRecT">0:00</span><span style="flex:1"></span><button class="tx" id="cvRecX">Cancel</button><button class="go" id="cvRecOk">Done</button></div>';
+  let p,close;
+  if(at){   // a voice note records inside its own card on the board, where it will stay, not in a box over the page (2026-11-14)
+    const u=cvUnit();p=document.createElement('div');p.id='cvRecCard';p.className='cv-item cv-file cv-vn';p.dataset.board=cvBoardId;
+    p.style.cssText=`left:${at.x-130*u}px;top:${at.y-60*u}px;width:${260*u}px;height:${340*u}px;z-index:99999`;
+    p.innerHTML='<div class="frame"><div class="mbar"><span class="ext">Voice</span><span class="nm">Record your voice note</span></div><div class="fprev doc" id="cvRecHeard">Opening the microphone…</div>'+row+'</div>';
+    p.addEventListener('pointerdown',e=>e.stopPropagation());   // pressing in it is not a drag or a new card
+    $('#cvWorld').appendChild(p);close=()=>p.remove();
+  }else{
+    p=$('#cvRec');p.hidden=false;$('#cvScrim').hidden=false;
+    p.innerHTML='<b>Say why you are adding this</b><p class="cv-rheard" id="cvRecHeard">Opening the microphone…</p>'+row;
+    close=()=>{p.hidden=true;$('#cvScrim').hidden=true;};}
   Object.assign(CV_REC,{on:true,it,board:cvBoardId,finals:[],partial:'',t0:Date.now(),warned:false,capped:false});
   const end=()=>{CV_REC.on=false;clearInterval(CV_REC.tick);try{CV_REC.node&&CV_REC.node.disconnect();CV_REC.src&&CV_REC.src.disconnect();}catch(e){}
     if(CV_REC.stream)CV_REC.stream.getTracks().forEach(t=>t.stop());try{CV_REC.ws&&CV_REC.ws.close();}catch(e){}Object.assign(CV_REC,{node:null,src:null,stream:null,ws:null});};
-  $('#cvRecX').onclick=()=>{CV_REC.cancel=true;try{CV_REC.mr&&CV_REC.mr.state!=='inactive'&&CV_REC.mr.stop();}catch(e){}end();p.hidden=true;$('#cvScrim').hidden=true;};
+  $('#cvRecX').onclick=()=>{CV_REC.cancel=true;try{CV_REC.mr&&CV_REC.mr.state!=='inactive'&&CV_REC.mr.stop();}catch(e){}end();close();};
   try{
     CV_REC.stream=await navigator.mediaDevices.getUserMedia({audio:{...VC_MIC.audio,autoGainControl:true}});   // a recording is played back, so the browser levels it: with the Mac's input at 30 a note peaked 30 dB under the others and could not be heard (2026-11-11)
     const type=['audio/webm;codecs=opus','audio/mp4','audio/webm'].find(t=>window.MediaRecorder&&MediaRecorder.isTypeSupported(t))||'';
@@ -2668,7 +2690,7 @@ async function cvVoiceWhy(it,at){   // at: a place on the board = a voice note o
       if(blob.size)try{const {up}=await api('uploads',{method:'POST'});await api('uploads/'+up,{method:'PUT',body:blob});
         const r=await api('uploads/'+up+'/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:(at?'Voice note.':'Why I added this.')+ext,audio:true})});src=r.src||r.url||'';}
       catch(e){}   // the words are still kept
-      p.hidden=true;$('#cvScrim').hidden=true;
+      close();
       if(at){   // the card: a player with the words under it; the Assistant and agents read the words
         if(cvBoardId!==CV_REC.board||!cvBoard||(!src&&!text))return;
         const u=cvUnit();
