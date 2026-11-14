@@ -3043,14 +3043,15 @@ class Runner:
             x0, y0, z = frame['x'], frame['y'], max([i.get('z', 1) for i in items] + [1]) + 1
             # clear space above the team's work, nothing moves. Moving the frame down to make room instead left an open
             # page, which keeps its own positions, saving the frame back where it was: under the chart (2026-11-07)
-            team = {r['id']} | set(r.get('children') or [])
-            y0 = min([i['y'] for i in items if i.get('agent') in team and i.get('type') != 'arrow' and not i.get('chart')] + [frame['y']]) - h - 60 * u
+            # 200 units clear under it: 60 put the Lead frame's title on the chart's bottom edge (Ian, 2026-11-14)
+            team, clear = {r['id']} | set(r.get('children') or []), 200 * u
+            y0 = min([i['y'] for i in items if i.get('agent') in team and i.get('type') != 'arrow' and not i.get('chart')] + [frame['y']]) - h - clear
             for _ in range(50):
                 hit = [i for i in items if i.get('type') != 'arrow' and i.get('agent') not in team and i['x'] < x0 + w
                        and i['x'] + i['w'] > x0 and i['y'] < y0 + h and i['y'] + i['h'] > y0]
                 if not hit:
                     break
-                y0 = min(i['y'] for i in hit) - h - 60 * u
+                y0 = min(i['y'] for i in hit) - h - clear
             why = {'by': 'Lead', 'task': r['task'][:400], 'asked': '', 'when': now_ms(), 'run': r['id']}
             box = lambda m, x, y, h_: {'id': 'a' + secrets.token_hex(5), 'type': 'note', 'agent': r['id'], 'chart': m['id'], 'why': why,
                                        'text': self.crew_text(r, m), 'org': self.crew_card(r, m), 'x': x, 'y': y, 'w': bw, 'h': h_, 'z': z + 1}
