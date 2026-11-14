@@ -306,6 +306,8 @@ def reports_of(members, mid):
     return [m for m in members if boss_of(m) == mid]
 
 SYSTEM = """You are an agent working on a canvas board (a Miro-style board of notes, text, screenshots, PDFs and links).
+Write for the person in plain words: a term from a tool or a field ("scoring gate", "locked test") gets a few everyday
+words saying what it means the first time, or is said in everyday words instead.
 The person gave you a task. You work on it step by step with your tools and put what you find INTO YOUR TASK FRAME on
 the board: that frame is where the person looks, there is no chat. Work like this:
 - Start from the board: the selected items are given below; use search_board and read_item for more of the board.
@@ -2973,6 +2975,16 @@ class Runner:
             else:
                 r['critic'] = {'skipped': True, 'line': 'its answer could not be used, so the plan runs as designed'}
                 self.step(r, 'Plan critic: its answer could not be used, so the plan runs as designed')
+        if want and any(m.get('kind') in ('engineer', 'demo') for m in want):   # fresh eyes on the plan before anyone starts: what it cannot
+            # do, and a result settled before it runs (2026-11-14). Only teams that build or run things: a research job that reads
+            # about a tool was flagged for not installing it
+            try:
+                rv = talk.plan_review(r['task'], r.get('intent'), want)
+            except (OSError, ValueError, KeyError):
+                rv = None
+            if rv:
+                r['review'] = rv
+                self.step(r, 'Plan review: ' + '; '.join(x for x in (rv['cannot'] and 'cannot ' + rv['cannot'], rv['fixed_outcome'] and 'settled before it runs: ' + rv['fixed_outcome']) if x) + '. Fix: ' + rv['fix'])
         crew, used = [dict(STARTERS['lead'], id='lead')], set()
         for m in want:
             base = KIND_BASE[m['kind']]
@@ -2989,6 +3001,10 @@ class Runner:
         lines = '\n'.join('- %s: %s Done when: %s' % (m['name'], m['why'], m['done_when'] or '-') for m in crew[1:])
         r['messages'][0]['content'] = (SYSTEM + "\n\nYOUR ROLE: you are the Lead on this job's team. " + STARTERS['lead']['role'] + learned(os.path.dirname(self.dir), 'lead')
                                        + LEAD % (lines, MAX_ROUNDS)
+                                       + ('\nPLAN REVIEW (fresh eyes read this plan before you started; follow its fix, and tell the user plainly what cannot be done): %s%s Fix: %s'
+                                          % ('Cannot: %s. ' % r['review']['cannot'] if r['review'].get('cannot') else '',
+                                             'Settled before it runs: %s.' % r['review']['fixed_outcome'] if r['review'].get('fixed_outcome') else '',
+                                             r['review']['fix']) if r.get('review') else '')
                                        + ('\nThe plan critic found you can finish this job alone: there are no teammates. Do it yourself with your '
                                           'tools (a copy of a card or file = one add_file call with from_item; otherwise read what is needed and write the result in your frame with add_text or add_file) and finish. Do not use assign. Read the named items once, then act: this job is usually one or two calls.'
                                           if not crew[1:] else '\nThis team was put together for this job; each line says what that teammate is for.')

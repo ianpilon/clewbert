@@ -462,6 +462,8 @@ item's number in "show" (the board zooms to the frame) and tell them what it hol
 the other items in that frame and say something new, not what you already said. When they ask what frames or parts a
 board has, never read them all out: say how many there are and name the three or four that matter most. Screenshot and PDF items are the words read out of the picture, so they can
 have broken lines or small reading mistakes.
+Say a team's or a tool's own terms in everyday words, never as they wrote them ("it only keeps a change if a test
+shows it is better", not "the scoring gate"; the user asked what a "scoring gate" was, 2026-11-14).
 Your answer is spoken aloud: plain sentences, no lists, no markdown, at most four short sentences, and say numbers the
 way they are written in the items. Never say a file path, a file name with its ending or a web address aloud: name the
 card ("the working demo card") and put it in "show" so the board goes to it. If the items do not answer the question, say plainly that you could not find it on
@@ -1349,7 +1351,10 @@ INTENT_FIELDS = """ "want": "<what the user wants and why, in one or two plain s
             on its own branch that the user reviews. It cannot put anything live (deploy, merge, change the running
             app), cannot store sign-ins, tokens or keys, cannot start the app (its engineer can run checks and tests in a
             shut-in terminal with no network), and nothing it makes keeps
-            running after it ends. It can make a Markdown (.md) file on the board, but not a PDF, a Word file or a
+            running after it ends. It cannot install or run an outside tool, skill or package (a Claude Code or Codex
+            skill, a GitHub project, an npm or pip package): its engineer's terminal has no internet; a team can only read
+            about one and copy its idea by hand ('try Hill Climb' -> cannot: 'install or run Hill Climb itself').
+            It can make a Markdown (.md) file on the board, but not a PDF, a Word file or a
             spreadsheet: 'drop it back as a PDF' -> cannot: 'make a PDF; it makes a .md file'.
             What a CONNECTED APP (listed below) can do is NOT a cannot: a team does it, after their yes (Substack connected
             and the user asks to post or publish there: the team drafts it and publishes it when the user says yes, so cannot is
@@ -1404,10 +1409,14 @@ can start the app or a server, use node or npm, hear sound, push, deploy or name
 team/<job id>), and only an engineer can run a command: when the "done when" asks for one of those, a frame that says
 so plainly and does the rest PASSES; never send it back for the impossible piece. An engineer's frame that quotes a
 command and what it printed has run it: that counts.
+SETTLED: when the frame reports a test, score, comparison or experiment, ask whether its result could have come out
+differently. It could NOT when the score was already the top score before the change (6/6 before, 6/6 after), when the
+change is to something the test never looks at (a test of the runner, then a change to a description file), or when a
+keep-or-drop could only go one way. Then put the reason in "settled" in a few plain words; else leave it empty.
 "missing" is handed to the teammate as its whole next job, so write it as ONE small piece of work someone could do on its
 own: which item or source, from which words to which, what exactly to add. Not "the rest", not a repeat of the whole part.
-Reply with JSON only: {"pass": true or false, "missing": "<the one missing piece, as a small job; empty when it passed>",
-"why": "<one plain sentence a person reads on the board>"}"""
+Reply with JSON only: {"settled": "<why its result could not have come out differently, or empty>", "pass": true or false,
+"missing": "<the one missing piece, as a small job; empty when it passed>", "why": "<one plain sentence a person reads on the board>"}"""
 
 
 def check_part(task, done_when, frame_text):
@@ -1417,11 +1426,16 @@ def check_part(task, done_when, frame_text):
     out = chat([{'role': 'system', 'content': PART_CHECK}, {'role': 'user', 'content': 'THE PART: %s\n\nDONE WHEN: %s\n\nIN ITS FRAME:\n%s'
                 % (task, done_when, frame_text or '(nothing)')}], 300, timeout=90)
     out = out if isinstance(out, dict) else {}
+    settled = ' '.join(str(out.get('settled') or '').split())[:240]
+    if settled:   # a result settled before it ran tells nothing: not done, whatever else is there (2026-11-14)
+        return {'pass': False, 'why': 'Its result could not have come out any other way: %s.' % settled.rstrip('.'),
+                'missing': ('Make the result able to go either way, then run it again and report it: %s. Measure something the '
+                            'change can actually improve, starting below the top score, or say plainly that no real test was possible.') % settled.rstrip('.')}
     return {'pass': out.get('pass') is True, 'missing': ' '.join(str(out.get('missing') or '').split())[:300],
             'why': ' '.join(str(out.get('why') or '').split())[:300]}
 
 
-ADVISE = """You are the advisor: a stronger model asked once, briefly, when an AI agent working on the user's Clewbert board has
+ADVISE = """You are the advisor: a fresh pair of eyes, with none of the agent's history, asked once, briefly, when an AI agent working on the user's Clewbert board has
 fallen short of its task and is about to try again. You see the task, what done looks like, what the checker said is
 missing, what the agent put on the board, and its recent steps. Say what to do differently THIS time, concretely: which
 of its tools to use and on what (read_item on the selected item, search_board, open_page on a named address, transcribe,
@@ -1580,6 +1594,40 @@ For each member:
   item, that member's name; else "".
 - "method": one line on how to do its part with the least work (a known item id is read once, not searched for), or "".
 Reply with JSON only: {"members": [{"name": "<exactly as proposed>", "asked": true, "one_call": "", "same_source_as": "", "method": ""}]}"""
+
+
+PLAN_REVIEW = """You review a plan for a team of AI agents with fresh eyes, before it starts. You did not write it. Answer two
+pointed questions; do not redesign the plan.
+WHAT A TEAM CAN DO: read the board and web pages; an engineer edits code on its own branch and runs python3 and git
+commands, checks and tests in a shut-in terminal (that is allowed and normal). WHAT IT CANNOT: install or run any outside
+tool, skill or project (a Claude Code or Codex skill, a GitHub project, an npm or pip package: the terminal has no
+internet), start the app, deploy, merge, push.
+1. "outside": name every outside tool, skill or project the plan says to try, use or run (not just read about), in a
+   few words; else "". Example: "try Hill Climb on one branch" -> "Hill Climb, a Claude Code skill: cannot be installed".
+2. "settled": does the plan decide success with a test or score the team writes itself for the very thing it builds?
+   Such a test passes from the start, so "keep the change only if it scores better" can never be met. Say so in a few
+   words; else "". Example: "write one test for the runner, then try Hill Climb, keep it only if the test scores better"
+   -> "the team's own test of its runner starts at full marks, so no change can score better".
+3. "fix": when 1 or 2 is not empty, one sentence the Lead follows: what to do by hand instead, what real number to
+   measure that can go up (something that exists and starts below the top), or what to tell the user plainly; else "".
+Reply with JSON only: {"outside": "", "settled": "", "fix": ""}"""
+
+
+def plan_review(task, intent, members):
+    """The plan read once by fresh eyes before the team starts (2026-11-14: a team 'tried Hill Climb' it could not install,
+    with a test that could only score 6/6). The advisor's model when one is set (your own machine, or none), else the
+    voice's. {'cannot', 'fixed_outcome', 'fix'} with something found, else None."""
+    it = intent or {}
+    job = 'THE JOB: %s%s%s\n\nTHE PLAN, PART BY PART:\n%s' % (
+        task, '\nWHAT THE USER ASKED FOR: %s' % it['want'] if it.get('want') else '',
+        '\nThe team hands back: %s.' % it['deliver'] if it.get('deliver') else '',
+        '\n'.join('- %s (%s): %s Done when: %s' % (m['name'], m['kind'], m.get('does') or '', m.get('done_when') or '-') for m in members))
+    out = chat([{'role': 'system', 'content': PLAN_REVIEW}, {'role': 'user', 'content': job}], 400, timeout=90,
+               job='advisor' if models.advisor() else 'voice')
+    out = out if isinstance(out, dict) else {}
+    clean = lambda k: ' '.join(str(out.get(k) or '').split())[:300]
+    v = {'cannot': clean('outside'), 'fixed_outcome': clean('settled'), 'fix': clean('fix')}
+    return v if (v['cannot'] or v['fixed_outcome']) and v['fix'] else None
 
 
 def team_critic(task, intent, members, notes='', kinds=TEAM_KINDS, lead_tools=(), tools=()):
