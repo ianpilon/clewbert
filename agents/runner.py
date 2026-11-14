@@ -3043,7 +3043,7 @@ class Runner:
             x0, y0, z = frame['x'], frame['y'], max([i.get('z', 1) for i in items] + [1]) + 1
             # clear space above the team's work, nothing moves. Moving the frame down to make room instead left an open
             # page, which keeps its own positions, saving the frame back where it was: under the chart (2026-11-07)
-            # 200 units clear under it: 60 put the Lead frame's title on the chart's bottom edge (Ian, 2026-11-14)
+            # 200 units clear under it: 60 put the Lead frame's title on the chart's bottom edge (2026-11-14)
             team, clear = {r['id']} | set(r.get('children') or []), 200 * u
             y0 = min([i['y'] for i in items if i.get('agent') in team and i.get('type') != 'arrow' and not i.get('chart')] + [frame['y']]) - h - clear
             for _ in range(50):
