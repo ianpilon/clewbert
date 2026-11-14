@@ -2543,7 +2543,7 @@ def propose_team(plan, here_board, here_space, spaces, sel=None):
     offer = str(plan.get('offer') or '').strip()
     if plan.get('changed'):   # a change to the set-up the user is about to say yes to: no "bigger job" or "can't" said twice
         lead = ''
-    elif offer:   # the planner's own answer to his words: the same template every time read as canned (2026-11-13)
+    elif offer:   # the planner's own answer to the user's words: the same template every time read as canned (2026-11-13)
         lead = offer.rstrip('.!?') + '. '
         if it.get('cannot') and not re.search(r"n't\b|\b(cannot|not)\b", offer, re.I):
             lead += "It can't %s. " % (it['cannot'][0].lower() + it['cannot'][1:].rstrip('.'))   # what no team can do is always said
