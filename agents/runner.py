@@ -578,6 +578,9 @@ def job_score(runs, root, items=()):
 
 
 
+SAND = '#f3eee4'   # a job frame's fill: the page's "Sand" frame fill
+
+
 def local_address(url):
     """True for localhost and private network addresses (192.168.x, 10.x, ...)."""
     host = (urllib.parse.urlsplit(url).hostname or '').lower()
@@ -2580,17 +2583,24 @@ class Runner:
             box = [min(box[0], i['x']), min(box[1], i['y']), max(box[2], i['x'] + i['w']), max(box[3], i['y'] + i['h'])]
         # titles are 12 px on screen at any zoom: 80 units was 3 px at an overview zoom (3%) and the chart's title sat on the
         # job's. 500 above holds a title from about 3% up; 150 around holds the lines that loop under the frames
-        pad, top = 150 * u, 500 * u
+        lead = next((i for i in items if i['id'] == root.get('frame')), None)
+        L = root.get('lay') or {}
+        built = (L.get('inner') or 0) + 2 * (L.get('pad') or 0)   # the Lead's frame width as the team drew it
+        k = min(4.0, max(0.05, lead['w'] / built)) if lead and built else 1.0   # a job scaled down by hand: margins scale with it
+        pad, top = 150 * u * k, 500 * u * k
         g = {'x': box[0] - pad, 'y': box[1] - top, 'w': box[2] - box[0] + 2 * pad, 'h': box[3] - box[1] + top + pad}
-        if wrap and all(abs(wrap[k] - g[k]) < 1 for k in g):
-            return False
+        recolour = bool(wrap and wrap.get('color') == '#f8fafc')   # the first job frames' grey: sand is the look (2026-11-13); a picked colour stays
+        if recolour:
+            wrap['color'] = SAND
+        if wrap and all(abs(wrap[c] - g[c]) < 1 for c in g) and wrap.get('pad') == [pad, top]:
+            return recolour
         if not wrap:
             title = ' '.join(root['task'].split(' (This is about')[0].split())
-            wrap = {'id': wid, 'type': 'area', 'agent': root['id'], 'chart': 'job', 'color': '#f8fafc',
+            wrap = {'id': wid, 'type': 'area', 'agent': root['id'], 'chart': 'job', 'color': SAND,
                     'text': title[:120] + ('…' if len(title) > 120 else ''),
                     'why': {'by': 'Lead', 'task': root['task'][:400], 'asked': '', 'when': now_ms(), 'run': root['id']}}
             items.insert(0, wrap)
-        wrap.update(g, z=min([i.get('z', 1) for i in parts] + [1]) - 1)
+        wrap.update(g, z=min([i.get('z', 1) for i in parts] + [1]) - 1, pad=[pad, top])   # pad: the page grows it by the same margins
         return True
 
     def wrap_board(self, bid):

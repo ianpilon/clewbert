@@ -4563,7 +4563,7 @@ async function agPoll(){
   clearTimeout(AG.timer);const bid=cvBoardId;if(!bid||!cvBoard)return;
   let j=null;try{j=await api('agents/'+bid);}catch(e){}
   if(cvBoardId!==bid||!cvBoard)return;
-  if(j){AG.runs=j.runs||[];agMerge(j.items||[]);agPaint();}
+  if(j){AG.runs=j.runs||[];agMerge(j.items||[]);agPaint();if(cvBoard&&agJobFrames($('#cvWorld'))){cvArrowsFollow();cvSave();}}   // a job frame that is short of its work grows, also when nothing new came
   if(AG.reveal){agReveal(AG.reveal);AG.reveal=null;}
   const live=AG.runs.some(r=>r.status==='queued'||r.status==='working');
   AG.timer=setTimeout(agPoll,live?2000:AG.runs.some(r=>r.status==='waiting')?5000:15000);
@@ -4576,6 +4576,7 @@ function agMerge(items){   // new agent items join the board without redrawing i
     if(have){seen.add(s.id);
       if(s.run&&agRunLive(s.run)&&(s.h>have.h+.5||s.w>have.w+.5)){have.h=Math.max(have.h,s.h);have.w=Math.max(have.w,s.w);   // the frame grew (only while its team is at work: a finished frame keeps the size you scaled it to)
         const el=w.querySelector(`.cv-item[data-id="${s.id}"]`);if(el){el.style.height=have.h+'px';el.style.width=have.w+'px';}}
+      if(s.chart==='job'&&JSON.stringify(s.pad)!==JSON.stringify(have.pad))have.pad=s.pad;   // its margins (they scale with a job scaled by hand); agJobFrames fits it
       if(s.chart&&s.chart!=='job'&&(s.text!==have.text||s.color!==have.color||JSON.stringify(s.org)!==JSON.stringify(have.org))){have.text=s.text;have.color=s.color;have.org=s.org;   // an org chart card's status moved on
         const el=w.querySelector(`.cv-item[data-id="${s.id}"]`);if(el)el.replaceWith(cvItemEl(have));}
       continue;}
@@ -4603,7 +4604,25 @@ function agReflow(){   // an agent's frame: the server guesses how tall each car
     const h=y-gap+pad-f.y;
     if(h>f.h+.5){f.h=h;const el=w.querySelector(`.cv-item[data-id="${f.id}"]`);if(el)el.style.height=h+'px';changed=true;}
   }
+  if(agJobFrames(w))changed=true;
   if(changed){cvArrowsFollow();cvGroupBox();cvSave();}
+}
+  // a job's own frame fits its work (rows and columns the agents add, and the heights the page measures), with the margins
+  // the server gave it, the same rule as the server's: it stopped short of the work and had to be dragged bigger (2026-11-13)
+function agJobFrames(w){let changed=false;
+  for(const f of cvBoard.items){
+    if(f.chart!=='job')continue;
+    const root=id=>{let r=agRun(id),k=0;while(r&&r.parent&&k++<20){const p=agRun(r.parent);if(!p)break;r=p;}return r&&r.id;};
+    const mine=cvBoard.items.filter(i=>i!==f&&i.w>0&&(i.agent?(i.agent===f.agent||root(i.agent)===f.agent)   // lines too: they loop under the frames
+      :i.type!=='area'&&i.type!=='arrow'&&i.x>=f.x-1&&i.y>=f.y-1&&i.x+i.w<=f.x+f.w+1&&i.y+i.h<=f.y+f.h+1));   // and what is yours inside it (the card it is about)
+    if(!mine.length)continue;
+    const [side,top]=Array.isArray(f.pad)?f.pad:[150,500];
+    const x0=Math.min(...mine.map(i=>i.x))-side,y0=Math.min(...mine.map(i=>i.y))-top;
+    const x1=Math.max(...mine.map(i=>i.x+i.w))+side,y1=Math.max(...mine.map(i=>i.y+i.h))+side;
+    if(Math.abs(x0-f.x)>1||Math.abs(y0-f.y)>1||Math.abs(x1-f.x-f.w)>1||Math.abs(y1-f.y-f.h)>1){Object.assign(f,{x:x0,y:y0,w:x1-x0,h:y1-y0});
+      const el=w.querySelector(`.cv-item[data-id="${f.id}"]`);if(el)el.replaceWith(cvItemEl(f));changed=true;}
+  }
+  return changed;
 }
 function agStatus(box,rid){
   const r=agRun(rid);if(!box)return;

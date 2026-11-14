@@ -1478,9 +1478,11 @@ class Handler(BaseHTTPRequestHandler):
                         items.append(it); at[it['id']] = len(items) - 1
                     else:
                         old = items[k]
-                        for f in ('added', 'why', 'voice', 'clip', 'poster'):
+                        for f in ('added', 'why', 'voice', 'clip', 'poster', 'pad'):
                             if f in old and f not in it:
                                 it[f] = old[f]
+                        if old.get('chart') == 'job' and job_live(old):   # a working job's frame never shrinks from an older page copy
+                            cover(it, old)
                         if old.get('chart') and old.get('chart') != 'job':   # a team's org chart box: its status is the team's to change (a job frame's colour and title are yours, 2026-11-13)
                             it.update(text=old.get('text'), color=old.get('color'), org=old.get('org'))
                         items[k] = it
@@ -1934,6 +1936,8 @@ class Handler(BaseHTTPRequestHandler):
                     req['items'].append(i)
                 elif i.get('run') in live and i.get('type') == 'area' and i['id'] in sent:
                     sent[i['id']]['h'] = max(sent[i['id']].get('h', 0), i.get('h', 0))
+                elif i.get('chart') == 'job' and i['id'] in sent and job_live(i):   # a working job's frame: the bigger of the two (the page's copy was older and smaller, 2026-11-13)
+                    cover(sent[i['id']], i)
                 elif i.get('chart') and i.get('chart') != 'job' and i['id'] in sent:   # a team's org chart box: its status is the team's to change (a job frame's colour and title are yours)
                     sent[i['id']].update(text=i.get('text'), color=i.get('color'), org=i.get('org'))
             # a page that has not seen a move made here yet sends the item at its old place: keep the move
@@ -1956,7 +1960,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not it.get('added') and not it.get('agent'):
                         it['added'] = now_ms()
                 else:
-                    for k in ('added', 'why', 'voice', 'clip', 'poster'):   # voice: the user's recorded reason for adding it; clip, poster: made here
+                    for k in ('added', 'why', 'voice', 'clip', 'poster', 'pad'):   # voice: the user's recorded reason for adding it; clip, poster: made here
                         if k in old and k not in it:
                             it[k] = old[k]
                 clip_fill(it)
@@ -2694,6 +2698,19 @@ def run_pending(a, why=None):
     if a.get('new_board'):
         return 'Done: I made the board "%s" with %s.%s Opening it now.' % (a['new_board'], what, miss), {'open': {'board': bid}}
     return 'Done: I added %s to this board.%s' % (what, miss), {'show': [{'board': bid, 'item': frame}]}
+
+
+def job_live(frame):
+    """A job frame whose team is still at work."""
+    r = RUNNER.runs.get(frame.get('agent'))
+    return bool(r) and r['status'] in agents.ACTIVE
+
+
+def cover(it, other):
+    """Grow item it to also cover other's box."""
+    x0, y0 = min(it['x'], other['x']), min(it['y'], other['y'])
+    x1, y1 = max(it['x'] + it['w'], other['x'] + other['w']), max(it['y'] + it['h'], other['y'] + other['h'])
+    it.update(x=x0, y=y0, w=x1 - x0, h=y1 - y0)
 
 
 MOVED = {}   # board -> {item: ([old places], new item, when)}: moves made here, kept when a page still showing an old place saves
