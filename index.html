@@ -270,6 +270,8 @@
   .cv-help kbd{font:inherit;font-size:11px;border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 4px;background:var(--soft)}
   .cv-zoompill{position:absolute;right:16px;bottom:16px;z-index:5;display:flex;align-items:center;gap:2px;padding:4px}
   .cv-zoompill,.cv-tb,.cv-right,.cv-back,.cv-sep,.cv-save{-webkit-user-select:none;user-select:none}
+  .cv-stage{-webkit-user-select:none;user-select:none}   /* the board's own ground: a drag there (a selection box) started a text selection that
+    ran into the voice panel and highlighted the conversation blue (reproduced 2026-11-14); a note being edited turns it back on */
   .menu,.vc-head{-webkit-user-select:none;user-select:none}   /* a press that started on a menu's words and moved (reaching for the volume slider) highlighted
     the whole menu blue (2026-11-14); the conversation itself stays selectable, to copy an answer */   /* controls over the board: a drag-selection box never highlights their words */
   .cv-zoompill button{border:none;background:none;border-radius:8px;padding:5px 10px;font-weight:600;font-size:12.5px;color:var(--ink)}
