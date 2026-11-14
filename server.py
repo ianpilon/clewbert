@@ -1472,7 +1472,7 @@ class Handler(BaseHTTPRequestHandler):
                         for f in ('added', 'why', 'voice', 'clip', 'poster'):
                             if f in old and f not in it:
                                 it[f] = old[f]
-                        if old.get('chart'):   # a team's org chart box: its status is the team's to change
+                        if old.get('chart') and old.get('chart') != 'job':   # a team's org chart box: its status is the team's to change (a job frame's colour and title are yours, 2026-11-13)
                             it.update(text=old.get('text'), color=old.get('color'), org=old.get('org'))
                         items[k] = it
                     clip_fill(it)
@@ -1925,7 +1925,7 @@ class Handler(BaseHTTPRequestHandler):
                     req['items'].append(i)
                 elif i.get('run') in live and i.get('type') == 'area' and i['id'] in sent:
                     sent[i['id']]['h'] = max(sent[i['id']].get('h', 0), i.get('h', 0))
-                elif i.get('chart') and i['id'] in sent:   # a team's org chart box: its status is the team's to change
+                elif i.get('chart') and i.get('chart') != 'job' and i['id'] in sent:   # a team's org chart box: its status is the team's to change (a job frame's colour and title are yours)
                     sent[i['id']].update(text=i.get('text'), color=i.get('color'), org=i.get('org'))
             # a page that has not seen a move made here yet sends the item at its old place: keep the move
             moves = {k: v for k, v in (MOVED.get(bid) or {}).items() if time.time() - v[2] < 900}

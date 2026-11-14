@@ -4576,7 +4576,7 @@ function agMerge(items){   // new agent items join the board without redrawing i
     if(have){seen.add(s.id);
       if(s.run&&agRunLive(s.run)&&(s.h>have.h+.5||s.w>have.w+.5)){have.h=Math.max(have.h,s.h);have.w=Math.max(have.w,s.w);   // the frame grew (only while its team is at work: a finished frame keeps the size you scaled it to)
         const el=w.querySelector(`.cv-item[data-id="${s.id}"]`);if(el){el.style.height=have.h+'px';el.style.width=have.w+'px';}}
-      if(s.chart&&(s.text!==have.text||s.color!==have.color||JSON.stringify(s.org)!==JSON.stringify(have.org))){have.text=s.text;have.color=s.color;have.org=s.org;   // an org chart card's status moved on
+      if(s.chart&&s.chart!=='job'&&(s.text!==have.text||s.color!==have.color||JSON.stringify(s.org)!==JSON.stringify(have.org))){have.text=s.text;have.color=s.color;have.org=s.org;   // an org chart card's status moved on
         const el=w.querySelector(`.cv-item[data-id="${s.id}"]`);if(el)el.replaceWith(cvItemEl(have));}
       continue;}
     if(seen.has(s.id))continue;   // deleted on this page; the next save tells the server
