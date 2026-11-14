@@ -2536,12 +2536,19 @@ def propose_team(plan, here_board, here_space, spaces, sel=None):
         return None
     mode = 'one' if plan.get('mode') == 'one' else 'team'
     who = 'an agent' if mode == 'one' else 'a team'
-    lead = ('' if plan.get('explicit') else "That's a bigger job: %s. " % plan['why'].rstrip('.') if plan.get('why')
-            else "That's a bigger job. ")   # the user did not ask for a team: say why one is offered
+    lead = ('' if plan.get('explicit') or plan.get('offer') else "That's a bigger job: %s. " % plan['why'].rstrip('.') if plan.get('why')
+            else "That's a bigger job. ")   # the user did not ask for a team: say why one is offered (the offer says it in its own words)
     a = {'kind': 'team', 'task': task, 'mode': mode, 'sel': list(sel or []), 'intent': plan.get('intent'), 'ask': plan.get('ask')}
     it = plan.get('intent') or {}
+    offer = str(plan.get('offer') or '').strip()
     if plan.get('changed'):   # a change to the set-up the user is about to say yes to: no "bigger job" or "can't" said twice
         lead = ''
+    elif offer:   # the planner's own answer to his words: the same template every time read as canned (2026-11-13)
+        lead = offer.rstrip('.!?') + '. '
+        if it.get('cannot') and not re.search(r"n't\b|\b(cannot|not)\b", offer, re.I):
+            lead += "It can't %s. " % (it['cannot'][0].lower() + it['cannot'][1:].rstrip('.'))   # what no team can do is always said
+        if it.get('acts') and not re.search(r'\byour (yes|ok|okay|go)\b', offer, re.I):
+            lead += 'Each send or post waits for your yes. '
     elif it.get('cannot') and it.get('deliver'):   # say up front what no team can do (a team once "engineered" an integration it could not build)
         lead += "A team can hand back %s, but it can't %s. " % (
             it['deliver'].rstrip('.'), it['cannot'][0].lower() + it['cannot'][1:].rstrip('.'))

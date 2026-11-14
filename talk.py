@@ -1681,6 +1681,16 @@ def agent_charter(said, existing=(), tools=()):
             'role': role, 'color': '#b45309', 'said': clean(said, 1000), 'made': int(time.time() * 1000)}
 
 
+def whole_sentences(text, n):
+    """Text cut to n characters at a sentence end, never mid-word (a reason was cut mid-word, 2026-11-13); '' when
+    no sentence fits."""
+    text = text.strip()
+    if len(text) <= n:
+        return text
+    cut = max(text.rfind(p, 0, n + 1) for p in ('. ', '! ', '? '))
+    return text[:cut + 1] if cut > 0 else ''
+
+
 TEAM_PLAN = """The user wants a team of AI agents to take on a job in their Clewbert app. Work out how to set it up.
 The job is ONLY the user's last message. Earlier messages a team was already started on are done or under way: never
 repeat them and never fold them into this task; the new job may build on what they left on the board.
@@ -1702,7 +1712,13 @@ Reply with JSON only:
             the video transcribed, summarized, or its key points noted?'). Else empty. If your previous turn below was such
             a question, the new message answers it: plan from the earlier message and this answer together, leave this empty>",
  "options": ["<the same 2 or 3 choices, under 8 words each; empty when unsure is empty>"],
-""" + INTENT_FIELDS + "}"
+""" + INTENT_FIELDS + """,
+ "offer": "<what you say back to the user out loud, before asking if they want it started: one or two short sentences that
+           answer THEIR words, naming the real things they mean (the video, the two repos, the voice note): what the team
+           will do for them and what it hands back, and, when cannot or avoid above is not empty, what it will not do (say the cannot plainly: it never promises what cannot names). Talk like
+           a person, fresh each time: never open with 'That's a bigger job', never a stock phrase, no brackets or lists,
+           no question at the end (the app asks it). Under 220 characters>"
+}"""
 
 
 def team_plan(question, history, here, spaces_text, bid=None):
@@ -1720,11 +1736,12 @@ def team_plan(question, history, here, spaces_text, bid=None):
             a['note'] = 'This asked which he meant. His next message answers it: the job is his earlier message plus this answer. Do not ask again.'
         msgs += [{'role': 'user', 'content': h['q']}, {'role': 'assistant', 'content': json.dumps(a)}]
     msgs.append({'role': 'user', 'content': question})
-    out = chat(msgs, 700, timeout=60)
+    out = chat(msgs, 1000, timeout=60)   # 700 cut a reply short (2026-11-13); the offer makes it longer
     if not out.get('task'):
         return {'task': question, 'ask': question}
     plan = {k: ' '.join(str(out.get(k) or '').split())[:600 if k == 'task' else 300 if k == 'why' else 80] for k in
             ('task', 'why', 'board_name', 'space', 'space_also', 'new_space', 'mode')}
+    plan['offer'] = whole_sentences(' '.join(str(out.get('offer') or '').split()), 320)   # the user's answer in its own words, not a stock line (2026-11-13)
     plan['ask'] = ' '.join(question.split())[:1500]   # the user's words, unchanged, ride along with the rewording (a team worked from the rewording alone and missed the point, 2026-11-09)
     plan['intent'] = intent_of(out, question + ' ' + plan['task']) if out.get('deliver') else None
     opts = [' '.join(str(x).split())[:60] for x in (out.get('options') or []) if str(x).strip()][:3] if isinstance(out.get('options'), list) else []
