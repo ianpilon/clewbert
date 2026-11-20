@@ -3042,7 +3042,8 @@ threading.Thread(target=RUNNER.backfill_cards, daemon=True).start()   # older te
 def seed_examples():
     """A brand-new data folder starts with the example boards, in an Examples space. Once only: deleted ones stay deleted."""
     mark = os.path.join(DATA, 'examples-added')
-    if os.path.exists(mark) or os.listdir(BOARDS):
+    own = {ROUTER.board, rules_board()}   # the app makes these two itself at startup; they are not the user's boards
+    if os.path.exists(mark) or any(fn.endswith('.json') and fn[:-5] not in own for fn in os.listdir(BOARDS)):
         return
     src = os.path.join(HERE, 'examples')
     for sub, dest in (('images', IMAGES), ('files', FILES), ('text', READER.text)):   # the PDF, Markdown file and picture the Start here board shows, already read
